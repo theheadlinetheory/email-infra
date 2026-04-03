@@ -822,21 +822,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/dashboard.html":
             self._serve_file("dashboard.html", "text/html", set_cookie=pw)
-        elif path == "/api/overview":
-            self._json_response(api_overview())
-        elif path == "/api/clients":
-            self._json_response(get_clients())
-        elif path.startswith("/api/client/") and path.endswith("/accounts"):
-            client_id = path.split("/")[3]
-            self._json_response(api_client_accounts(client_id))
-        elif path == "/api/unassigned":
-            self._json_response(api_unassigned())
-        elif path == "/api/zapmail":
-            self._json_response(api_zapmail())
-        elif path == "/api/zapmail/sync":
-            self._json_response(api_zapmail_sync())
-        elif path == "/api/domains":
-            self._json_response(api_domains())
+        elif path.startswith("/api/"):
+            try:
+                if path == "/api/overview":
+                    self._json_response(api_overview())
+                elif path == "/api/clients":
+                    self._json_response(get_clients())
+                elif path.startswith("/api/client/") and path.endswith("/accounts"):
+                    client_id = path.split("/")[3]
+                    self._json_response(api_client_accounts(client_id))
+                elif path == "/api/unassigned":
+                    self._json_response(api_unassigned())
+                elif path == "/api/zapmail":
+                    self._json_response(api_zapmail())
+                elif path == "/api/zapmail/sync":
+                    self._json_response(api_zapmail_sync())
+                elif path == "/api/domains":
+                    self._json_response(api_domains())
+                else:
+                    self._error(404, "Not found")
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                print(f"API ERROR on {path}: {tb}")
+                self._json_response({"error": str(e), "traceback": tb}, 500)
         else:
             self._error(404, "Not found")
 

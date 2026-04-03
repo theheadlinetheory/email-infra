@@ -200,7 +200,17 @@ async function loadOverview() {
 
     try {
         const resp = await fetch('/api/overview');
-        overviewData = await resp.json();
+        const text = await resp.text();
+        try {
+            overviewData = JSON.parse(text);
+        } catch (parseErr) {
+            document.getElementById('loading').innerHTML = 'Error parsing response: ' + text.substring(0, 500);
+            return;
+        }
+        if (overviewData.error) {
+            document.getElementById('loading').innerHTML = '<div style="text-align:left;max-width:800px;margin:0 auto;"><h3 style="color:#ff6b6b;">API Error</h3><pre style="white-space:pre-wrap;color:#ffaaaa;font-size:12px;">' + overviewData.traceback + '</pre></div>';
+            return;
+        }
         renderOverview();
         loadUnassigned();
     } catch (err) {
