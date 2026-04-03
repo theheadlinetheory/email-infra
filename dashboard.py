@@ -231,6 +231,23 @@ def assign_accounts_to_client(account_ids, client_id):
     return {"success": success, "fail": fail}
 
 
+def get_health_metrics(days=14):
+    """Get per-inbox health metrics (bounce rate, reply rate, etc.) from SmartLead analytics."""
+    end = datetime.now().strftime("%Y-%m-%d")
+    start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    r = requests.get(
+        f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
+        headers=sl_internal_headers(),
+        params={"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        return {}
+    data = r.json()
+    metrics = data.get("data", {}).get("email_health_metrics", [])
+    return {m["from_email"]: m for m in metrics}
+
+
 def get_warmup_start_dates():
     """Read warmup start dates from local config files."""
     dates = {}
@@ -252,6 +269,7 @@ def api_overview():
     clients = get_clients()
     all_accounts = get_all_accounts()
     warmup_dates = get_warmup_start_dates()
+    health = get_health_metrics()
 
     total = len(all_accounts)
     warming = sum(1 for a in all_accounts
@@ -308,6 +326,29 @@ def api_overview():
             if a.get("warmup_details", {}).get("status") not in ("ACTIVE", None)
         )
 
+        # Aggregate health metrics for this client
+        cl_sent = 0
+        cl_bounced = 0
+        cl_replied = 0
+        cl_health_count = 0
+        cl_bounce_rates = []
+        cl_reply_rates = []
+        for a in cl_accounts:
+            email = a.get("from_email", "")
+            h = health.get(email)
+            if h:
+                cl_health_count += 1
+                cl_sent += h.get("total_sent", 0)
+                cl_bounced += h.get("total_bounced", 0)
+                cl_replied += h.get("total_replied", 0)
+                if h.get("bounce_rate") is not None:
+                    cl_bounce_rates.append(float(h["bounce_rate"]))
+                if h.get("reply_rate") is not None:
+                    cl_reply_rates.append(float(h["reply_rate"]))
+
+        avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 1) if cl_bounce_rates else None
+        avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 1) if cl_reply_rates else None
+
         client_summaries.append({
             "id": cl["id"],
             "name": cl["name"],
@@ -321,6 +362,12 @@ def api_overview():
             "days_until_ready": days_left,
             "rotation_date": rotation_date,
             "days_until_rotation": rotation_days,
+            "health_accounts": cl_health_count,
+            "total_sent": cl_sent,
+            "total_bounced": cl_bounced,
+            "total_replied": cl_replied,
+            "avg_bounce_rate": avg_bounce,
+            "avg_reply_rate": avg_reply,
         })
 
     client_summaries.sort(
@@ -345,13 +392,16 @@ def api_overview():
 
 def api_client_accounts(client_id):
     accounts = get_accounts_by_client(int(client_id))
+    health = get_health_metrics()
     result = []
     for a in accounts:
         wd = a.get("warmup_details", {})
+        email = a.get("from_email", "")
+        h = health.get(email, {})
         result.append({
             "id": a["id"],
-            "email": a.get("from_email", ""),
-            "domain": a.get("from_email", "").split("@")[-1],
+            "email": email,
+            "domain": email.split("@")[-1],
             "warmup_status": wd.get("status", "UNKNOWN"),
             "warmup_sent": wd.get("total_sent_count", 0),
             "warmup_spam": wd.get("total_spam_count", 0),
@@ -361,6 +411,12 @@ def api_client_accounts(client_id):
             "daily_sent": a.get("daily_sent_count", 0),
             "smtp_ok": a.get("is_smtp_success", False),
             "imap_ok": a.get("is_imap_success", False),
+            "bounce_rate": h.get("bounce_rate"),
+            "reply_rate": h.get("reply_rate"),
+            "open_rate": h.get("open_rate"),
+            "health_sent": h.get("total_sent", 0),
+            "health_bounced": h.get("total_bounced", 0),
+            "health_replied": h.get("total_replied", 0),
         })
     return {"client_id": int(client_id), "accounts": result}
 

@@ -49,7 +49,7 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
 .badge-red { background: #4a1a1a; color: #ff6b6b; }
 
 .detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; }
-.detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 700px; max-width: 95vw; background: #16213e; z-index: 101; overflow-y: auto; padding: 24px; border-left: 1px solid #0f3460; }
+.detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 900px; max-width: 95vw; background: #16213e; z-index: 101; overflow-y: auto; padding: 24px; border-left: 1px solid #0f3460; }
 .detail-panel .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; }
 .detail-panel h2 { font-size: 20px; margin-bottom: 16px; }
 .detail-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -241,11 +241,20 @@ function renderOverview() {
 
     // Summary stats
     const summaryEl = document.getElementById('summary-row');
+    // Compute overall avg bounce/reply from all clients
+    const allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
+    const allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
+    const overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
+    const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
+    const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 5 ? 'alert' : parseFloat(overallBounce) > 2 ? 'warn' : 'good') : 'good';
+    const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 10 ? 'good' : parseFloat(overallReply) > 5 ? 'warn' : 'alert') : 'good';
+
     summaryEl.innerHTML = `
         <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
         <div class="stat-card ${d.warming > 0 ? 'warn' : 'good'}"><div class="value">${d.warming}</div><div class="label">Warming Up</div></div>
         <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
-        <div class="stat-card ${d.unassigned > 0 ? 'warn' : 'good'}"><div class="value">${d.unassigned}</div><div class="label">Unassigned</div></div>
+        <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
+        <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
         <div class="stat-card ${d.smtp_failures > 0 ? 'alert' : 'good'}"><div class="value">${d.smtp_failures}</div><div class="label">SMTP Failures</div></div>
     `;
 
@@ -274,6 +283,8 @@ function renderOverview() {
                 <div class="cc-stat"><span class="label">In Campaign</span><span>${cl.in_campaign}</span></div>
                 <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.smtp_failures}</span></div>
                 <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.blocked}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 5 ? '#ff6b6b' : cl.avg_bounce_rate > 2 ? '#ffd93d' : '#4ecdc4') : '#888'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 10 ? '#4ecdc4' : cl.avg_reply_rate > 5 ? '#ffd93d' : '#ff6b6b') : '#888'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
             </div>
             <div class="cc-dates">
                 ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
@@ -310,15 +321,23 @@ async function openDetail(clientId, clientName) {
 
 function renderDetailTable(accounts) {
     let html = '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
-    html += '<thead><tr><th>Email</th><th>Warmup</th><th>Sent</th><th>Spam</th><th>Rep</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
+    html += '<thead><tr><th>Email</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Open</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
     accounts.forEach(a => {
         const statusColor = a.warmup_status === 'ACTIVE' ? '#4ecdc4' : (a.blocked_reason ? '#ff6b6b' : '#ffd93d');
+        const br = a.bounce_rate !== null ? parseFloat(a.bounce_rate) : null;
+        const rr = a.reply_rate !== null ? parseFloat(a.reply_rate) : null;
+        const or_ = a.open_rate !== null ? parseFloat(a.open_rate) : null;
+        const brColor = br !== null ? (br > 5 ? '#ff6b6b' : br > 2 ? '#ffd93d' : '#4ecdc4') : '#888';
+        const rrColor = rr !== null ? (rr > 10 ? '#4ecdc4' : rr > 5 ? '#ffd93d' : '#ff6b6b') : '#888';
+        const orColor = or_ !== null ? (or_ > 50 ? '#4ecdc4' : or_ > 30 ? '#ffd93d' : '#ff6b6b') : '#888';
         html += `<tr>
             <td>${a.email}</td>
             <td style="color:${statusColor}">${a.warmup_status}${a.blocked_reason ? '<br><small style="color:#ff6b6b">' + a.blocked_reason + '</small>' : ''}</td>
-            <td>${a.warmup_sent}</td>
-            <td style="color:${a.warmup_spam > 5 ? '#ff6b6b' : '#4ecdc4'}">${a.warmup_spam}</td>
             <td>${a.warmup_reputation}</td>
+            <td style="color:${brColor}">${br !== null ? br.toFixed(1) + '%' : '—'}</td>
+            <td style="color:${rrColor}">${rr !== null ? rr.toFixed(1) + '%' : '—'}</td>
+            <td style="color:${orColor}">${or_ !== null ? or_.toFixed(1) + '%' : '—'}</td>
+            <td>${a.health_sent || a.warmup_sent}</td>
             <td>${a.campaign_count}</td>
             <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
         </tr>`;
