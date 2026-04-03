@@ -32,7 +32,7 @@ load_env()
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
 SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
-SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "").strip().replace("\n", "").replace(" ", "")
 ZAPMAIL_API = "https://api.zapmail.ai/api"
 ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
 PORKBUN_API = "https://api.porkbun.com/api/json/v3"
