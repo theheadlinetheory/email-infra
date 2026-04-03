@@ -272,7 +272,7 @@ def calculate_health_score(account, health_data):
     """
     email = account.get("from_email", "")
     h = health_data.get(email, {})
-    wd = account.get("warmup_details", {})
+    wd = account.get("warmup_details") or {}
     flags = []
 
     # Bounce rate (30%) — 0pts at >3%, 100pts at ≤1%, linear between
@@ -388,7 +388,7 @@ def api_overview():
 
     total = len(all_accounts)
     warming = sum(1 for a in all_accounts
-                  if a.get("warmup_details", {}).get("status") == "ACTIVE")
+                  if (a.get("warmup_details") or {}).get("status") == "ACTIVE")
     in_campaign = sum(1 for a in all_accounts if a.get("campaign_count", 0) > 0)
     smtp_fail = sum(1 for a in all_accounts if not a.get("is_smtp_success"))
     imap_fail = sum(1 for a in all_accounts if not a.get("is_imap_success"))
@@ -396,11 +396,11 @@ def api_overview():
     blocked = [
         {
             "email": a["from_email"],
-            "reason": a.get("warmup_details", {}).get("blocked_reason", "Unknown"),
+            "reason": (a.get("warmup_details") or {}).get("blocked_reason", "Unknown"),
         }
         for a in all_accounts
-        if a.get("warmup_details", {}).get("status") not in ("ACTIVE", None)
-        and a.get("warmup_details", {}).get("blocked_reason")
+        if (a.get("warmup_details") or {}).get("status") not in ("ACTIVE", None)
+        and (a.get("warmup_details") or {}).get("blocked_reason")
     ]
 
     # Client summaries
@@ -433,12 +433,12 @@ def api_overview():
                 pass
 
         cl_warming = sum(1 for a in cl_accounts
-                         if a.get("warmup_details", {}).get("status") == "ACTIVE")
+                         if (a.get("warmup_details") or {}).get("status") == "ACTIVE")
         cl_campaigns = sum(1 for a in cl_accounts if a.get("campaign_count", 0) > 0)
         cl_smtp_fail = sum(1 for a in cl_accounts if not a.get("is_smtp_success"))
         cl_blocked = sum(
             1 for a in cl_accounts
-            if a.get("warmup_details", {}).get("status") not in ("ACTIVE", None)
+            if (a.get("warmup_details") or {}).get("status") not in ("ACTIVE", None)
         )
 
         # Aggregate health metrics for this client
@@ -485,10 +485,10 @@ def api_overview():
         warmed_count = 0
         warming_count = 0
         for a in cl_accounts:
-            ws_status = a.get("warmup_details", {}).get("status")
+            ws_status = (a.get("warmup_details") or {}).get("status")
             if ws_status == "ACTIVE":
                 warming_count += 1
-                rep = a.get("warmup_details", {}).get("warmup_reputation", "?")
+                rep = (a.get("warmup_details") or {}).get("warmup_reputation", "?")
                 try:
                     if float(rep) >= 99:
                         warmed_count += 1
@@ -552,7 +552,7 @@ def api_client_accounts(client_id):
     health = get_health_metrics()
     result = []
     for a in accounts:
-        wd = a.get("warmup_details", {})
+        wd = a.get("warmup_details") or {}
         email = a.get("from_email", "")
         h = health.get(email, {})
         hs = calculate_health_score(a, health)
@@ -598,7 +598,7 @@ def api_unassigned():
     unassigned = [a for a in all_accounts if not a.get("client_id")]
     result = []
     for a in unassigned:
-        wd = a.get("warmup_details", {})
+        wd = a.get("warmup_details") or {}
         result.append({
             "id": a["id"],
             "email": a.get("from_email", ""),
