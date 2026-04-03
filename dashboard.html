@@ -124,6 +124,7 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
         <div class="tabs">
             <div class="tab active" onclick="switchTab('smartlead')">SmartLead</div>
             <div class="tab" onclick="switchTab('zapmail')">ZapMail</div>
+            <div class="tab" onclick="switchTab('domains')">Domains</div>
             <div class="tab" onclick="switchTab('sync')">Sync Check</div>
         </div>
 
@@ -163,6 +164,13 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
         <div id="tab-zapmail" class="tab-content">
             <div class="summary-row" id="zm-summary-row"></div>
             <div id="zm-clients"></div>
+        </div>
+
+        <!-- Domains Tab -->
+        <div id="tab-domains" class="tab-content">
+            <div class="summary-row" id="dom-summary-row"></div>
+            <div id="dom-alerts"></div>
+            <div id="dom-content"></div>
         </div>
 
         <!-- Sync Tab -->
@@ -398,6 +406,7 @@ function switchTab(tab) {
     document.getElementById('tab-' + tab).classList.add('active');
 
     if (tab === 'zapmail' && !zmData) loadZapmail();
+    if (tab === 'domains' && !domData) loadDomains();
     if (tab === 'sync' && !syncData) loadSync();
 }
 
@@ -510,6 +519,63 @@ async function cancelSelectedDomains(cardId) {
     } catch (err) {
         status.textContent = 'Error: ' + err.message;
     }
+}
+
+// --- Domains (Registrars) ---
+let domData = null;
+
+async function loadDomains() {
+    document.getElementById('dom-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading domain registrar data...</div>';
+    try {
+        const resp = await fetch('/api/domains');
+        domData = await resp.json();
+        renderDomains();
+    } catch (err) {
+        document.getElementById('dom-content').innerHTML = 'Error: ' + err.message;
+    }
+}
+
+function renderDomains() {
+    const d = domData;
+
+    document.getElementById('dom-summary-row').innerHTML = `
+        <div class="stat-card good"><div class="value">${d.total_domains}</div><div class="label">Total Domains</div></div>
+        <div class="stat-card ${d.expiring_soon > 0 ? 'alert' : 'good'}"><div class="value">${d.expiring_soon}</div><div class="label">Expiring in 14 days</div></div>
+        <div class="stat-card ${d.no_auto_renew_30d > 0 ? 'warn' : 'good'}"><div class="value">${d.no_auto_renew_30d}</div><div class="label">No Auto-Renew (30d)</div></div>
+    `;
+
+    // Alerts
+    if (d.alerts.length > 0) {
+        let alertHtml = '<div class="alert-banner"><h3>Domain Expiry Alerts</h3>';
+        d.alerts.forEach(a => {
+            alertHtml += `<div class="alert-item">${a.domain} (${a.registrar}) — expires ${a.expires}, ${a.days_until_expiry} days left, auto-renew OFF</div>`;
+        });
+        alertHtml += '</div>';
+        document.getElementById('dom-alerts').innerHTML = alertHtml;
+    } else {
+        document.getElementById('dom-alerts').innerHTML = '';
+    }
+
+    // Domain tables by registrar
+    let html = '';
+    for (const [registrar, domains] of Object.entries(d.by_registrar)) {
+        html += `<h2 class="section-title">${registrar} (${domains.length} domains)</h2>`;
+        html += '<table class="zm-domain-table"><thead><tr><th>Domain</th><th>Status</th><th>Expires</th><th>Days Left</th><th>Auto-Renew</th></tr></thead><tbody>';
+        domains.forEach(dm => {
+            const daysLeft = dm.days_until_expiry;
+            const daysColor = daysLeft === null ? '#888' : (daysLeft <= 7 ? '#ff6b6b' : (daysLeft <= 30 ? '#ffd93d' : '#4ecdc4'));
+            const renewColor = dm.auto_renew ? '#4ecdc4' : '#ffd93d';
+            html += `<tr>
+                <td>${dm.domain}</td>
+                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#4ecdc4' : '#ffd93d'}">${dm.status}</td>
+                <td>${dm.expires || '?'}</td>
+                <td style="color:${daysColor}">${daysLeft !== null ? daysLeft + 'd' : '?'}</td>
+                <td style="color:${renewColor}">${dm.auto_renew ? 'ON' : 'OFF'}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+    }
+    document.getElementById('dom-content').innerHTML = html;
 }
 
 // --- Sync Check ---

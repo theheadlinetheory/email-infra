@@ -35,6 +35,12 @@ SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
 SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
 ZAPMAIL_API = "https://api.zapmail.ai/api"
 ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
+PORKBUN_API = "https://api.porkbun.com/api/json/v3"
+PORKBUN_KEY = os.environ.get("PORKBUN_API_KEY", "")
+PORKBUN_SECRET = os.environ.get("PORKBUN_SECRET_KEY", "")
+SPACESHIP_API = "https://spaceship.dev/api/v1"
+SPACESHIP_KEY = os.environ.get("SPACESHIP_API_KEY", "")
+SPACESHIP_SECRET = os.environ.get("SPACESHIP_SECRET_KEY", "")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
 
@@ -83,6 +89,71 @@ def zm_delete_domains(domain_ids):
         timeout=30,
     )
     return r.json() if r.status_code == 200 else {"error": r.text[:300], "status": r.status_code}
+
+
+# --- Domain Registrar helpers ---
+
+def porkbun_list_domains():
+    """List all Porkbun domains with expiry dates."""
+    if not PORKBUN_KEY or not PORKBUN_SECRET:
+        return []
+    r = requests.post(
+        f"{PORKBUN_API}/domain/listAll",
+        json={"apikey": PORKBUN_KEY, "secretapikey": PORKBUN_SECRET},
+        timeout=30,
+    )
+    data = r.json()
+    if data.get("status") != "SUCCESS":
+        return []
+    result = []
+    for d in data.get("domains", []):
+        result.append({
+            "domain": d.get("domain", ""),
+            "registrar": "porkbun",
+            "status": d.get("status", "UNKNOWN"),
+            "expires": d.get("expireDate", "")[:10],
+            "auto_renew": d.get("autoRenew") == "1",
+            "created": d.get("createDate", "")[:10],
+        })
+    return result
+
+
+def spaceship_list_domains():
+    """List all Spaceship domains with expiry dates."""
+    if not SPACESHIP_KEY or not SPACESHIP_SECRET:
+        return []
+    headers = {
+        "X-API-Key": SPACESHIP_KEY,
+        "X-API-Secret": SPACESHIP_SECRET,
+        "Content-Type": "application/json",
+    }
+    all_domains = []
+    skip = 0
+    while True:
+        r = requests.get(
+            f"{SPACESHIP_API}/domains",
+            headers=headers, timeout=30,
+            params={"take": 100, "skip": skip},
+        )
+        if r.status_code != 200:
+            break
+        data = r.json()
+        items = data.get("items", []) if isinstance(data, dict) else []
+        if not items:
+            break
+        for d in items:
+            all_domains.append({
+                "domain": d.get("name", ""),
+                "registrar": "spaceship",
+                "status": d.get("lifecycleStatus", "UNKNOWN"),
+                "expires": d.get("expirationDate", "")[:10],
+                "auto_renew": d.get("autoRenew", False),
+                "created": d.get("registrationDate", "")[:10],
+            })
+        if len(items) < 100:
+            break
+        skip += 100
+    return all_domains
 
 
 # --- SmartLead API helpers ---
@@ -369,6 +440,45 @@ def api_zapmail():
     }
 
 
+def api_domains():
+    """All registered domains from Porkbun + Spaceship with expiry alerts."""
+    now = datetime.now()
+    all_domains = porkbun_list_domains() + spaceship_list_domains()
+
+    for d in all_domains:
+        if d["expires"]:
+            try:
+                exp = datetime.strptime(d["expires"], "%Y-%m-%d")
+                d["days_until_expiry"] = (exp - now).days
+            except Exception:
+                d["days_until_expiry"] = None
+        else:
+            d["days_until_expiry"] = None
+
+    # Sort by expiry (soonest first)
+    all_domains.sort(key=lambda d: d.get("days_until_expiry") or 9999)
+
+    expiring_soon = [d for d in all_domains if d["days_until_expiry"] is not None and d["days_until_expiry"] <= 14]
+    no_auto_renew = [d for d in all_domains if not d["auto_renew"] and d["days_until_expiry"] is not None and d["days_until_expiry"] <= 30]
+
+    # Group by registrar
+    by_registrar = {}
+    for d in all_domains:
+        reg = d["registrar"]
+        if reg not in by_registrar:
+            by_registrar[reg] = []
+        by_registrar[reg].append(d)
+
+    return {
+        "total_domains": len(all_domains),
+        "expiring_soon": len(expiring_soon),
+        "no_auto_renew_30d": len(no_auto_renew),
+        "by_registrar": by_registrar,
+        "alerts": [d for d in no_auto_renew if d["days_until_expiry"] <= 14],
+        "generated_at": now.isoformat(),
+    }
+
+
 def api_zapmail_sync():
     """Check ZapMail tags vs SmartLead client assignments for mismatches."""
     zm_domains = zm_list_domains()
@@ -469,6 +579,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(api_zapmail())
         elif path == "/api/zapmail/sync":
             self._json_response(api_zapmail_sync())
+        elif path == "/api/domains":
+            self._json_response(api_domains())
         else:
             self._error(404, "Not found")
 
