@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""THT Infrastructure Dashboard — local web server."""
+"""THT Infrastructure Dashboard — local web server.
+
+Works both locally (reads .env file) and hosted (reads environment variables).
+"""
 
 import json
 import os
@@ -11,13 +14,38 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(__file__))
-from setup import (
-    sl_list_accounts, sl_internal_headers,
-    SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API,
-)
-
 SCRIPT_DIR = Path(__file__).parent
+ENV_PATH = SCRIPT_DIR / ".env"
+
+
+def load_env():
+    """Load from .env file if present, then fall back to os.environ."""
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+
+
+load_env()
+
+SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
+SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
+SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
+SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+
+
+def sl_internal_headers():
+    return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
+
+
+def sl_list_accounts(offset=0, limit=100):
+    r = requests.get(
+        f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}",
+        timeout=30,
+    )
+    return r.json()
 
 
 # --- SmartLead API helpers ---
@@ -235,12 +263,37 @@ def api_unassigned():
 # --- HTTP Server ---
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def _check_auth(self):
+        """Simple password check via query param or cookie."""
+        if not DASHBOARD_PASSWORD:
+            return True
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        if params.get("pw", [None])[0] == DASHBOARD_PASSWORD:
+            return True
+        cookie = self.headers.get("Cookie", "")
+        if f"dashboard_pw={DASHBOARD_PASSWORD}" in cookie:
+            return True
+        self.send_response(401)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"""<!DOCTYPE html><html><body style="background:#1a1a2e;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">
+        <form method="GET" style="text-align:center"><h2>THT Dashboard</h2><input name="pw" type="password" placeholder="Password" style="padding:8px;font-size:16px;border-radius:6px;border:1px solid #0f3460;background:#16213e;color:#eee;"><br><br>
+        <button type="submit" style="padding:8px 24px;background:#0f3460;color:#eee;border:1px solid #1a5276;border-radius:6px;cursor:pointer;">Login</button></form></body></html>""")
+        return False
+
     def do_GET(self):
+        if not self._check_auth():
+            return
         parsed = urlparse(self.path)
         path = parsed.path
+        params = parse_qs(parsed.query)
+
+        # Set auth cookie if password provided in URL
+        pw = params.get("pw", [None])[0]
 
         if path == "/" or path == "/dashboard.html":
-            self._serve_file("dashboard.html", "text/html")
+            self._serve_file("dashboard.html", "text/html", set_cookie=pw)
         elif path == "/api/overview":
             self._json_response(api_overview())
         elif path == "/api/clients":
@@ -254,6 +307,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._error(404, "Not found")
 
     def do_POST(self):
+        if not self._check_auth():
+            return
         content_length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(content_length)) if content_length else {}
 
@@ -282,11 +337,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
-    def _serve_file(self, filename, content_type):
+    def _serve_file(self, filename, content_type, set_cookie=None):
         filepath = SCRIPT_DIR / filename
         if filepath.exists():
             self.send_response(200)
             self.send_header("Content-Type", content_type)
+            if set_cookie and DASHBOARD_PASSWORD:
+                self.send_header("Set-Cookie", f"dashboard_pw={set_cookie}; Path=/; Max-Age=2592000; SameSite=Strict")
             self.end_headers()
             self.wfile.write(filepath.read_bytes())
         else:
@@ -300,9 +357,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8099
-    server = HTTPServer(("127.0.0.1", port), DashboardHandler)
-    print(f"Dashboard running at http://localhost:{port}")
+    port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
+    host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+    server = HTTPServer((host, port), DashboardHandler)
+    print(f"Dashboard running at http://{host}:{port}")
     print("Press Ctrl+C to stop")
     try:
         server.serve_forever()
