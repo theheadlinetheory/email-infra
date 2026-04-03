@@ -156,6 +156,21 @@ def spaceship_list_domains():
     return all_domains
 
 
+def porkbun_set_auto_renew(domain, enabled):
+    """Toggle auto-renew on a Porkbun domain. Returns success dict."""
+    r = requests.post(
+        f"{PORKBUN_API}/domain/updateAutoRenew/{domain}",
+        json={
+            "apikey": PORKBUN_KEY,
+            "secretapikey": PORKBUN_SECRET,
+            "status": "on" if enabled else "off",
+        },
+        timeout=15,
+    )
+    data = r.json()
+    return {"success": data.get("status") == "SUCCESS", "message": data.get("message", "")}
+
+
 # --- SmartLead API helpers ---
 
 def get_clients():
@@ -604,6 +619,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._error(400, "domain_ids required")
                 return
             result = zm_delete_domains(domain_ids)
+            self._json_response(result)
+        elif self.path == "/api/domains/auto-renew":
+            domain = body.get("domain", "")
+            registrar = body.get("registrar", "")
+            enabled = body.get("enabled", False)
+            if not domain or not registrar:
+                self._error(400, "domain and registrar required")
+                return
+            if registrar == "porkbun":
+                result = porkbun_set_auto_renew(domain, enabled)
+            else:
+                result = {"success": False, "message": f"{registrar} auto-renew toggle not supported via API"}
             self._json_response(result)
         else:
             self._error(404, "Not found")

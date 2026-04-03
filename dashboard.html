@@ -565,17 +565,52 @@ function renderDomains() {
             const daysLeft = dm.days_until_expiry;
             const daysColor = daysLeft === null ? '#888' : (daysLeft <= 7 ? '#ff6b6b' : (daysLeft <= 30 ? '#ffd93d' : '#4ecdc4'));
             const renewColor = dm.auto_renew ? '#4ecdc4' : '#ffd93d';
+            const canToggle = dm.registrar === 'porkbun';
+            const toggleBtn = canToggle
+                ? `<button onclick="toggleAutoRenew('${dm.domain}','${dm.registrar}',${!dm.auto_renew},this)" style="background:none;border:1px solid ${renewColor};color:${renewColor};padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;">${dm.auto_renew ? 'ON' : 'OFF'}</button>`
+                : `<span style="color:${renewColor}" title="${dm.registrar} doesn't support API toggle">${dm.auto_renew ? 'ON' : 'OFF'}</span>`;
             html += `<tr>
                 <td>${dm.domain}</td>
                 <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#4ecdc4' : '#ffd93d'}">${dm.status}</td>
                 <td>${dm.expires || '?'}</td>
                 <td style="color:${daysColor}">${daysLeft !== null ? daysLeft + 'd' : '?'}</td>
-                <td style="color:${renewColor}">${dm.auto_renew ? 'ON' : 'OFF'}</td>
+                <td>${toggleBtn}</td>
             </tr>`;
         });
         html += '</tbody></table>';
     }
     document.getElementById('dom-content').innerHTML = html;
+}
+
+async function toggleAutoRenew(domain, registrar, enabled, btn) {
+    const action = enabled ? 'enable' : 'disable';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} auto-renew for ${domain}?`)) return;
+
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+        const resp = await fetch('/api/domains/auto-renew', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domain, registrar, enabled})
+        });
+        const result = await resp.json();
+        if (result.success) {
+            btn.textContent = enabled ? 'ON' : 'OFF';
+            btn.style.color = enabled ? '#4ecdc4' : '#ffd93d';
+            btn.style.borderColor = enabled ? '#4ecdc4' : '#ffd93d';
+            btn.disabled = false;
+            btn.onclick = () => toggleAutoRenew(domain, registrar, !enabled, btn);
+        } else {
+            alert('Failed: ' + result.message);
+            btn.textContent = enabled ? 'OFF' : 'ON';
+            btn.disabled = false;
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+        btn.textContent = enabled ? 'OFF' : 'ON';
+        btn.disabled = false;
+    }
 }
 
 // --- Sync Check ---
