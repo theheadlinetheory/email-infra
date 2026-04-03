@@ -163,9 +163,17 @@ function renderOverview() {
         let html = '<div class="alert-banner"><h3>Alerts</h3>';
         if (d.smtp_failures > 0) html += '<div class="alert-item">' + d.smtp_failures + ' accounts with SMTP failures</div>';
         if (d.imap_failures > 0) html += '<div class="alert-item">' + d.imap_failures + ' accounts with IMAP failures</div>';
+        // Group blocked accounts by short reason
+        const grouped = {};
         d.blocked_accounts.forEach(b => {
-            html += '<div class="alert-item">' + b.email + ': ' + b.reason + '</div>';
+            const short = b.reason.split(':')[0] || 'Unknown';
+            if (!grouped[short]) grouped[short] = [];
+            grouped[short].push(b.email.split('@')[1]);
         });
+        for (const [reason, domains] of Object.entries(grouped)) {
+            const unique = [...new Set(domains)];
+            html += '<div class="alert-item">' + unique.length + ' domain(s) blocked — ' + reason + ': ' + unique.join(', ') + '</div>';
+        }
         html += '</div>';
         alertEl.innerHTML = html;
     } else {
