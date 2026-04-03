@@ -33,6 +33,8 @@ SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
 SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
 SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+ZAPMAIL_API = "https://api.zapmail.ai/api"
+ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
 
@@ -46,6 +48,41 @@ def sl_list_accounts(offset=0, limit=100):
         timeout=30,
     )
     return r.json()
+
+
+# --- ZapMail API helpers ---
+
+def zm_headers():
+    return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+
+
+def zm_list_domains():
+    """List all ZapMail domains with pagination."""
+    all_domains = []
+    page = 1
+    while True:
+        r = requests.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_headers(), timeout=30)
+        data = r.json() if r.status_code == 200 else {}
+        if isinstance(data, dict) and "data" in data:
+            domains = data["data"].get("domains", [])
+            all_domains.extend(domains)
+            if page >= data["data"].get("totalPages", 1):
+                break
+            page += 1
+        else:
+            break
+    return all_domains
+
+
+def zm_delete_domains(domain_ids):
+    """Delete domains from ZapMail (stops billing). Domains stay on Spaceship."""
+    r = requests.delete(
+        f"{ZAPMAIL_API}/v2/domains",
+        headers=zm_headers(),
+        json={"domainIds": domain_ids},
+        timeout=30,
+    )
+    return r.json() if r.status_code == 200 else {"error": r.text[:300], "status": r.status_code}
 
 
 # --- SmartLead API helpers ---
@@ -260,6 +297,131 @@ def api_unassigned():
     return {"accounts": result, "count": len(result)}
 
 
+def api_zapmail():
+    """ZapMail domains grouped by tag (client), with renewal alerts."""
+    domains = zm_list_domains()
+    now = datetime.now()
+
+    # Group by tag (client name)
+    by_client = {}
+    for d in domains:
+        tags = [t.get("name", "") for t in d.get("tags", [])]
+        client = tags[0] if tags else "Untagged"
+        if client not in by_client:
+            by_client[client] = []
+
+        # Calculate next renewal: createdAt + N months
+        created = d.get("createdAt", "")
+        next_renewal = None
+        days_until_renewal = None
+        if created:
+            try:
+                created_dt = datetime.fromisoformat(created.replace("Z", "+00:00")).replace(tzinfo=None)
+                # Monthly renewal on same day of month as creation
+                renewal = created_dt
+                while renewal <= now:
+                    month = renewal.month + 1
+                    year = renewal.year
+                    if month > 12:
+                        month = 1
+                        year += 1
+                    renewal = renewal.replace(year=year, month=month)
+                next_renewal = renewal.strftime("%Y-%m-%d")
+                days_until_renewal = (renewal - now).days
+            except Exception:
+                pass
+
+        mailboxes = d.get("mailboxes", [])
+        by_client[client].append({
+            "id": d["id"],
+            "domain": d["domain"],
+            "status": d.get("status", "UNKNOWN"),
+            "mailbox_count": int(d.get("assignedMailboxesCount", 0) or len(mailboxes)),
+            "mailboxes": [m.get("username", "") + "@" + d["domain"] for m in mailboxes],
+            "auto_renew": d.get("autoRenew", False),
+            "created": created[:10] if created else "",
+            "next_renewal": next_renewal,
+            "days_until_renewal": days_until_renewal,
+            "tags": tags,
+        })
+
+    # Build summary per client
+    clients = []
+    for client_name, client_domains in sorted(by_client.items()):
+        total_mailboxes = sum(d["mailbox_count"] for d in client_domains)
+        renewing_soon = [d for d in client_domains if d["days_until_renewal"] is not None and d["days_until_renewal"] <= 3]
+        clients.append({
+            "name": client_name,
+            "domains": len(client_domains),
+            "mailboxes": total_mailboxes,
+            "renewing_soon": len(renewing_soon),
+            "domain_list": client_domains,
+        })
+
+    # Sort: renewal alerts first
+    clients.sort(key=lambda c: (0 if c["renewing_soon"] > 0 else 1, c["name"].lower()))
+
+    return {
+        "total_domains": len(domains),
+        "total_mailboxes": sum(c["mailboxes"] for c in clients),
+        "clients": clients,
+        "generated_at": now.isoformat(),
+    }
+
+
+def api_zapmail_sync():
+    """Check ZapMail tags vs SmartLead client assignments for mismatches."""
+    zm_domains = zm_list_domains()
+    sl_accounts = get_all_accounts()
+    sl_clients = get_clients()
+
+    # Build SmartLead client_id -> name map
+    client_map = {c["id"]: c["name"] for c in sl_clients}
+
+    # Build domain -> ZapMail tag
+    zm_tag_by_domain = {}
+    for d in zm_domains:
+        tags = [t.get("name", "") for t in d.get("tags", [])]
+        if tags:
+            zm_tag_by_domain[d["domain"]] = tags[0]
+
+    # Build domain -> SmartLead client name
+    sl_client_by_domain = {}
+    for a in sl_accounts:
+        email = a.get("from_email", "")
+        domain = email.split("@")[-1] if "@" in email else ""
+        client_id = a.get("client_id")
+        if domain and client_id and client_id in client_map:
+            sl_client_by_domain[domain] = client_map[client_id]
+
+    # Find mismatches
+    mismatches = []
+    all_domains = set(zm_tag_by_domain.keys()) | set(sl_client_by_domain.keys())
+    for domain in sorted(all_domains):
+        zm_client = zm_tag_by_domain.get(domain)
+        sl_client = sl_client_by_domain.get(domain)
+        if zm_client and sl_client and zm_client.lower() != sl_client.lower():
+            mismatches.append({
+                "domain": domain,
+                "zapmail_tag": zm_client,
+                "smartlead_client": sl_client,
+            })
+
+    # Domains in ZapMail but not SmartLead
+    zm_only = [d for d in zm_tag_by_domain if d not in sl_client_by_domain]
+    # Domains in SmartLead but not ZapMail
+    sl_only = [d for d in sl_client_by_domain if d not in zm_tag_by_domain]
+
+    return {
+        "mismatches": mismatches,
+        "zapmail_only_count": len(zm_only),
+        "smartlead_only_count": len(sl_only),
+        "zapmail_only": sorted(zm_only)[:20],
+        "smartlead_only": sorted(sl_only)[:20],
+        "total_checked": len(all_domains),
+    }
+
+
 # --- HTTP Server ---
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -303,6 +465,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(api_client_accounts(client_id))
         elif path == "/api/unassigned":
             self._json_response(api_unassigned())
+        elif path == "/api/zapmail":
+            self._json_response(api_zapmail())
+        elif path == "/api/zapmail/sync":
+            self._json_response(api_zapmail_sync())
         else:
             self._error(404, "Not found")
 
@@ -319,6 +485,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._error(400, "account_ids and client_id required")
                 return
             result = assign_accounts_to_client(account_ids, client_id)
+            self._json_response(result)
+        elif self.path == "/api/zapmail/cancel":
+            domain_ids = body.get("domain_ids", [])
+            if not domain_ids:
+                self._error(400, "domain_ids required")
+                return
+            result = zm_delete_domains(domain_ids)
             self._json_response(result)
         else:
             self._error(404, "Not found")
