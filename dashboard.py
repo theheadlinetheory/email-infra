@@ -263,6 +263,17 @@ def get_warmup_start_dates():
     return dates
 
 
+def parse_rate(value):
+    """Parse a rate value that may be a string like '0.00%' or a float."""
+    if value is None:
+        return None
+    s = str(value).strip().rstrip("%")
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def calculate_health_score(account, health_data):
     """Calculate composite health score (0-100) for an inbox.
 
@@ -276,7 +287,7 @@ def calculate_health_score(account, health_data):
     flags = []
 
     # Bounce rate (30%) — 0pts at >3%, 100pts at ≤1%, linear between
-    br = float(h["bounce_rate"]) if h.get("bounce_rate") is not None else None
+    br = parse_rate(h.get("bounce_rate"))
     if br is not None:
         if br > 3:
             bounce_score = 0
@@ -289,7 +300,7 @@ def calculate_health_score(account, health_data):
         bounce_score = 50  # no data, neutral
 
     # Reply rate (25%) — 0pts at <2%, 100pts at ≥5%, linear between
-    rr = float(h["reply_rate"]) if h.get("reply_rate") is not None else None
+    rr = parse_rate(h.get("reply_rate"))
     if rr is not None:
         if rr < 2:
             reply_score = 0
@@ -456,10 +467,12 @@ def api_overview():
                 cl_sent += h.get("total_sent", 0)
                 cl_bounced += h.get("total_bounced", 0)
                 cl_replied += h.get("total_replied", 0)
-                if h.get("bounce_rate") is not None:
-                    cl_bounce_rates.append(float(h["bounce_rate"]))
-                if h.get("reply_rate") is not None:
-                    cl_reply_rates.append(float(h["reply_rate"]))
+                br_val = parse_rate(h.get("bounce_rate"))
+                if br_val is not None:
+                    cl_bounce_rates.append(br_val)
+                rr_val = parse_rate(h.get("reply_rate"))
+                if rr_val is not None:
+                    cl_reply_rates.append(rr_val)
 
         avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 1) if cl_bounce_rates else None
         avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 1) if cl_reply_rates else None
