@@ -231,7 +231,7 @@ def assign_accounts_to_client(account_ids, client_id):
     return {"success": success, "fail": fail}
 
 
-def get_health_metrics(days=14):
+def get_health_metrics(days=7):
     """Get per-inbox health metrics (bounce rate, reply rate, etc.) from SmartLead analytics."""
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -261,6 +261,121 @@ def get_warmup_start_dates():
         except Exception:
             continue
     return dates
+
+
+def calculate_health_score(account, health_data):
+    """Calculate composite health score (0-100) for an inbox.
+
+    Weights: bounce_rate 30%, reply_rate 25%, reputation 25%,
+    inbox_placement 10%, smtp/imap 5%, blocked 5%.
+    Returns dict with score and list of flag reasons.
+    """
+    email = account.get("from_email", "")
+    h = health_data.get(email, {})
+    wd = account.get("warmup_details", {})
+    flags = []
+
+    # Bounce rate (30%) — 0pts at >3%, 100pts at ≤1%, linear between
+    br = float(h["bounce_rate"]) if h.get("bounce_rate") is not None else None
+    if br is not None:
+        if br > 3:
+            bounce_score = 0
+            flags.append("bounce")
+        elif br <= 1:
+            bounce_score = 100
+        else:
+            bounce_score = 100 - ((br - 1) / 2) * 100
+    else:
+        bounce_score = 50  # no data, neutral
+
+    # Reply rate (25%) — 0pts at <2%, 100pts at ≥5%, linear between
+    rr = float(h["reply_rate"]) if h.get("reply_rate") is not None else None
+    if rr is not None:
+        if rr < 2:
+            reply_score = 0
+            flags.append("reply")
+        elif rr >= 5:
+            reply_score = 100
+        else:
+            reply_score = ((rr - 2) / 3) * 100
+    else:
+        reply_score = 50
+
+    # Reputation (25%) — 0pts at <99, 100pts at ≥99
+    rep_raw = wd.get("warmup_reputation", "?")
+    try:
+        rep = float(rep_raw)
+        if rep < 99:
+            rep_score = 0
+            flags.append("reputation")
+        else:
+            rep_score = 100
+    except (ValueError, TypeError):
+        rep_score = 50
+
+    # Inbox placement (10%) — use warmup spam ratio as proxy
+    sent = wd.get("total_sent_count", 0) or 0
+    spam = wd.get("total_spam_count", 0) or 0
+    if sent > 0:
+        placement = ((sent - spam) / sent) * 100
+        if placement < 99:
+            placement_score = 0
+            flags.append("placement")
+        else:
+            placement_score = 100
+    else:
+        placement_score = 50
+
+    # SMTP/IMAP (5%) — binary
+    smtp_ok = account.get("is_smtp_success", False)
+    imap_ok = account.get("is_imap_success", False)
+    if not smtp_ok or not imap_ok:
+        conn_score = 0
+        flags.append("smtp")
+    else:
+        conn_score = 100
+
+    # Blocked (5%) — binary
+    blocked = wd.get("status") not in ("ACTIVE", None) and wd.get("blocked_reason")
+    if blocked:
+        block_score = 0
+        flags.append("blocked")
+    else:
+        block_score = 100
+
+    # Warmup off flag (not scored, but flagged)
+    warmup_status = wd.get("status")
+    if warmup_status != "ACTIVE" and not blocked:
+        flags.append("warmup_off")
+
+    score = round(
+        bounce_score * 0.30 +
+        reply_score * 0.25 +
+        rep_score * 0.25 +
+        placement_score * 0.10 +
+        conn_score * 0.05 +
+        block_score * 0.05
+    )
+
+    return {"score": score, "flags": flags}
+
+
+def group_accounts_by_domain(accounts_with_scores):
+    """Group accounts by domain. If ANY account on a domain is flagged,
+    mark ALL accounts on that domain as flagged (domain-level rollup)."""
+    by_domain = {}
+    for acc in accounts_with_scores:
+        domain = acc["email"].split("@")[-1] if "@" in acc["email"] else ""
+        if domain not in by_domain:
+            by_domain[domain] = []
+        by_domain[domain].append(acc)
+
+    for domain, accs in by_domain.items():
+        domain_has_flags = any(a["health_flags"] for a in accs)
+        for a in accs:
+            a["domain_flagged"] = domain_has_flags
+
+    return by_domain
 
 
 # --- API endpoint logic ---
@@ -349,6 +464,37 @@ def api_overview():
         avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 1) if cl_bounce_rates else None
         avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 1) if cl_reply_rates else None
 
+        # Health scores and domain flagging
+        cl_scores = []
+        flagged_domains = set()
+        for a in cl_accounts:
+            hs = calculate_health_score(a, health)
+            cl_scores.append(hs["score"])
+            if hs["flags"]:
+                domain = a.get("from_email", "").split("@")[-1]
+                flagged_domains.add(domain)
+
+        all_cl_domains = set(
+            a.get("from_email", "").split("@")[-1] for a in cl_accounts
+        )
+        total_domains = len(all_cl_domains)
+        flagged_pct = (len(flagged_domains) / total_domains * 100) if total_domains > 0 else 0
+        avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 0
+
+        # Warmup progress
+        warmed_count = 0
+        warming_count = 0
+        for a in cl_accounts:
+            ws_status = a.get("warmup_details", {}).get("status")
+            if ws_status == "ACTIVE":
+                warming_count += 1
+                rep = a.get("warmup_details", {}).get("warmup_reputation", "?")
+                try:
+                    if float(rep) >= 99:
+                        warmed_count += 1
+                except (ValueError, TypeError):
+                    pass
+
         client_summaries.append({
             "id": cl["id"],
             "name": cl["name"],
@@ -368,14 +514,24 @@ def api_overview():
             "total_replied": cl_replied,
             "avg_bounce_rate": avg_bounce,
             "avg_reply_rate": avg_reply,
+            "health_score": avg_health,
+            "total_domains": total_domains,
+            "flagged_domains": len(flagged_domains),
+            "flagged_pct": round(flagged_pct, 1),
+            "needs_attention": flagged_pct >= 15,
+            "warmed_count": warmed_count,
+            "warming_count": warming_count,
         })
 
     client_summaries.sort(
         key=lambda c: (
+            0 if c["needs_attention"] else 1,
             0 if c["blocked"] > 0 or c["smtp_failures"] > 0 else 1,
             c["name"].lower(),
         )
     )
+
+    attention_count = sum(1 for c in client_summaries if c["needs_attention"])
 
     return {
         "total_accounts": total,
@@ -386,6 +542,7 @@ def api_overview():
         "imap_failures": imap_fail,
         "blocked_accounts": blocked[:20],
         "clients": client_summaries,
+        "attention_count": attention_count,
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -398,6 +555,7 @@ def api_client_accounts(client_id):
         wd = a.get("warmup_details", {})
         email = a.get("from_email", "")
         h = health.get(email, {})
+        hs = calculate_health_score(a, health)
         result.append({
             "id": a["id"],
             "email": email,
@@ -413,12 +571,26 @@ def api_client_accounts(client_id):
             "imap_ok": a.get("is_imap_success", False),
             "bounce_rate": h.get("bounce_rate"),
             "reply_rate": h.get("reply_rate"),
-            "open_rate": h.get("open_rate"),
             "health_sent": h.get("total_sent", 0),
             "health_bounced": h.get("total_bounced", 0),
             "health_replied": h.get("total_replied", 0),
+            "health_score": hs["score"],
+            "health_flags": hs["flags"],
         })
-    return {"client_id": int(client_id), "accounts": result}
+
+    # Domain-level rollup
+    by_domain = group_accounts_by_domain(result)
+    flagged_domains = [d for d, accs in by_domain.items() if any(a["health_flags"] for a in accs)]
+    flagged_inbox_count = sum(len(by_domain[d]) for d in flagged_domains)
+
+    return {
+        "client_id": int(client_id),
+        "accounts": result,
+        "flagged_domains": flagged_domains,
+        "flagged_inbox_count": flagged_inbox_count,
+        "replacement_domains_needed": len(flagged_domains),
+        "replacement_inboxes": len(flagged_domains) * 3,
+    }
 
 
 def api_unassigned():
