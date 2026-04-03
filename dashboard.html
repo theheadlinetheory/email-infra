@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>THT Infrastructure Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+.topbar { background: #16213e; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460; }
+.topbar h1 { font-size: 20px; font-weight: 600; }
+.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: #888; }
+.topbar-right button { background: #0f3460; color: #eee; border: 1px solid #1a5276; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.topbar-right button:hover { background: #1a5276; }
+
+.container { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+
+.alert-banner { background: #5c1a1a; border: 1px solid #8b3a3a; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
+.alert-banner h3 { color: #ff6b6b; font-size: 14px; margin-bottom: 8px; }
+.alert-banner .alert-item { font-size: 13px; color: #ffaaaa; padding: 2px 0; }
+
+.summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; text-align: center; }
+.stat-card .value { font-size: 28px; font-weight: 700; }
+.stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
+.stat-card.alert .value { color: #ff6b6b; }
+.stat-card.good .value { color: #4ecdc4; }
+.stat-card.warn .value { color: #ffd93d; }
+
+h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 0 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+.clients-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.client-card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 16px; cursor: pointer; transition: border-color 0.2s, transform 0.1s; }
+.client-card:hover { border-color: #1a5276; transform: translateY(-1px); }
+.client-card.has-alert { border-left: 3px solid #ff6b6b; }
+.client-card .cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.client-card .cc-name { font-size: 16px; font-weight: 600; }
+.client-card .cc-count { font-size: 13px; color: #888; }
+.client-card .cc-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 13px; }
+.client-card .cc-stat { display: flex; justify-content: space-between; padding: 3px 0; }
+.client-card .cc-stat .label { color: #888; }
+.client-card .cc-dates { margin-top: 10px; padding-top: 10px; border-top: 1px solid #0f3460; font-size: 12px; color: #888; }
+.client-card .cc-dates .date-row { display: flex; justify-content: space-between; padding: 2px 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-green { background: #1a4a3a; color: #4ecdc4; }
+.badge-yellow { background: #4a3a1a; color: #ffd93d; }
+.badge-red { background: #4a1a1a; color: #ff6b6b; }
+
+.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; }
+.detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 700px; max-width: 95vw; background: #16213e; z-index: 101; overflow-y: auto; padding: 24px; border-left: 1px solid #0f3460; }
+.detail-panel .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; }
+.detail-panel h2 { font-size: 20px; margin-bottom: 16px; }
+.detail-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.detail-panel th { text-align: left; padding: 8px; color: #888; border-bottom: 1px solid #0f3460; font-weight: 500; }
+.detail-panel td { padding: 8px; border-bottom: 1px solid #0a1628; }
+.detail-panel tr:hover td { background: #1a2744; }
+
+.unassigned-section { margin-top: 32px; }
+.assign-controls { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+.assign-controls select { background: #0a1628; color: #eee; border: 1px solid #0f3460; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.assign-controls button { background: #0f3460; color: #eee; border: 1px solid #1a5276; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.assign-controls button:hover { background: #1a5276; }
+.assign-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.unassigned-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.unassigned-table th { text-align: left; padding: 8px; color: #888; border-bottom: 1px solid #0f3460; }
+.unassigned-table td { padding: 8px; border-bottom: 1px solid #0a1628; }
+.unassigned-table tr:hover td { background: #1a2744; }
+.unassigned-table input[type="checkbox"] { accent-color: #4ecdc4; }
+
+.loading { text-align: center; padding: 60px; color: #888; font-size: 16px; }
+.loading .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid #333; border-top-color: #4ecdc4; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 12px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <h1>THT Infrastructure Dashboard</h1>
+    <div class="topbar-right">
+        <span id="last-updated"></span>
+        <button onclick="loadOverview()">Refresh</button>
+    </div>
+</div>
+
+<div class="container">
+    <div id="loading" class="loading">
+        <span class="spinner"></span> Loading infrastructure data...
+    </div>
+
+    <div id="content" style="display:none;">
+        <div id="alert-banner"></div>
+
+        <div class="summary-row" id="summary-row"></div>
+
+        <h2 class="section-title">Clients</h2>
+        <div class="clients-grid" id="clients-grid"></div>
+
+        <div class="unassigned-section" id="unassigned-section" style="display:none;">
+            <h2 class="section-title">Unassigned Accounts</h2>
+            <div class="assign-controls">
+                <select id="assign-client-select">
+                    <option value="">-- Assign to client --</option>
+                </select>
+                <button id="assign-btn" onclick="assignSelected()" disabled>Assign Selected</button>
+                <span id="assign-status"></span>
+            </div>
+            <table class="unassigned-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                        <th>Email</th>
+                        <th>Domain</th>
+                        <th>Warmup</th>
+                        <th>Reputation</th>
+                        <th>SMTP</th>
+                    </tr>
+                </thead>
+                <tbody id="unassigned-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
+<div class="detail-panel" id="detail-panel" style="display:none;">
+    <button class="close-btn" onclick="closeDetail()">&times;</button>
+    <h2 id="detail-title"></h2>
+    <div id="detail-content"></div>
+</div>
+
+<script>
+let overviewData = null;
+let clientsList = [];
+
+async function loadOverview() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('content').style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/overview');
+        overviewData = await resp.json();
+        renderOverview();
+        loadUnassigned();
+    } catch (err) {
+        document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
+    }
+}
+
+function renderOverview() {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+
+    const d = overviewData;
+    const time = new Date(d.generated_at).toLocaleTimeString();
+    document.getElementById('last-updated').textContent = 'Updated: ' + time;
+
+    // Alert banner
+    const alertEl = document.getElementById('alert-banner');
+    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0) {
+        let html = '<div class="alert-banner"><h3>Alerts</h3>';
+        if (d.smtp_failures > 0) html += '<div class="alert-item">' + d.smtp_failures + ' accounts with SMTP failures</div>';
+        if (d.imap_failures > 0) html += '<div class="alert-item">' + d.imap_failures + ' accounts with IMAP failures</div>';
+        d.blocked_accounts.forEach(b => {
+            html += '<div class="alert-item">' + b.email + ': ' + b.reason + '</div>';
+        });
+        html += '</div>';
+        alertEl.innerHTML = html;
+    } else {
+        alertEl.innerHTML = '';
+    }
+
+    // Summary stats
+    const summaryEl = document.getElementById('summary-row');
+    summaryEl.innerHTML = `
+        <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
+        <div class="stat-card ${d.warming > 0 ? 'warn' : 'good'}"><div class="value">${d.warming}</div><div class="label">Warming Up</div></div>
+        <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
+        <div class="stat-card ${d.unassigned > 0 ? 'warn' : 'good'}"><div class="value">${d.unassigned}</div><div class="label">Unassigned</div></div>
+        <div class="stat-card ${d.smtp_failures > 0 ? 'alert' : 'good'}"><div class="value">${d.smtp_failures}</div><div class="label">SMTP Failures</div></div>
+    `;
+
+    // Client cards
+    const gridEl = document.getElementById('clients-grid');
+    clientsList = d.clients;
+    gridEl.innerHTML = d.clients.map(cl => {
+        const hasAlert = cl.smtp_failures > 0 || cl.blocked > 0;
+        const readyBadge = cl.days_until_ready !== null
+            ? (cl.days_until_ready <= 0
+                ? '<span class="badge badge-green">Ready</span>'
+                : '<span class="badge badge-yellow">' + cl.days_until_ready + 'd left</span>')
+            : '';
+        const rotBadge = cl.days_until_rotation !== null && cl.days_until_rotation <= 7
+            ? '<span class="badge badge-red">Rotate soon</span>'
+            : '';
+
+        return `
+        <div class="client-card ${hasAlert ? 'has-alert' : ''}" onclick="openDetail(${cl.id}, '${cl.name.replace(/'/g, "\\'")}')">
+            <div class="cc-header">
+                <span class="cc-name">${cl.name}</span>
+                <span class="cc-count">${cl.accounts} accounts</span>
+            </div>
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">Warming</span><span>${cl.warming}</span></div>
+                <div class="cc-stat"><span class="label">In Campaign</span><span>${cl.in_campaign}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.blocked}</span></div>
+            </div>
+            <div class="cc-dates">
+                ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
+                ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
+                ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
+            </div>
+        </div>`;
+    }).join('');
+
+    // Populate assign dropdown
+    const select = document.getElementById('assign-client-select');
+    const currentVal = select.value;
+    select.innerHTML = '<option value="">-- Assign to client --</option>';
+    d.clients.forEach(cl => {
+        select.innerHTML += `<option value="${cl.id}">${cl.name}</option>`;
+    });
+    select.value = currentVal;
+}
+
+async function openDetail(clientId, clientName) {
+    document.getElementById('detail-overlay').style.display = 'block';
+    document.getElementById('detail-panel').style.display = 'block';
+    document.getElementById('detail-title').textContent = clientName;
+    document.getElementById('detail-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading accounts...</div>';
+
+    try {
+        const resp = await fetch('/api/client/' + clientId + '/accounts');
+        const data = await resp.json();
+        renderDetailTable(data.accounts);
+    } catch (err) {
+        document.getElementById('detail-content').innerHTML = 'Error: ' + err.message;
+    }
+}
+
+function renderDetailTable(accounts) {
+    let html = '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
+    html += '<thead><tr><th>Email</th><th>Warmup</th><th>Sent</th><th>Spam</th><th>Rep</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
+    accounts.forEach(a => {
+        const statusColor = a.warmup_status === 'ACTIVE' ? '#4ecdc4' : (a.blocked_reason ? '#ff6b6b' : '#ffd93d');
+        html += `<tr>
+            <td>${a.email}</td>
+            <td style="color:${statusColor}">${a.warmup_status}${a.blocked_reason ? '<br><small style="color:#ff6b6b">' + a.blocked_reason + '</small>' : ''}</td>
+            <td>${a.warmup_sent}</td>
+            <td style="color:${a.warmup_spam > 5 ? '#ff6b6b' : '#4ecdc4'}">${a.warmup_spam}</td>
+            <td>${a.warmup_reputation}</td>
+            <td>${a.campaign_count}</td>
+            <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('detail-content').innerHTML = html;
+}
+
+function closeDetail() {
+    document.getElementById('detail-overlay').style.display = 'none';
+    document.getElementById('detail-panel').style.display = 'none';
+}
+
+async function loadUnassigned() {
+    try {
+        const resp = await fetch('/api/unassigned');
+        const data = await resp.json();
+        if (data.count > 0) {
+            document.getElementById('unassigned-section').style.display = 'block';
+            renderUnassigned(data.accounts);
+        } else {
+            document.getElementById('unassigned-section').style.display = 'none';
+        }
+    } catch (err) {
+        console.error('Error loading unassigned:', err);
+    }
+}
+
+function renderUnassigned(accounts) {
+    const tbody = document.getElementById('unassigned-body');
+    tbody.innerHTML = accounts.map(a => `
+        <tr>
+            <td><input type="checkbox" class="ua-check" value="${a.id}" onchange="updateAssignBtn()"></td>
+            <td>${a.email}</td>
+            <td>${a.domain}</td>
+            <td style="color:${a.warmup_status === 'ACTIVE' ? '#4ecdc4' : '#ffd93d'}">${a.warmup_status}</td>
+            <td>${a.warmup_reputation}</td>
+            <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+        </tr>
+    `).join('');
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('select-all').checked;
+    document.querySelectorAll('.ua-check').forEach(cb => cb.checked = checked);
+    updateAssignBtn();
+}
+
+function updateAssignBtn() {
+    const selected = document.querySelectorAll('.ua-check:checked').length;
+    const clientSelected = document.getElementById('assign-client-select').value;
+    document.getElementById('assign-btn').disabled = !(selected > 0 && clientSelected);
+}
+
+document.getElementById('assign-client-select').addEventListener('change', updateAssignBtn);
+
+async function assignSelected() {
+    const accountIds = Array.from(document.querySelectorAll('.ua-check:checked')).map(cb => parseInt(cb.value));
+    const clientId = parseInt(document.getElementById('assign-client-select').value);
+    if (!accountIds.length || !clientId) return;
+
+    document.getElementById('assign-btn').disabled = true;
+    document.getElementById('assign-status').textContent = 'Assigning ' + accountIds.length + ' accounts...';
+
+    try {
+        const resp = await fetch('/api/assign', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({account_ids: accountIds, client_id: clientId})
+        });
+        const result = await resp.json();
+        document.getElementById('assign-status').textContent =
+            'Done! ' + result.success + ' assigned, ' + result.fail + ' failed.';
+        setTimeout(() => loadOverview(), 2000);
+    } catch (err) {
+        document.getElementById('assign-status').textContent = 'Error: ' + err.message;
+    }
+}
+
+// Initial load
+loadOverview();
+
+// Auto-refresh every 5 minutes
+setInterval(loadOverview, 5 * 60 * 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,295 @@
+{
+  "client_name": "Timesavers Landscaping",
+  "created_date": "2026-03-25",
+  "infrastructure": {
+    "daily_volume_target": 240,
+    "accounts_needed": 16,
+    "domains_needed": 6,
+    "actual_accounts": 18,
+    "actual_daily_capacity": 270,
+    "warmup_start_date": "2026-03-25",
+    "estimated_launch_date": "2026-04-08"
+  },
+  "forwarding_domain": "timesavers.services",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "profile_photos",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv"
+  ],
+  "zapmail_workspaces": {
+    "status": 200,
+    "message": "Workspaces fetched successfully",
+    "data": {
+      "totalSearchedCount": 1,
+      "currentPage": 1,
+      "nextPage": 2,
+      "totalPages": 1,
+      "totalWorkspacesCount": 1,
+      "totalDomainsCountGoogle": 269,
+      "totalDomainsCountMicrosoft": 64,
+      "totalPurchasedMailboxesCountGoogle": 498,
+      "totalPurchasedMailboxesCountMicrosoft": 20,
+      "currentWorkspace": {
+        "id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "name": "The Headline Theory",
+        "user_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "domainCountGoogle": "269",
+        "domainCountMicrosoft": "64",
+        "assignedMailboxesCountGoogle": "498",
+        "assignedMailboxesCountMicrosoft": "20",
+        "totalMailboxesPurchasedGoogle": "498",
+        "totalMailboxesPurchasedMicrosoft": "20",
+        "activeMailboxCountGoogle": "498",
+        "activeMailboxCountMicrosoft": "20",
+        "billingDetails": {
+          "id": "36434eb1-e7cf-439d-9e46-295286208a1b",
+          "userId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "firstName": "Aidan",
+          "lastName": "Hutchinson",
+          "workspaceId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "company": "The Headline Theory",
+          "addressLineOne": "475 Cascade Drive",
+          "addressLineTwo": "",
+          "addressLineThree": null,
+          "city": "Fairfax",
+          "state": "California",
+          "country": "US",
+          "postalCode": "94930",
+          "phoneCc": "1",
+          "phone": "4155788464",
+          "languagePreference": "en"
+        },
+        "role": "OWNER"
+      },
+      "workspaces": []
+    }
+  },
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "outdoorcaredirect.co",
+      "provider": "Spaceship",
+      "row_number": 463,
+      "nameservers_set": true,
+      "zapmail_domain_id": "36324b68-d13f-4be2-8310-00f245342d50",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcaredirect.co",
+        "sean.r@outdoorcaredirect.co",
+        "sean.reynolds@outdoorcaredirect.co"
+      ]
+    },
+    {
+      "domain": "outdoorcareelite.co",
+      "provider": "Spaceship",
+      "row_number": 464,
+      "nameservers_set": true,
+      "zapmail_domain_id": "45f002d6-45b6-4f08-ac23-f89a61af46c9",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcareelite.co",
+        "sean.r@outdoorcareelite.co",
+        "sean.reynolds@outdoorcareelite.co"
+      ]
+    },
+    {
+      "domain": "outdoorcarefirst.co",
+      "provider": "Spaceship",
+      "row_number": 465,
+      "nameservers_set": true,
+      "zapmail_domain_id": "8373cb39-3073-4d02-bbcc-f24e519bb2bd",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcarefirst.co",
+        "sean.r@outdoorcarefirst.co",
+        "sean.reynolds@outdoorcarefirst.co"
+      ]
+    },
+    {
+      "domain": "outdoorcarefocus.co",
+      "provider": "Spaceship",
+      "row_number": 466,
+      "nameservers_set": true,
+      "zapmail_domain_id": "3ee7ee33-ab79-43b5-9556-7868149fe4c9",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcarefocus.co",
+        "sean.r@outdoorcarefocus.co",
+        "sean.reynolds@outdoorcarefocus.co"
+      ]
+    },
+    {
+      "domain": "outdoorcareguide.co",
+      "provider": "Spaceship",
+      "row_number": 467,
+      "nameservers_set": true,
+      "zapmail_domain_id": "a15d9905-71e8-4dbe-88fd-827df99acd11",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcareguide.co",
+        "sean.r@outdoorcareguide.co",
+        "sean.reynolds@outdoorcareguide.co"
+      ]
+    },
+    {
+      "domain": "outdoorcareinfo.co",
+      "provider": "Spaceship",
+      "row_number": 468,
+      "nameservers_set": true,
+      "zapmail_domain_id": "a9da482b-be94-4004-b26f-0627ca206769",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcareinfo.co",
+        "sean.r@outdoorcareinfo.co",
+        "sean.reynolds@outdoorcareinfo.co"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "outdoorcaredirect.co",
+      "outdoorcareelite.co",
+      "outdoorcarefirst.co",
+      "outdoorcarefocus.co",
+      "outdoorcareguide.co",
+      "outdoorcareinfo.co"
+    ],
+    "initial_count": 12
+  },
+  "smartlead_accounts": [
+    "sean.r@outdoorcarefirst.co",
+    "s.reynolds@outdoorcareelite.co",
+    "sean.r@outdoorcareelite.co",
+    "sean.r@outdoorcareguide.co",
+    "sean.r@outdoorcaredirect.co",
+    "sean.reynolds@outdoorcareelite.co",
+    "sean.reynolds@outdoorcareinfo.co",
+    "sean.r@outdoorcareinfo.co",
+    "sean.reynolds@outdoorcareguide.co",
+    "s.reynolds@outdoorcarefirst.co",
+    "sean.reynolds@outdoorcarefocus.co",
+    "sean.r@outdoorcarefocus.co",
+    "sean.reynolds@outdoorcaredirect.co",
+    "s.reynolds@outdoorcareinfo.co",
+    "s.reynolds@outdoorcaredirect.co",
+    "s.reynolds@outdoorcarefocus.co",
+    "sean.reynolds@outdoorcarefirst.co",
+    "s.reynolds@outdoorcareguide.co"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/timesavers_landscaping_20260325.csv"
+}

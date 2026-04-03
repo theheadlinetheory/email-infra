@@ -1,0 +1,465 @@
+{
+  "client_name": "High Southern Scapes",
+  "created_date": "2026-03-24",
+  "infrastructure": {
+    "daily_volume_target": 495,
+    "accounts_needed": 33,
+    "domains_needed": 11,
+    "actual_accounts": 33,
+    "actual_daily_capacity": 495,
+    "warmup_start_date": "2026-03-24",
+    "estimated_launch_date": "2026-04-07"
+  },
+  "forwarding_domain": "highsouthernscapes.com",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "profile_photos",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv"
+  ],
+  "zapmail_workspaces": {
+    "status": 200,
+    "message": "Workspaces fetched successfully",
+    "data": {
+      "totalSearchedCount": 1,
+      "currentPage": 1,
+      "nextPage": 2,
+      "totalPages": 1,
+      "totalWorkspacesCount": 1,
+      "totalDomainsCountGoogle": 258,
+      "totalDomainsCountMicrosoft": 64,
+      "totalPurchasedMailboxesCountGoogle": 465,
+      "totalPurchasedMailboxesCountMicrosoft": 20,
+      "currentWorkspace": {
+        "id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "name": "The Headline Theory",
+        "user_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "domainCountGoogle": "258",
+        "domainCountMicrosoft": "64",
+        "assignedMailboxesCountGoogle": "465",
+        "assignedMailboxesCountMicrosoft": "20",
+        "totalMailboxesPurchasedGoogle": "465",
+        "totalMailboxesPurchasedMicrosoft": "20",
+        "activeMailboxCountGoogle": "465",
+        "activeMailboxCountMicrosoft": "20",
+        "billingDetails": {
+          "id": "36434eb1-e7cf-439d-9e46-295286208a1b",
+          "userId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "firstName": "Aidan",
+          "lastName": "Hutchinson",
+          "workspaceId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "company": "The Headline Theory",
+          "addressLineOne": "475 Cascade Drive",
+          "addressLineTwo": "",
+          "addressLineThree": null,
+          "city": "Fairfax",
+          "state": "California",
+          "country": "US",
+          "postalCode": "94930",
+          "phoneCc": "1",
+          "phone": "4155788464",
+          "languagePreference": "en"
+        },
+        "role": "OWNER"
+      },
+      "workspaces": []
+    }
+  },
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "lawnserviceinfo.co",
+      "provider": "Spaceship",
+      "row_number": 452,
+      "nameservers_set": true,
+      "zapmail_domain_id": "2eeaac22-1e15-4798-af81-182192ed1654",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnserviceinfo.co",
+        "sean.r@lawnserviceinfo.co",
+        "sean.reynolds@lawnserviceinfo.co"
+      ]
+    },
+    {
+      "domain": "lawnservicepoint.co",
+      "provider": "Spaceship",
+      "row_number": 453,
+      "nameservers_set": true,
+      "zapmail_domain_id": "735a4536-d0ff-49c7-a43f-24d1f3834f4e",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnservicepoint.co",
+        "sean.r@lawnservicepoint.co",
+        "sean.reynolds@lawnservicepoint.co"
+      ]
+    },
+    {
+      "domain": "lawnserviceprime.co",
+      "provider": "Spaceship",
+      "row_number": 454,
+      "nameservers_set": true,
+      "zapmail_domain_id": "d798a73e-f7ee-4dd5-9d90-293f18254d68",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnserviceprime.co",
+        "sean.r@lawnserviceprime.co",
+        "sean.reynolds@lawnserviceprime.co"
+      ]
+    },
+    {
+      "domain": "lawnserviceselect.co",
+      "provider": "Spaceship",
+      "row_number": 455,
+      "nameservers_set": true,
+      "zapmail_domain_id": "1219c2fe-e05e-4cc4-96c5-edb59daa15f3",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnserviceselect.co",
+        "sean.r@lawnserviceselect.co",
+        "sean.reynolds@lawnserviceselect.co"
+      ]
+    },
+    {
+      "domain": "lawnserviceteam.co",
+      "provider": "Spaceship",
+      "row_number": 456,
+      "nameservers_set": true,
+      "zapmail_domain_id": "964a8d72-3afe-42ca-a3e5-5a0b96e4ed95",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnserviceteam.co",
+        "sean.r@lawnserviceteam.co",
+        "sean.reynolds@lawnserviceteam.co"
+      ]
+    },
+    {
+      "domain": "lawnservicezone.co",
+      "provider": "Spaceship",
+      "row_number": 457,
+      "nameservers_set": true,
+      "zapmail_domain_id": "84fd2ee8-c173-4356-8e49-2b4e091b4789",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnservicezone.co",
+        "sean.r@lawnservicezone.co",
+        "sean.reynolds@lawnservicezone.co"
+      ]
+    },
+    {
+      "domain": "lawnworkprime.co",
+      "provider": "Spaceship",
+      "row_number": 458,
+      "nameservers_set": true,
+      "zapmail_domain_id": "ac72e8cc-9d0a-4f59-a08e-667cf7c3b9b8",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnworkprime.co",
+        "sean.r@lawnworkprime.co",
+        "sean.reynolds@lawnworkprime.co"
+      ]
+    },
+    {
+      "domain": "lawnworkzone.co",
+      "provider": "Spaceship",
+      "row_number": 459,
+      "nameservers_set": true,
+      "zapmail_domain_id": "f8a295c1-f07e-4675-906a-55862094a16c",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnworkzone.co",
+        "sean.r@lawnworkzone.co",
+        "sean.reynolds@lawnworkzone.co"
+      ]
+    },
+    {
+      "domain": "outdoorandscapecare.co",
+      "provider": "Spaceship",
+      "row_number": 460,
+      "nameservers_set": true,
+      "zapmail_domain_id": "3743bf6e-0f5c-4514-a15b-fa7e1ac3ab99",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorandscapecare.co",
+        "sean.r@outdoorandscapecare.co",
+        "sean.reynolds@outdoorandscapecare.co"
+      ]
+    },
+    {
+      "domain": "outdoorcarebase2.co",
+      "provider": "Spaceship",
+      "row_number": 461,
+      "nameservers_set": true,
+      "zapmail_domain_id": "307c43b8-a8c0-4229-94ae-72b057020f96",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcarebase2.co",
+        "sean.r@outdoorcarebase2.co",
+        "sean.reynolds@outdoorcarebase2.co"
+      ]
+    },
+    {
+      "domain": "outdoorcareconnect.co",
+      "provider": "Spaceship",
+      "row_number": 462,
+      "nameservers_set": true,
+      "zapmail_domain_id": "380ef85c-05f6-481e-858d-425ccc0eef50",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@outdoorcareconnect.co",
+        "sean.r@outdoorcareconnect.co",
+        "sean.reynolds@outdoorcareconnect.co"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "lawnserviceinfo.co",
+      "lawnservicepoint.co",
+      "lawnserviceprime.co",
+      "lawnserviceselect.co",
+      "lawnserviceteam.co",
+      "lawnservicezone.co",
+      "lawnworkprime.co",
+      "lawnworkzone.co",
+      "outdoorandscapecare.co",
+      "outdoorcarebase2.co",
+      "outdoorcareconnect.co"
+    ],
+    "initial_count": 33
+  },
+  "smartlead_accounts": [
+    "sean.reynolds@outdoorcarebase2.co",
+    "sean.reynolds@lawnservicezone.co",
+    "s.reynolds@outdoorcareconnect.co",
+    "s.reynolds@lawnservicepoint.co",
+    "sean.r@lawnworkprime.co",
+    "sean.r@lawnworkzone.co",
+    "sean.r@lawnserviceprime.co",
+    "sean.reynolds@outdoorcareconnect.co",
+    "sean.r@outdoorcarebase2.co",
+    "sean.reynolds@lawnserviceprime.co",
+    "sean.reynolds@lawnserviceteam.co",
+    "sean.reynolds@lawnworkprime.co",
+    "s.reynolds@lawnserviceteam.co",
+    "sean.r@lawnservicepoint.co",
+    "sean.reynolds@lawnworkzone.co",
+    "sean.r@outdoorandscapecare.co",
+    "sean.r@lawnserviceselect.co",
+    "sean.reynolds@outdoorandscapecare.co",
+    "sean.reynolds@lawnserviceinfo.co",
+    "s.reynolds@lawnservicezone.co",
+    "s.reynolds@lawnworkzone.co",
+    "s.reynolds@outdoorcarebase2.co",
+    "sean.r@outdoorcareconnect.co",
+    "sean.r@lawnservicezone.co",
+    "sean.reynolds@lawnservicepoint.co",
+    "s.reynolds@lawnserviceinfo.co",
+    "s.reynolds@lawnserviceselect.co",
+    "sean.r@lawnserviceinfo.co",
+    "s.reynolds@lawnworkprime.co",
+    "s.reynolds@outdoorandscapecare.co",
+    "sean.r@lawnserviceteam.co",
+    "s.reynolds@lawnserviceprime.co",
+    "sean.reynolds@lawnserviceselect.co"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/high_southern_scapes_20260324.csv"
+}

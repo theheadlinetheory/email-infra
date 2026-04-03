@@ -1,0 +1,670 @@
+{
+  "client_name": "Generic A",
+  "created_date": "2026-03-28",
+  "infrastructure": {
+    "daily_volume_target": 750,
+    "accounts_needed": 50,
+    "domains_needed": 17,
+    "actual_accounts": 51,
+    "actual_daily_capacity": 765,
+    "warmup_start_date": "2026-03-28",
+    "estimated_launch_date": "2026-04-11"
+  },
+  "forwarding_domain": "",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "profile_photos",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation"
+  ],
+  "zapmail_workspaces": {
+    "status": 200,
+    "message": "Workspaces fetched successfully",
+    "data": {
+      "totalSearchedCount": 1,
+      "currentPage": 1,
+      "nextPage": 2,
+      "totalPages": 1,
+      "totalWorkspacesCount": 1,
+      "totalDomainsCountGoogle": 321,
+      "totalDomainsCountMicrosoft": 64,
+      "totalPurchasedMailboxesCountGoogle": 654,
+      "totalPurchasedMailboxesCountMicrosoft": 20,
+      "currentWorkspace": {
+        "id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "name": "The Headline Theory",
+        "user_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "domainCountGoogle": "321",
+        "domainCountMicrosoft": "64",
+        "assignedMailboxesCountGoogle": "654",
+        "assignedMailboxesCountMicrosoft": "20",
+        "totalMailboxesPurchasedGoogle": "654",
+        "totalMailboxesPurchasedMicrosoft": "20",
+        "activeMailboxCountGoogle": "654",
+        "activeMailboxCountMicrosoft": "20",
+        "billingDetails": {
+          "id": "36434eb1-e7cf-439d-9e46-295286208a1b",
+          "userId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "firstName": "Aidan",
+          "lastName": "Hutchinson",
+          "workspaceId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "company": "The Headline Theory",
+          "addressLineOne": "475 Cascade Drive",
+          "addressLineTwo": "",
+          "addressLineThree": null,
+          "city": "Fairfax",
+          "state": "California",
+          "country": "US",
+          "postalCode": "94930",
+          "phoneCc": "1",
+          "phone": "4155788464",
+          "languagePreference": "en"
+        },
+        "role": "OWNER"
+      },
+      "workspaces": []
+    }
+  },
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "turfcarepath.co",
+      "provider": "Spaceship",
+      "row_number": 515,
+      "nameservers_set": true,
+      "zapmail_domain_id": "d15e3042-0f33-43af-af09-6ef65ca36405",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfcarepath.co",
+        "sean.r@turfcarepath.co",
+        "sean.reynolds@turfcarepath.co"
+      ]
+    },
+    {
+      "domain": "turfcareprime.co",
+      "provider": "Spaceship",
+      "row_number": 516,
+      "nameservers_set": true,
+      "zapmail_domain_id": "536ddc8c-cc45-45f4-98ba-9209683bbcad",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfcareprime.co",
+        "sean.r@turfcareprime.co",
+        "sean.reynolds@turfcareprime.co"
+      ]
+    },
+    {
+      "domain": "turfcaresupport.co",
+      "provider": "Spaceship",
+      "row_number": 517,
+      "nameservers_set": true,
+      "zapmail_domain_id": "89d8096b-5086-48ed-aa4f-330fbc8b5cd2",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfcaresupport.co",
+        "sean.r@turfcaresupport.co",
+        "sean.reynolds@turfcaresupport.co"
+      ]
+    },
+    {
+      "domain": "turfcareworks.co",
+      "provider": "Spaceship",
+      "row_number": 518,
+      "nameservers_set": true,
+      "zapmail_domain_id": "2ce8f571-e2ce-4107-b33c-037c43227e25",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfcareworks.co",
+        "sean.r@turfcareworks.co",
+        "sean.reynolds@turfcareworks.co"
+      ]
+    },
+    {
+      "domain": "turfcarezone.co",
+      "provider": "Spaceship",
+      "row_number": 519,
+      "nameservers_set": true,
+      "zapmail_domain_id": "fde7f573-0ea3-4c1f-9ccd-85de3e446a41",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfcarezone.co",
+        "sean.r@turfcarezone.co",
+        "sean.reynolds@turfcarezone.co"
+      ]
+    },
+    {
+      "domain": "turfmaintenancedirect.co",
+      "provider": "Spaceship",
+      "row_number": 520,
+      "nameservers_set": true,
+      "zapmail_domain_id": "fe45e5f5-a9e3-408e-a379-d67826a7c76d",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfmaintenancedirect.co",
+        "sean.r@turfmaintenancedirect.co",
+        "sean.reynolds@turfmaintenancedirect.co"
+      ]
+    },
+    {
+      "domain": "turfmaintenancehub.co",
+      "provider": "Spaceship",
+      "row_number": 521,
+      "nameservers_set": true,
+      "zapmail_domain_id": "96ee7c45-260a-4737-bbdb-cf19d91d345a",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfmaintenancehub.co",
+        "sean.r@turfmaintenancehub.co",
+        "sean.reynolds@turfmaintenancehub.co"
+      ]
+    },
+    {
+      "domain": "turfmaintenancepros.co",
+      "provider": "Spaceship",
+      "row_number": 522,
+      "nameservers_set": true,
+      "zapmail_domain_id": "2a0c909f-74e9-41b3-a8b5-842b97189209",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfmaintenancepros.co",
+        "sean.r@turfmaintenancepros.co",
+        "sean.reynolds@turfmaintenancepros.co"
+      ]
+    },
+    {
+      "domain": "turfmaintenancezone.co",
+      "provider": "Spaceship",
+      "row_number": 523,
+      "nameservers_set": true,
+      "zapmail_domain_id": "5cdb9a3a-7e3d-48b3-808c-9fa9aa71e194",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfmaintenancezone.co",
+        "sean.r@turfmaintenancezone.co",
+        "sean.reynolds@turfmaintenancezone.co"
+      ]
+    },
+    {
+      "domain": "turfservicecrew.co",
+      "provider": "Spaceship",
+      "row_number": 524,
+      "nameservers_set": true,
+      "zapmail_domain_id": "0f1df541-98d5-4c8c-9615-2b0b1088d9c6",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfservicecrew.co",
+        "sean.r@turfservicecrew.co",
+        "sean.reynolds@turfservicecrew.co"
+      ]
+    },
+    {
+      "domain": "turfservicedirect.co",
+      "provider": "Spaceship",
+      "row_number": 525,
+      "nameservers_set": true,
+      "zapmail_domain_id": "a198916e-7485-4dbf-9f41-18987f006a12",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfservicedirect.co",
+        "sean.r@turfservicedirect.co",
+        "sean.reynolds@turfservicedirect.co"
+      ]
+    },
+    {
+      "domain": "turfservicefocus.co",
+      "provider": "Spaceship",
+      "row_number": 526,
+      "nameservers_set": true,
+      "zapmail_domain_id": "0111fbe8-96f6-4ad4-919c-c87a577cc1bb",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfservicefocus.co",
+        "sean.r@turfservicefocus.co",
+        "sean.reynolds@turfservicefocus.co"
+      ]
+    },
+    {
+      "domain": "turfservicepoint.co",
+      "provider": "Spaceship",
+      "row_number": 527,
+      "nameservers_set": true,
+      "zapmail_domain_id": "c1d1e62c-fa94-4ac3-a34e-8c7b3e400ff0",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfservicepoint.co",
+        "sean.r@turfservicepoint.co",
+        "sean.reynolds@turfservicepoint.co"
+      ]
+    },
+    {
+      "domain": "turfserviceselect.co",
+      "provider": "Spaceship",
+      "row_number": 528,
+      "nameservers_set": true,
+      "zapmail_domain_id": "a98ca72d-6bb8-44c9-be07-611ec6f95202",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfserviceselect.co",
+        "sean.r@turfserviceselect.co",
+        "sean.reynolds@turfserviceselect.co"
+      ]
+    },
+    {
+      "domain": "turfservicezone.co",
+      "provider": "Spaceship",
+      "row_number": 529,
+      "nameservers_set": true,
+      "zapmail_domain_id": "e0724b1a-666e-4bc5-a357-36118cc1b4af",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfservicezone.co",
+        "sean.r@turfservicezone.co",
+        "sean.reynolds@turfservicezone.co"
+      ]
+    },
+    {
+      "domain": "turfworkdirect.co",
+      "provider": "Spaceship",
+      "row_number": 530,
+      "nameservers_set": true,
+      "zapmail_domain_id": "0533b365-808e-47b6-a527-0040e095cf97",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfworkdirect.co",
+        "sean.r@turfworkdirect.co",
+        "sean.reynolds@turfworkdirect.co"
+      ]
+    },
+    {
+      "domain": "turfworkzone.co",
+      "provider": "Spaceship",
+      "row_number": 531,
+      "nameservers_set": true,
+      "zapmail_domain_id": "9908102a-c0fe-48ee-b043-eddc66a4c0f7",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfworkzone.co",
+        "sean.r@turfworkzone.co",
+        "sean.reynolds@turfworkzone.co"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "turfcarepath.co",
+      "turfcareprime.co",
+      "turfcaresupport.co",
+      "turfcareworks.co",
+      "turfcarezone.co",
+      "turfmaintenancedirect.co",
+      "turfmaintenancehub.co",
+      "turfmaintenancepros.co",
+      "turfmaintenancezone.co",
+      "turfservicecrew.co",
+      "turfservicedirect.co",
+      "turfservicefocus.co",
+      "turfservicepoint.co",
+      "turfserviceselect.co",
+      "turfservicezone.co",
+      "turfworkdirect.co",
+      "turfworkzone.co"
+    ],
+    "initial_count": 51
+  },
+  "smartlead_accounts": [
+    "sean.r@turfservicezone.co",
+    "s.reynolds@turfmaintenancehub.co",
+    "sean.reynolds@turfcaresupport.co",
+    "sean.r@turfworkzone.co",
+    "sean.reynolds@turfservicepoint.co",
+    "sean.reynolds@turfcarepath.co",
+    "s.reynolds@turfservicecrew.co",
+    "s.reynolds@turfservicedirect.co",
+    "s.reynolds@turfmaintenancezone.co",
+    "sean.r@turfservicecrew.co",
+    "s.reynolds@turfcareprime.co",
+    "sean.r@turfcareworks.co",
+    "sean.reynolds@turfmaintenancezone.co",
+    "sean.r@turfservicedirect.co",
+    "sean.r@turfcarepath.co",
+    "sean.r@turfservicepoint.co",
+    "sean.reynolds@turfworkdirect.co",
+    "sean.r@turfmaintenancepros.co",
+    "s.reynolds@turfmaintenancepros.co",
+    "sean.reynolds@turfmaintenancehub.co",
+    "sean.reynolds@turfservicefocus.co",
+    "sean.reynolds@turfservicedirect.co",
+    "sean.reynolds@turfservicezone.co",
+    "sean.reynolds@turfworkzone.co",
+    "sean.r@turfcareprime.co",
+    "s.reynolds@turfworkdirect.co",
+    "s.reynolds@turfcareworks.co",
+    "s.reynolds@turfcarepath.co",
+    "s.reynolds@turfservicefocus.co",
+    "sean.reynolds@turfservicecrew.co",
+    "sean.reynolds@turfserviceselect.co",
+    "sean.reynolds@turfmaintenancepros.co",
+    "s.reynolds@turfmaintenancedirect.co",
+    "sean.reynolds@turfcareworks.co",
+    "sean.r@turfservicefocus.co",
+    "sean.r@turfmaintenancedirect.co",
+    "sean.r@turfcarezone.co",
+    "sean.r@turfserviceselect.co",
+    "s.reynolds@turfservicepoint.co",
+    "s.reynolds@turfserviceselect.co",
+    "sean.r@turfmaintenancezone.co",
+    "sean.reynolds@turfcarezone.co",
+    "sean.r@turfmaintenancehub.co",
+    "sean.reynolds@turfmaintenancedirect.co",
+    "s.reynolds@turfservicezone.co",
+    "sean.r@turfcaresupport.co",
+    "sean.r@turfworkdirect.co",
+    "s.reynolds@turfcarezone.co",
+    "sean.reynolds@turfcareprime.co",
+    "s.reynolds@turfworkzone.co",
+    "s.reynolds@turfcaresupport.co"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/generic_a_20260329.csv"
+}
