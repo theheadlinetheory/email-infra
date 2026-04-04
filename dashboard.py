@@ -286,10 +286,11 @@ def parse_rate(value):
         return None
 
 
-def calculate_health_score(account, health_data):
+def calculate_health_score(account, health_data, in_warmup_period=False):
     """Calculate health score (0-100) for an inbox.
 
-    Two signals: warmup reputation (80%) and campaign reply rate (20%).
+    During warmup (first 14 days): score = reputation only.
+    After warmup: reputation (80%) + campaign reply rate (20%).
     No-data defaults to 100 (new/unused accounts are healthy).
     Returns dict with score and list of flag reasons.
     """
@@ -298,7 +299,7 @@ def calculate_health_score(account, health_data):
     wd = account.get("warmup_details") or {}
     flags = []
 
-    # Warmup reputation (80%) — primary replacement signal
+    # Warmup reputation — primary replacement signal
     # 100pts at ≥99%, linear 0-100 across 95-99%, 0pts at ≤95%
     rep_raw = wd.get("warmup_reputation", "?")
     try:
@@ -314,7 +315,12 @@ def calculate_health_score(account, health_data):
     except (ValueError, TypeError):
         rep_score = 100  # no data = healthy
 
-    # Campaign reply rate (20%) — secondary spam signal
+    # During warmup period: bounce/reply rates are warmup pool noise, ignore them
+    if in_warmup_period:
+        score = round(rep_score)
+        return {"score": score, "flags": flags}
+
+    # Post-warmup: add campaign reply rate (20%)
     # 100pts at ≥2%, linear 0-100 across 0.5-2%, 0pts at ≤0.5%
     rr = parse_rate(h.get("reply_rate"))
     if rr is not None:
@@ -438,10 +444,11 @@ def api_overview():
         avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 1) if cl_reply_rates else None
 
         # Health scores and domain flagging
+        cl_in_warmup = days_left is not None and days_left > 0
         cl_scores = []
         flagged_domains = set()
         for a in cl_accounts:
-            hs = calculate_health_score(a, health)
+            hs = calculate_health_score(a, health, in_warmup_period=cl_in_warmup)
             cl_scores.append(hs["score"])
             if hs["flags"]:
                 domain = a.get("from_email", "").split("@")[-1]
@@ -523,12 +530,30 @@ def api_overview():
 def api_client_accounts(client_id):
     accounts = get_accounts_by_client(int(client_id))
     health = get_health_metrics()
+
+    # Determine if this client is still in warmup period
+    clients = get_clients()
+    client_name = ""
+    for c in clients:
+        if c["id"] == int(client_id):
+            client_name = c["name"]
+            break
+    warmup_dates = get_warmup_start_dates()
+    ws_date = warmup_dates.get(client_name.lower(), "")
+    in_warmup = False
+    if ws_date:
+        try:
+            ready = datetime.strptime(ws_date, "%Y-%m-%d") + timedelta(days=14)
+            in_warmup = ready > datetime.now()
+        except Exception:
+            pass
+
     result = []
     for a in accounts:
         wd = a.get("warmup_details") or {}
         email = a.get("from_email", "")
         h = health.get(email, {})
-        hs = calculate_health_score(a, health)
+        hs = calculate_health_score(a, health, in_warmup_period=in_warmup)
         result.append({
             "id": a["id"],
             "email": email,
