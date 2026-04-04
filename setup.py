@@ -1582,9 +1582,9 @@ def run_pipeline(config, config_path):
         config["steps_completed"] = completed
         save_config(config, config_path)
 
-    # ── STEP 10: Tag Accounts in SmartLead ──
+    # ── STEP 10: Tag Accounts + Assign Client in SmartLead ──
     if "smartlead_tags" not in completed:
-        log_step(9, TOTAL_STEPS, "TAG ACCOUNTS IN SMARTLEAD")
+        log_step(9, TOTAL_STEPS, "TAG ACCOUNTS + ASSIGN CLIENT IN SMARTLEAD")
 
         if not SMARTLEAD_JWT:
             log("SMARTLEAD_JWT not set in .env — cannot tag accounts.", "ERROR")
@@ -1609,6 +1609,35 @@ def run_pipeline(config, config_path):
                 else:
                     log(f"  Failed to find/create tag: '{tag_name}'", "WARN")
 
+            # Find or create SmartLead client for clientId assignment
+            sl_client_id = None
+            try:
+                sl_clients = requests.get(
+                    f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
+                ).json()
+                client_lower = client.lower().strip()
+                for c in sl_clients:
+                    cn = c["name"].lower().strip()
+                    if cn == client_lower or client_lower in cn or cn in client_lower:
+                        sl_client_id = c["id"]
+                        log(f"  Matched SmartLead client: '{c['name']}' (ID: {sl_client_id})")
+                        break
+                if not sl_client_id:
+                    slug = client.lower().replace("'", "").replace(" ", "").replace("&", "")
+                    cl_email = f"tht.{slug}.client@gmail.com"
+                    cr = requests.post(
+                        f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
+                        json={"name": client, "email": cl_email, "password": "THTclient2026!"},
+                        timeout=30
+                    )
+                    if cr.status_code == 201:
+                        sl_client_id = cr.json().get("clientId")
+                        log(f"  Created SmartLead client: '{client}' (ID: {sl_client_id})")
+                    else:
+                        log(f"  Could not create SmartLead client: {cr.status_code} {cr.text[:200]}", "WARN")
+            except Exception as e:
+                log(f"  SmartLead client lookup failed: {e}", "WARN")
+
             # Get our account IDs from SmartLead
             our_domains = {d["domain"] for d in config["purchased_domains"]}
             our_account_ids = []
@@ -1628,8 +1657,8 @@ def run_pipeline(config, config_path):
                     break
 
             if tag_ids and our_account_ids:
-                log(f"Tagging {len(our_account_ids)} accounts with {len(tag_ids)} tags...")
-                success, fail = sl_tag_accounts_bulk(our_account_ids, tag_ids)
+                log(f"Tagging {len(our_account_ids)} accounts with {len(tag_ids)} tags + client_id={sl_client_id}...")
+                success, fail = sl_tag_accounts_bulk(our_account_ids, tag_ids, client_id=sl_client_id)
                 log(f"  Tagged: {success} success, {fail} failed")
             else:
                 log(f"  Skipping: {len(tag_ids)} tags, {len(our_account_ids)} accounts", "WARN")
