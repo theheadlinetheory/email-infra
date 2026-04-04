@@ -360,8 +360,6 @@ def api_overview():
     health = get_health_metrics()
 
     total = len(all_accounts)
-    warming = sum(1 for a in all_accounts
-                  if (a.get("warmup_details") or {}).get("status") == "ACTIVE")
     in_campaign = sum(1 for a in all_accounts if a.get("campaign_count", 0) > 0)
     smtp_fail = sum(1 for a in all_accounts if not a.get("is_smtp_success"))
     imap_fail = sum(1 for a in all_accounts if not a.get("is_imap_success"))
@@ -405,8 +403,8 @@ def api_overview():
             except Exception:
                 pass
 
-        cl_warming = sum(1 for a in cl_accounts
-                         if (a.get("warmup_details") or {}).get("status") == "ACTIVE")
+        # "Warming up" = still in 14-day warmup period (date-based, not warmup-enabled)
+        cl_still_warming = len(cl_accounts) if days_left is not None and days_left > 0 else 0
         cl_campaigns = sum(1 for a in cl_accounts if a.get("campaign_count", 0) > 0)
         cl_smtp_fail = sum(1 for a in cl_accounts if not a.get("is_smtp_success"))
         cl_blocked = sum(
@@ -456,25 +454,22 @@ def api_overview():
         flagged_pct = (len(flagged_domains) / total_domains * 100) if total_domains > 0 else 0
         avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 0
 
-        # Warmup progress
-        warmed_count = 0
-        warming_count = 0
-        for a in cl_accounts:
-            ws_status = (a.get("warmup_details") or {}).get("status")
-            if ws_status == "ACTIVE":
-                warming_count += 1
-                rep = (a.get("warmup_details") or {}).get("warmup_reputation", "?")
-                try:
-                    if float(rep) >= 99:
-                        warmed_count += 1
-                except (ValueError, TypeError):
-                    pass
+        # Warmup progress — date-based (14-day warmup period)
+        if days_left is not None and days_left > 0:
+            warmup_days_done = 14 - days_left
+            warmup_progress = f"Day {warmup_days_done}/14"
+        elif ws_date:
+            warmup_days_done = 14
+            warmup_progress = "Complete"
+        else:
+            warmup_days_done = None
+            warmup_progress = "—"
 
         client_summaries.append({
             "id": cl["id"],
             "name": cl["name"],
             "accounts": len(cl_accounts),
-            "warming": cl_warming,
+            "warming": cl_still_warming,
             "in_campaign": cl_campaigns,
             "smtp_failures": cl_smtp_fail,
             "blocked": cl_blocked,
@@ -494,8 +489,8 @@ def api_overview():
             "flagged_domains": len(flagged_domains),
             "flagged_pct": round(flagged_pct, 1),
             "needs_attention": flagged_pct >= 15,
-            "warmed_count": warmed_count,
-            "warming_count": warming_count,
+            "warmup_progress": warmup_progress,
+            "warmup_days_done": warmup_days_done,
         })
 
     client_summaries.sort(
@@ -508,9 +503,12 @@ def api_overview():
 
     attention_count = sum(1 for c in client_summaries if c["needs_attention"])
 
+    # Global "warming up" = sum of accounts across clients still in 14-day warmup period
+    total_warming = sum(c["warming"] for c in client_summaries)
+
     return {
         "total_accounts": total,
-        "warming": warming,
+        "warming": total_warming,
         "in_campaign": in_campaign,
         "unassigned": unassigned,
         "smtp_failures": smtp_fail,
