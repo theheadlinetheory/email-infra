@@ -546,8 +546,33 @@ def sl_create_tag(name, color="#D0FCB1"):
     result = sl_gql(mutation, {"object": {"name": name, "color": color}})
     return result.get("data", {}).get("insert_tags_one", {})
 
-def sl_find_or_create_tag(name, color="#D0FCB1", existing_tags=None):
-    """Find an existing tag by name (fuzzy) or create a new one. Returns tag ID."""
+TAG_COLOR_PALETTE = [
+    "#FF6B6B", "#FF8E72", "#FFA94D", "#FFD43B", "#A9E34B",
+    "#51CF66", "#20C997", "#22B8CF", "#339AF0", "#5C7CFA",
+    "#7950F2", "#BE4BDB", "#E64980", "#F06595", "#CC5DE8",
+    "#845EF7", "#5F3DC4", "#4263EB", "#1C7ED6", "#1098AD",
+    "#0CA678", "#37B24D", "#74B816", "#F59F00", "#F76707",
+    "#E8590C", "#D6336C", "#AE3EC9", "#7048E8", "#4C6EF5",
+    "#15AABF", "#12B886", "#82C91E", "#FAB005", "#FD7E14",
+    "#E03131", "#C2255C", "#9C36B5", "#6741D9", "#3B5BDB",
+    "#1971C2", "#0C8599", "#099268", "#2F9E44", "#66A80F",
+]
+
+def sl_pick_unique_color(existing_tags=None):
+    """Pick a tag color not already used by any existing tag."""
+    if existing_tags is None:
+        existing_tags = sl_get_all_tags()
+    used = {t.get("color", "").upper() for t in existing_tags.values()}
+    for color in TAG_COLOR_PALETTE:
+        if color.upper() not in used:
+            return color
+    # Fallback: generate a random-ish color if palette exhausted
+    import hashlib
+    h = hashlib.md5(str(len(used)).encode()).hexdigest()[:6]
+    return f"#{h}"
+
+def sl_find_or_create_tag(name, color=None, existing_tags=None):
+    """Find an existing tag by name (fuzzy) or create a new one with a unique color. Returns tag ID."""
     if existing_tags is None:
         existing_tags = sl_get_all_tags()
     # Exact match first
@@ -565,11 +590,14 @@ def sl_find_or_create_tag(name, color="#D0FCB1", existing_tags=None):
     if best_match:
         log(f"  Fuzzy matched tag: '{name}' → existing '{best_match[0]}' (ID: {best_match[1]['id']})")
         return best_match[1]["id"]
-    # No match — create new tag
+    # No match — create new tag with a unique color
+    if color is None:
+        color = sl_pick_unique_color(existing_tags)
     tag = sl_create_tag(name, color)
     tag_id = tag.get("id")
     if tag_id:
-        log(f"  Created new tag: '{name}' (ID: {tag_id})")
+        log(f"  Created new tag: '{name}' (ID: {tag_id}, color: {color})")
+        existing_tags[name] = {"id": tag_id, "name": name, "color": color}
     return tag_id
 
 def sl_dedup_check():
@@ -1706,9 +1734,10 @@ def run_pipeline(config, config_path):
             date_tag_name = f"{warmup_date.month}/{warmup_date.day}/{warmup_date.strftime('%y')}"
 
             # Find or create the 3 tags: client name, "Zapmail", date
+            # Colors are auto-assigned to be unique — no hardcoded colors
             tag_ids = []
-            for tag_name, color in [(client, "#B1C4FC"), ("Zapmail", "#B1FCB3"), (date_tag_name, "#D0FCB1")]:
-                tag_id = sl_find_or_create_tag(tag_name, color, existing_tags)
+            for tag_name in [client, "Zapmail", date_tag_name]:
+                tag_id = sl_find_or_create_tag(tag_name, existing_tags=existing_tags)
                 if tag_id:
                     tag_ids.append(tag_id)
                     log(f"  Tag: '{tag_name}' → ID {tag_id}")
