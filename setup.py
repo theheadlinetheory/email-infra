@@ -572,6 +572,95 @@ def sl_find_or_create_tag(name, color="#D0FCB1", existing_tags=None):
         log(f"  Created new tag: '{name}' (ID: {tag_id})")
     return tag_id
 
+def sl_dedup_check():
+    """Scan for duplicate tags and clients in SmartLead. Logs warnings and auto-deletes
+    unused duplicate clients. Halts the pipeline if duplicate tags are found."""
+    from collections import defaultdict
+
+    # ── Check tags ──
+    all_tags = sl_get_all_tags()
+    tag_by_lower = defaultdict(list)
+    for name, data in all_tags.items():
+        tag_by_lower[name.lower().strip()].append((name, data))
+    # Also check substring overlaps (e.g. "Timesavers" vs "Timesavers Landscaping")
+    tag_names = sorted(all_tags.keys(), key=str.lower)
+    tag_dupes = []
+    for i, n1 in enumerate(tag_names):
+        for n2 in tag_names[i+1:]:
+            l1, l2 = n1.lower().strip(), n2.lower().strip()
+            # Skip date tags (M/D/YY) — these are intentionally similar
+            if "/" in l1 and "/" in l2:
+                continue
+            if l1 == l2 or l1 in l2 or l2 in l1:
+                tag_dupes.append((n1, all_tags[n1]["id"], n2, all_tags[n2]["id"]))
+
+    if tag_dupes:
+        log("DUPLICATE TAGS FOUND — resolve before continuing:", "ERROR")
+        for n1, id1, n2, id2 in tag_dupes:
+            log(f"  '{n1}' (ID: {id1}) <-> '{n2}' (ID: {id2})", "ERROR")
+        sys.exit(1)
+    else:
+        log("Tag dedup check: OK (no duplicates)")
+
+    # ── Check clients ──
+    try:
+        sl_clients = requests.get(
+            f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
+        ).json()
+    except Exception as e:
+        log(f"Client dedup check skipped — API error: {e}", "WARN")
+        return
+
+    client_by_lower = defaultdict(list)
+    for c in sl_clients:
+        client_by_lower[c["name"].lower().strip()].append(c)
+    # Also check substring overlaps
+    client_dupes = []
+    for i, c1 in enumerate(sl_clients):
+        for c2 in sl_clients[i+1:]:
+            l1, l2 = c1["name"].lower().strip(), c2["name"].lower().strip()
+            if l1 == l2 or l1 in l2 or l2 in l1:
+                client_dupes.append((c1, c2))
+
+    if client_dupes:
+        log("DUPLICATE CLIENTS FOUND — attempting auto-cleanup:", "WARN")
+        # Fetch account usage to determine which to keep
+        all_accounts = []
+        offset = 0
+        while True:
+            batch = sl_list_accounts(offset=offset, limit=100)
+            if isinstance(batch, list):
+                all_accounts.extend(batch)
+                if len(batch) < 100:
+                    break
+                offset += 100
+            else:
+                break
+        from collections import Counter
+        usage = Counter(a.get("client_id") for a in all_accounts if a.get("client_id"))
+
+        for c1, c2 in client_dupes:
+            u1, u2 = usage.get(c1["id"], 0), usage.get(c2["id"], 0)
+            keep, remove = (c1, c2) if u1 >= u2 else (c2, c1)
+            if usage.get(remove["id"], 0) > 0:
+                log(f"  CANNOT auto-delete '{remove['name']}' (ID: {remove['id']}) — {usage[remove['id']]} accounts assigned. Resolve manually.", "ERROR")
+                sys.exit(1)
+            log(f"  Deleting unused duplicate: '{remove['name']}' (ID: {remove['id']}), keeping '{keep['name']}' (ID: {keep['id']}, {u1 if keep == c1 else u2} accounts)")
+            r = requests.post(
+                f"{SMARTLEAD_INTERNAL_API}/client/delete",
+                headers=sl_internal_headers(),
+                json={"id": remove["id"]},
+                timeout=30
+            )
+            if r.status_code == 200:
+                log(f"    Deleted successfully")
+            else:
+                log(f"    Delete failed: {r.status_code} {r.text[:200]}", "ERROR")
+                sys.exit(1)
+    else:
+        log("Client dedup check: OK (no duplicates)")
+
+
 def sl_tag_account(account_id, tag_ids, client_id=None):
     """Apply tags to an email account via the internal save-management-details endpoint."""
     body = {"id": account_id, "tags": tag_ids, "clientId": client_id}
@@ -1605,6 +1694,9 @@ def run_pipeline(config, config_path):
             log("Add JWT from SmartLead browser dev tools to .env as SMARTLEAD_JWT=<token>")
             sys.exit(1)
         else:
+            # ── Dedup guard: scan for duplicate tags and clients ──
+            sl_dedup_check()
+
             # Get all existing tags to avoid creating duplicates
             existing_tags = sl_get_all_tags()
             log(f"Found {len(existing_tags)} existing tags in SmartLead")
