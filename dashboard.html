@@ -905,6 +905,9 @@ function renderPipelines() {
         tag_and_configure: 'Tag & Configure',
         export_to_smartlead: 'Export to SmartLead',
         enable_warmup: 'Enable Warmup',
+        smartlead_tags: 'SmartLead Tags',
+        export_csv: 'Export CSV',
+        gcal_rotation: 'Schedule Rotation',
         wait_for_warmup: 'Waiting for Warmup',
         check_campaigns: 'Check Campaigns',
         remove_old: 'Remove Old Inboxes',
@@ -929,8 +932,8 @@ function renderPipelines() {
 
         if (p.status !== 'complete') {
             const allSteps = p.type === 'new_setup'
-                ? ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup']
-                : ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','wait_for_warmup','check_campaigns','remove_old','cleanup'];
+                ? ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','smartlead_tags','export_csv','gcal_rotation']
+                : ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','smartlead_tags','wait_for_warmup','check_campaigns','remove_old','cleanup','export_csv','gcal_rotation'];
             const currentIdx = allSteps.indexOf(p.current_step);
             html += '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">';
             allSteps.forEach((s, i) => {

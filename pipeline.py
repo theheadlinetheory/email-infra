@@ -31,8 +31,18 @@ from setup import (
     sl_find_or_create_tag,
     sl_tag_accounts_bulk,
     sl_get_all_tags,
+    sl_update_account,
+    sl_verify_warmup,
+    sl_dedup_check,
+    export_for_sheet,
     SMARTLEAD_API,
     SMARTLEAD_KEY,
+    SMARTLEAD_JWT,
+    GCAL_CALENDAR_ID,
+    GCAL_ROTATION_WEEKS,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    GOOGLE_REFRESH_TOKEN,
 )
 from zapmail_ops import (
     zm_update_mailboxes,
@@ -43,7 +53,7 @@ from zapmail_ops import (
     zm_get_subscriptions,
     zm_get_subscription_mailboxes,
 )
-from sheets import get_available_domains, mark_domains_in_use_batch
+from sheets import get_available_domains, mark_domains_in_use_batch, setup_client_tab
 
 import requests
 
@@ -78,13 +88,18 @@ SETUP_STEPS = [
     "tag_and_configure",
     "export_to_smartlead",
     "enable_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation",
 ]
 
-REPLACEMENT_STEPS = SETUP_STEPS + [
+REPLACEMENT_STEPS = SETUP_STEPS[:-2] + [
     "wait_for_warmup",
     "check_campaigns",
     "remove_old",
     "cleanup",
+    "export_csv",
+    "gcal_rotation",
 ]
 
 
@@ -201,6 +216,13 @@ def step_claim_domains(pipeline):
 
     if domains_to_claim:
         mark_domains_in_use_batch(domains_to_claim, pipeline["client_name"])
+
+    # Update the client tab in the Google Sheet
+    purchased = [
+        {"domain": d, "provider": info.get("provider", "")}
+        for d, info in pipeline["domains"].items()
+    ]
+    setup_client_tab(pipeline["client_name"], purchased)
 
     _mark_all_domains_complete(pipeline, "claim_domains")
     return True
@@ -430,38 +452,214 @@ def step_export_to_smartlead(pipeline):
 
 
 def step_enable_warmup(pipeline):
-    """Enable warmup on all new SmartLead accounts and assign client tag."""
-    client_name = pipeline["client_name"]
-
-    # Find or create SmartLead tag
-    existing_tags = sl_get_all_tags()
-    tag_id = sl_find_or_create_tag(client_name, existing_tags=existing_tags)
-
+    """Enable warmup on all new SmartLead accounts with verification."""
     all_account_ids = []
     for info in pipeline["domains"].values():
         all_account_ids.extend(info.get("smartlead_account_ids", []))
 
-    # Enable warmup on each account
+    # Enable warmup + set time_to_wait on each account
     for acc_id in all_account_ids:
         sl_set_warmup(acc_id)
+        sl_update_account(acc_id, {"time_to_wait_in_mins": 5})
         time.sleep(1)
 
-    # Tag accounts with client name
-    if tag_id and all_account_ids:
-        # Get client ID from SmartLead
-        client_id = None
-        r = requests.get(
-            f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
-        )
-        if r.status_code == 200:
-            for c in r.json():
-                if c["name"].lower() == client_name.lower():
-                    client_id = c["id"]
-                    break
-        sl_tag_accounts_bulk(all_account_ids, [tag_id], client_id=client_id)
+    # Verify warmup settings on all accounts
+    bad_accounts = []
+    for acc_id in all_account_ids:
+        sl_update_account(acc_id, {"time_to_wait_in_mins": 5})
+        ok, issues = sl_verify_warmup(acc_id)
+        if not ok:
+            log.warning("Warmup wrong on %s: %s — re-applying", acc_id, issues)
+            sl_set_warmup(acc_id)
+            time.sleep(1)
+            ok2, issues2 = sl_verify_warmup(acc_id)
+            if not ok2:
+                bad_accounts.append(str(acc_id))
+                log.warning("Still wrong after re-apply: %s — %s", acc_id, issues2)
+        time.sleep(0.3)
+
+    if bad_accounts:
+        pipeline["errors"].append(f"Warmup verify failed: {', '.join(bad_accounts)}")
+        return False
 
     _mark_all_domains_complete(pipeline, "enable_warmup")
     pipeline["warmup_started_at"] = datetime.now().isoformat()
+    return True
+
+
+def step_smartlead_tags(pipeline):
+    """Tag all SmartLead accounts with 3 tags (client, Zapmail, date) + assign client."""
+    client_name = pipeline["client_name"]
+
+    # Dedup guard
+    sl_dedup_check()
+
+    existing_tags = sl_get_all_tags()
+
+    # Date tag in M/D/YY format
+    warmup_date = datetime.fromisoformat(pipeline.get("warmup_started_at", datetime.now().isoformat()))
+    date_tag_name = f"{warmup_date.month}/{warmup_date.day}/{warmup_date.strftime('%y')}"
+
+    # Find or create the 3 tags: client name, "Zapmail", date
+    tag_ids = []
+    for tag_name, color in [(client_name, "#B1C4FC"), ("Zapmail", "#B1FCB3"), (date_tag_name, "#D0FCB1")]:
+        tag_id = sl_find_or_create_tag(tag_name, color, existing_tags)
+        if tag_id:
+            tag_ids.append(tag_id)
+
+    # Find or create SmartLead client
+    sl_client_id = None
+    try:
+        r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
+        if r.status_code == 200:
+            client_lower = client_name.lower().strip()
+            for c in r.json():
+                cn = c["name"].lower().strip()
+                if cn == client_lower or client_lower in cn or cn in client_lower:
+                    sl_client_id = c["id"]
+                    break
+            if not sl_client_id:
+                slug = client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
+                cl_email = f"tht.{slug}.client@gmail.com"
+                cr = requests.post(
+                    f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
+                    json={"name": client_name, "email": cl_email, "password": "THTclient2026!"},
+                    timeout=30,
+                )
+                if cr.status_code == 201:
+                    sl_client_id = cr.json().get("clientId")
+    except Exception as e:
+        log.warning("SmartLead client lookup failed: %s", e)
+
+    # Collect all account IDs
+    all_account_ids = []
+    for info in pipeline["domains"].values():
+        all_account_ids.extend(info.get("smartlead_account_ids", []))
+
+    if tag_ids and all_account_ids:
+        sl_tag_accounts_bulk(all_account_ids, tag_ids, client_id=sl_client_id)
+
+    _mark_all_domains_complete(pipeline, "smartlead_tags")
+    return True
+
+
+def step_export_csv(pipeline):
+    """Export CSV summary for Google Sheet."""
+    client_name = pipeline["client_name"]
+    warmup_start = pipeline.get("warmup_started_at", datetime.now().isoformat())
+
+    # Build a config dict that export_for_sheet expects
+    purchased_domains = []
+    for domain_name, info in pipeline["domains"].items():
+        specs = [
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.reynolds"},
+        ]
+        emails = [f"{s['mailboxUsername']}@{domain_name}" for s in specs]
+        purchased_domains.append({
+            "domain": domain_name,
+            "inboxes": specs,
+            "inbox_emails": emails,
+        })
+
+    config = {
+        "client_name": client_name,
+        "purchased_domains": purchased_domains,
+        "infrastructure": {
+            "warmup_start_date": warmup_start[:10],
+            "estimated_launch_date": (
+                datetime.fromisoformat(warmup_start) + timedelta(days=14)
+            ).strftime("%Y-%m-%d"),
+        },
+    }
+
+    csv_path, rows = export_for_sheet(config)
+    pipeline["export_csv_path"] = str(csv_path)
+    _mark_all_domains_complete(pipeline, "export_csv")
+    return True
+
+
+def step_gcal_rotation(pipeline):
+    """Schedule infrastructure rotation reminder in Google Calendar."""
+    client_name = pipeline["client_name"]
+    warmup_start = datetime.fromisoformat(
+        pipeline.get("warmup_started_at", datetime.now().isoformat())
+    )
+    rotation_date = warmup_start + timedelta(weeks=GCAL_ROTATION_WEEKS)
+    rotation_str = rotation_date.strftime("%Y-%m-%d")
+    rotation_end_str = (rotation_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    event_title = f"{client_name} — Cancel old inboxes and set up new ones"
+    domain_count = len(pipeline["domains"])
+    account_count = domain_count * MAILBOXES_PER_DOMAIN
+
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN]):
+        log.warning("Google Calendar OAuth not configured — skipping rotation event")
+        _mark_all_domains_complete(pipeline, "gcal_rotation")
+        return True
+
+    try:
+        # Exchange refresh token for access token
+        token_resp = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": GOOGLE_REFRESH_TOKEN,
+                "grant_type": "refresh_token",
+            },
+            timeout=15,
+        )
+        if token_resp.status_code != 200:
+            log.warning("Google token refresh failed: %s", token_resp.text[:200])
+            _mark_all_domains_complete(pipeline, "gcal_rotation")
+            pipeline["status"] = "complete"
+            pipeline["completed_at"] = datetime.now().isoformat()
+            return True
+
+        access_token = token_resp.json()["access_token"]
+        gcal_url = f"https://www.googleapis.com/calendar/v3/calendars/{GCAL_CALENDAR_ID}/events"
+        gcal_payload = {
+            "summary": event_title,
+            "description": (
+                f"Client: {client_name}\n"
+                f"Domains: {domain_count}\n"
+                f"Accounts: {account_count}\n"
+                f"Warmup started: {warmup_start.strftime('%Y-%m-%d')}\n"
+                f"Pipeline: {pipeline['id']}\n\n"
+                f"Action: Cancel the current Zapmail inboxes for this client "
+                f"and run a fresh infrastructure setup."
+            ),
+            "start": {"date": rotation_str},
+            "end": {"date": rotation_end_str},
+            "reminders": {
+                "useDefault": False,
+                "overrides": [
+                    {"method": "popup", "minutes": 1440},
+                    {"method": "popup", "minutes": 0},
+                ],
+            },
+        }
+        resp = requests.post(
+            gcal_url,
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            json=gcal_payload,
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            event_data = resp.json()
+            pipeline["gcal_rotation_event"] = {
+                "event_id": event_data.get("id"),
+                "date": rotation_str,
+                "link": event_data.get("htmlLink"),
+            }
+        else:
+            log.warning("Calendar API error (%s): %s", resp.status_code, resp.text[:300])
+    except Exception as e:
+        log.warning("Calendar event failed: %s", e)
+
+    _mark_all_domains_complete(pipeline, "gcal_rotation")
     return True
 
 
@@ -565,8 +763,6 @@ def step_cleanup(pipeline):
             zm_remove_on_renewal(mailbox_ids)
 
     _mark_all_domains_complete(pipeline, "cleanup")
-    pipeline["status"] = "complete"
-    pipeline["completed_at"] = datetime.now().isoformat()
     return True
 
 
@@ -580,6 +776,9 @@ STEP_EXECUTORS = {
     "tag_and_configure": step_tag_and_configure,
     "export_to_smartlead": step_export_to_smartlead,
     "enable_warmup": step_enable_warmup,
+    "smartlead_tags": step_smartlead_tags,
+    "export_csv": step_export_csv,
+    "gcal_rotation": step_gcal_rotation,
     "wait_for_warmup": step_wait_for_warmup,
     "check_campaigns": step_check_campaigns,
     "remove_old": step_remove_old,
