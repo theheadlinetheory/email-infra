@@ -5,6 +5,8 @@ Each pipeline is persisted to pipelines/<id>.json for crash recovery.
 """
 
 import json
+import logging
+import random
 import time
 import uuid
 import threading
@@ -45,9 +47,20 @@ from sheets import get_available_domains, mark_domains_in_use_batch
 
 import requests
 
+log = logging.getLogger("pipeline")
+
 SCRIPT_DIR = Path(__file__).parent
 PIPELINES_DIR = SCRIPT_DIR / "pipelines"
 PIPELINES_DIR.mkdir(exist_ok=True)
+
+# Thread safety: one lock per pipeline ID to prevent concurrent step execution
+_pipeline_locks: dict[str, threading.Lock] = {}
+_locks_lock = threading.Lock()
+
+WARMUP_TARGET_REPUTATION = 99
+MAILBOXES_PER_DOMAIN = 3
+ZAPMAIL_ACTIVATION_TIMEOUT_S = 30 * 60
+EXPORT_TIMEOUT_S = 15 * 60
 
 # Headshot URL — served from the dashboard itself.
 # When deployed to Render, use the Render URL. Locally, use localhost.
@@ -75,6 +88,36 @@ REPLACEMENT_STEPS = SETUP_STEPS + [
 ]
 
 
+def _get_pipeline_lock(pipeline_id):
+    """Get or create a lock for a specific pipeline."""
+    with _locks_lock:
+        if pipeline_id not in _pipeline_locks:
+            _pipeline_locks[pipeline_id] = threading.Lock()
+        return _pipeline_locks[pipeline_id]
+
+
+def _mark_all_domains_complete(pipeline, step_name):
+    """Mark all domains as complete for a given step."""
+    for info in pipeline["domains"].values():
+        info["step"] = step_name
+        info["step_status"] = "complete"
+
+
+def _fetch_all_smartlead_accounts():
+    """Paginate through all SmartLead accounts."""
+    all_accounts = []
+    offset = 0
+    while True:
+        batch = sl_list_accounts(offset=offset, limit=100)
+        if not isinstance(batch, list):
+            break
+        all_accounts.extend(batch)
+        if len(batch) < 100:
+            break
+        offset += 100
+    return all_accounts
+
+
 def generate_pipeline_id():
     return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
@@ -99,7 +142,8 @@ def load_all_pipelines():
     for path in PIPELINES_DIR.glob("*.json"):
         try:
             pipelines.append(json.loads(path.read_text()))
-        except Exception:
+        except Exception as e:
+            log.warning("Failed to load pipeline %s: %s", path.name, e)
             continue
     return pipelines
 
@@ -158,10 +202,7 @@ def step_claim_domains(pipeline):
     if domains_to_claim:
         mark_domains_in_use_batch(domains_to_claim, pipeline["client_name"])
 
-    for domain_name in pipeline["domains"]:
-        pipeline["domains"][domain_name]["step"] = "claim_domains"
-        pipeline["domains"][domain_name]["step_status"] = "complete"
-
+    _mark_all_domains_complete(pipeline, "claim_domains")
     return True
 
 
@@ -202,8 +243,8 @@ def step_connect_zapmail(pipeline):
         pipeline["errors"].append(f"ZapMail connect failed: {result}")
         return False
 
-    # Poll for domains to become active (up to 30 min)
-    max_wait = 30 * 60
+    # Poll for domains to become active
+    max_wait = ZAPMAIL_ACTIVATION_TIMEOUT_S
     waited = 0
     poll_interval = 30
     while waited < max_wait:
@@ -246,7 +287,7 @@ def step_create_mailboxes(pipeline):
             all_ok = False
             continue
 
-        specs = generate_mailbox_specs(domain_name, count=3)
+        specs = generate_mailbox_specs(domain_name, count=MAILBOXES_PER_DOMAIN)
         result = zm_create_mailboxes(str(domain_id), domain_name, specs)
 
         # Check if we need to buy addon mailboxes first
@@ -260,7 +301,7 @@ def step_create_mailboxes(pipeline):
         mailboxes = zm_list_mailboxes(domain_id=domain_id)
         if isinstance(mailboxes, dict):
             mb_list = mailboxes.get("data", [])
-            if isinstance(mb_list, list) and len(mb_list) >= 3:
+            if isinstance(mb_list, list) and len(mb_list) >= MAILBOXES_PER_DOMAIN:
                 info["mailbox_ids"] = [m["id"] for m in mb_list]
                 info["step"] = "create_mailboxes"
                 info["step_status"] = "complete"
@@ -270,7 +311,7 @@ def step_create_mailboxes(pipeline):
                 time.sleep(10)
                 mailboxes = zm_list_mailboxes(domain_id=domain_id)
                 mb_list = mailboxes.get("data", []) if isinstance(mailboxes, dict) else []
-                if isinstance(mb_list, list) and len(mb_list) >= 3:
+                if isinstance(mb_list, list) and len(mb_list) >= MAILBOXES_PER_DOMAIN:
                     info["mailbox_ids"] = [m["id"] for m in mb_list]
                     info["step"] = "create_mailboxes"
                     info["step_status"] = "complete"
@@ -304,10 +345,7 @@ def step_upload_photos(pipeline):
     result = zm_update_mailboxes(mailbox_data)
 
     # Mark complete regardless — photo upload is best-effort
-    for info in pipeline["domains"].values():
-        info["step"] = "upload_photos"
-        info["step_status"] = "complete"
-
+    _mark_all_domains_complete(pipeline, "upload_photos")
     return True
 
 
@@ -344,10 +382,7 @@ def step_tag_and_configure(pipeline):
     if pipeline.get("forwarding_url") and domain_ids:
         zm_set_forwarding(domain_ids, pipeline["forwarding_url"])
 
-    for info in pipeline["domains"].values():
-        info["step"] = "tag_and_configure"
-        info["step_status"] = "complete"
-
+    _mark_all_domains_complete(pipeline, "tag_and_configure")
     return True
 
 
@@ -363,7 +398,7 @@ def step_export_to_smartlead(pipeline):
     result = zm_export_mailboxes(["SMARTLEAD"], mailbox_ids=all_mailbox_ids)
 
     # Poll export status
-    max_wait = 15 * 60  # 15 minutes
+    max_wait = EXPORT_TIMEOUT_S
     waited = 0
     while waited < max_wait:
         time.sleep(30)
@@ -375,23 +410,12 @@ def step_export_to_smartlead(pipeline):
 
     # Verify accounts appeared in SmartLead — check by domain name
     time.sleep(30)
+    all_sl_accounts = _fetch_all_smartlead_accounts()
     found_all = True
     for domain_name, info in pipeline["domains"].items():
-        # Search SmartLead accounts for this domain
-        offset = 0
-        domain_accounts = []
-        while True:
-            batch = sl_list_accounts(offset=offset, limit=100)
-            if not isinstance(batch, list):
-                break
-            for a in batch:
-                if domain_name in a.get("from_email", ""):
-                    domain_accounts.append(a)
-            if len(batch) < 100:
-                break
-            offset += 100
+        domain_accounts = [a for a in all_sl_accounts if domain_name in a.get("from_email", "")]
 
-        if len(domain_accounts) >= 3:
+        if len(domain_accounts) >= MAILBOXES_PER_DOMAIN:
             info["smartlead_account_ids"] = [a["id"] for a in domain_accounts]
             info["step"] = "export_to_smartlead"
             info["step_status"] = "complete"
@@ -436,10 +460,7 @@ def step_enable_warmup(pipeline):
                     break
         sl_tag_accounts_bulk(all_account_ids, [tag_id], client_id=client_id)
 
-    for info in pipeline["domains"].values():
-        info["step"] = "enable_warmup"
-        info["step_status"] = "complete"
-
+    _mark_all_domains_complete(pipeline, "enable_warmup")
     pipeline["warmup_started_at"] = datetime.now().isoformat()
     return True
 
@@ -460,15 +481,13 @@ def step_wait_for_warmup(pipeline):
                 wd = acc.get("warmup_details") or {}
                 rep = wd.get("warmup_reputation", "?")
                 try:
-                    if float(rep) < 99:
+                    if float(rep) < WARMUP_TARGET_REPUTATION:
                         all_warmed = False
                 except (ValueError, TypeError):
                     all_warmed = False
 
     if all_warmed:
-        for info in pipeline["domains"].values():
-            info["step"] = "wait_for_warmup"
-            info["step_status"] = "complete"
+        _mark_all_domains_complete(pipeline, "wait_for_warmup")
 
     return all_warmed
 
@@ -480,9 +499,7 @@ def step_check_campaigns(pipeline):
     """
     old_domains = pipeline.get("old_domains", [])
     if not old_domains:
-        for info in pipeline["domains"].values():
-            info["step"] = "check_campaigns"
-            info["step_status"] = "complete"
+        _mark_all_domains_complete(pipeline, "check_campaigns")
         return True
 
     # Get all campaigns
@@ -518,9 +535,7 @@ def step_check_campaigns(pipeline):
         pipeline["status"] = "awaiting_removal"
         return False  # Needs manual action
 
-    for info in pipeline["domains"].values():
-        info["step"] = "check_campaigns"
-        info["step_status"] = "complete"
+    _mark_all_domains_complete(pipeline, "check_campaigns")
     return True
 
 
@@ -529,15 +544,15 @@ def step_remove_old(pipeline):
     old_domains = pipeline.get("old_domains", [])
     for old_domain in old_domains:
         for acc_id in old_domain.get("smartlead_account_ids", []):
-            requests.delete(
+            r = requests.delete(
                 f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
                 timeout=30,
             )
+            if r.status_code not in (200, 204):
+                log.warning("Failed to delete SmartLead account %s: %s", acc_id, r.text[:200])
             time.sleep(0.5)
 
-    for info in pipeline["domains"].values():
-        info["step"] = "remove_old"
-        info["step_status"] = "complete"
+    _mark_all_domains_complete(pipeline, "remove_old")
     return True
 
 
@@ -549,9 +564,7 @@ def step_cleanup(pipeline):
         if mailbox_ids:
             zm_remove_on_renewal(mailbox_ids)
 
-    for info in pipeline["domains"].values():
-        info["step"] = "cleanup"
-        info["step_status"] = "complete"
+    _mark_all_domains_complete(pipeline, "cleanup")
     pipeline["status"] = "complete"
     pipeline["completed_at"] = datetime.now().isoformat()
     return True
@@ -575,35 +588,45 @@ STEP_EXECUTORS = {
 
 
 def run_pipeline_steps(pipeline):
-    """Execute pipeline steps from current position until blocked or complete."""
-    steps = pipeline["steps"]
-    current_idx = steps.index(pipeline["current_step"])
+    """Execute pipeline steps from current position until blocked or complete.
+    Acquires a per-pipeline lock to prevent concurrent execution.
+    """
+    lock = _get_pipeline_lock(pipeline["id"])
+    if not lock.acquire(blocking=False):
+        log.info("Pipeline %s already running, skipping", pipeline["id"])
+        return
 
-    for i in range(current_idx, len(steps)):
-        step_name = steps[i]
-        pipeline["current_step"] = step_name
-        pipeline["updated_at"] = datetime.now().isoformat()
-        save_pipeline(pipeline)
+    try:
+        steps = pipeline["steps"]
+        current_idx = steps.index(pipeline["current_step"])
 
-        executor = STEP_EXECUTORS[step_name]
-        success = executor(pipeline)
-        save_pipeline(pipeline)
-
-        if not success:
-            if pipeline["status"] == "awaiting_removal":
-                return  # Paused for manual action
-            if step_name == "wait_for_warmup":
-                return  # Will be re-checked by monitor
-            # Error — stop
-            pipeline["status"] = "error"
+        for i in range(current_idx, len(steps)):
+            step_name = steps[i]
+            pipeline["current_step"] = step_name
+            pipeline["updated_at"] = datetime.now().isoformat()
             save_pipeline(pipeline)
-            return
 
-    # All steps complete
-    if pipeline["status"] != "complete":
-        pipeline["status"] = "complete"
-        pipeline["completed_at"] = datetime.now().isoformat()
-        save_pipeline(pipeline)
+            executor = STEP_EXECUTORS[step_name]
+            success = executor(pipeline)
+            save_pipeline(pipeline)
+
+            if not success:
+                if pipeline["status"] == "awaiting_removal":
+                    return  # Paused for manual action
+                if step_name == "wait_for_warmup":
+                    return  # Will be re-checked by monitor
+                # Error — stop
+                pipeline["status"] = "error"
+                save_pipeline(pipeline)
+                return
+
+        # All steps complete
+        if pipeline["status"] != "complete":
+            pipeline["status"] = "complete"
+            pipeline["completed_at"] = datetime.now().isoformat()
+            save_pipeline(pipeline)
+    finally:
+        lock.release()
 
 
 # --- Background Monitor Thread ---
@@ -619,7 +642,7 @@ def get_flagged_domains_for_client(client_accounts):
         email = acc.get("from_email", "")
         domain = email.split("@")[-1] if "@" in email else ""
         try:
-            if float(rep) < 99:
+            if float(rep) < WARMUP_TARGET_REPUTATION:
                 if domain not in flagged:
                     flagged[domain] = {"emails": [], "smartlead_account_ids": []}
                 flagged[domain]["emails"].append(email)
@@ -631,18 +654,7 @@ def get_flagged_domains_for_client(client_accounts):
 
 def _run_monitor_check():
     """Single monitor check iteration."""
-    # Get all accounts
-    all_accounts = []
-    offset = 0
-    while True:
-        batch = sl_list_accounts(offset=offset, limit=100)
-        if isinstance(batch, list):
-            all_accounts.extend(batch)
-            if len(batch) < 100:
-                break
-            offset += 100
-        else:
-            break
+    all_accounts = _fetch_all_smartlead_accounts()
 
     # Get clients
     r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
@@ -671,7 +683,7 @@ def _run_monitor_check():
             # Check domain inventory
             available = get_available_domains()
             if len(available) < 1:
-                print(f"[MONITOR] No domains available for replacement of {domain}")
+                log.info("[MONITOR] No domains available for replacement of {domain}")
                 continue
 
             # Pick oldest domain from inventory
@@ -753,7 +765,6 @@ def _run_weekly_placement_tests():
 
     # Sample: test up to 10 mailboxes (or available credits, whichever is less)
     sample_size = min(10, available_credits, len(mailbox_list))
-    import random
     sample_ids = [m["id"] for m in random.sample(mailbox_list, sample_size)]
 
     result = zm_run_placement_test(sample_ids)
@@ -764,7 +775,7 @@ def _run_weekly_placement_tests():
         "mailboxes_tested": sample_ids,
         "result": str(result)[:500],
     }))
-    print(f"[PLACEMENT] Ran placement tests for {sample_size} mailboxes")
+    log.info("[PLACEMENT] Ran placement tests for {sample_size} mailboxes")
 
 
 def monitor_loop(check_interval_hours=4):
@@ -773,12 +784,12 @@ def monitor_loop(check_interval_hours=4):
         try:
             _run_monitor_check()
         except Exception as e:
-            print(f"[MONITOR] Error in reputation check: {e}")
+            log.info("[MONITOR] Error in reputation check: {e}")
 
         try:
             _run_weekly_placement_tests()
         except Exception as e:
-            print(f"[MONITOR] Error in placement tests: {e}")
+            log.info("[MONITOR] Error in placement tests: {e}")
 
         time.sleep(check_interval_hours * 3600)
 
