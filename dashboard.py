@@ -289,8 +289,10 @@ def parse_rate(value):
 def calculate_health_score(account, health_data):
     """Calculate composite health score (0-100) for an inbox.
 
-    Weights: bounce_rate 30%, reply_rate 25%, reputation 25%,
-    inbox_placement 10%, smtp/imap 5%, blocked 5%.
+    Primary signal is warmup reputation (accounts <99% need replacement).
+    Weights: reputation 40%, bounce_rate 20%, reply_rate 15%,
+    inbox_placement 10%, smtp/imap 10%, blocked 5%.
+    No-data defaults to 100 (new/unused accounts are healthy).
     Returns dict with score and list of flag reasons.
     """
     email = account.get("from_email", "")
@@ -298,7 +300,7 @@ def calculate_health_score(account, health_data):
     wd = account.get("warmup_details") or {}
     flags = []
 
-    # Bounce rate (30%) — 0pts at >3%, 100pts at ≤1%, linear between
+    # Bounce rate (20%) — 0pts at >3%, 100pts at ≤1%, linear between
     br = parse_rate(h.get("bounce_rate"))
     if br is not None:
         if br > 3:
@@ -309,9 +311,9 @@ def calculate_health_score(account, health_data):
         else:
             bounce_score = 100 - ((br - 1) / 2) * 100
     else:
-        bounce_score = 50  # no data, neutral
+        bounce_score = 100  # no data = healthy
 
-    # Reply rate (25%) — 0pts at <2%, 100pts at ≥5%, linear between
+    # Reply rate (15%) — 0pts at <2%, 100pts at ≥5%, linear between
     rr = parse_rate(h.get("reply_rate"))
     if rr is not None:
         if rr < 2:
@@ -322,19 +324,23 @@ def calculate_health_score(account, health_data):
         else:
             reply_score = ((rr - 2) / 3) * 100
     else:
-        reply_score = 50
+        reply_score = 100
 
-    # Reputation (25%) — 0pts at <99, 100pts at ≥99
+    # Reputation (40%) — primary replacement signal
+    # 100pts at ≥99%, scales linearly down to 0pts at ≤90%
     rep_raw = wd.get("warmup_reputation", "?")
     try:
         rep = float(rep_raw)
-        if rep < 99:
+        if rep >= 99:
+            rep_score = 100
+        elif rep <= 90:
             rep_score = 0
             flags.append("reputation")
         else:
-            rep_score = 100
+            rep_score = ((rep - 90) / 9) * 100
+            flags.append("reputation")
     except (ValueError, TypeError):
-        rep_score = 50
+        rep_score = 100  # no data = healthy
 
     # Inbox placement (10%) — use warmup spam ratio as proxy
     sent = wd.get("total_sent_count", 0) or 0
@@ -347,9 +353,9 @@ def calculate_health_score(account, health_data):
         else:
             placement_score = 100
     else:
-        placement_score = 50
+        placement_score = 100  # no data = healthy
 
-    # SMTP/IMAP (5%) — binary
+    # SMTP/IMAP (10%) — binary
     smtp_ok = account.get("is_smtp_success", False)
     imap_ok = account.get("is_imap_success", False)
     if not smtp_ok or not imap_ok:
@@ -372,11 +378,11 @@ def calculate_health_score(account, health_data):
         flags.append("warmup_off")
 
     score = round(
-        bounce_score * 0.30 +
-        reply_score * 0.25 +
-        rep_score * 0.25 +
+        rep_score * 0.40 +
+        bounce_score * 0.20 +
+        reply_score * 0.15 +
         placement_score * 0.10 +
-        conn_score * 0.05 +
+        conn_score * 0.10 +
         block_score * 0.05
     )
 
