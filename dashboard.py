@@ -287,11 +287,9 @@ def parse_rate(value):
 
 
 def calculate_health_score(account, health_data):
-    """Calculate composite health score (0-100) for an inbox.
+    """Calculate health score (0-100) for an inbox.
 
-    Primary signal is warmup reputation (accounts <99% need replacement).
-    Weights: reputation 40%, bounce_rate 20%, reply_rate 15%,
-    inbox_placement 10%, smtp/imap 10%, blocked 5%.
+    Two signals: warmup reputation (80%) and campaign reply rate (20%).
     No-data defaults to 100 (new/unused accounts are healthy).
     Returns dict with score and list of flag reasons.
     """
@@ -300,91 +298,37 @@ def calculate_health_score(account, health_data):
     wd = account.get("warmup_details") or {}
     flags = []
 
-    # Bounce rate (20%) — 0pts at >3%, 100pts at ≤1%, linear between
-    br = parse_rate(h.get("bounce_rate"))
-    if br is not None:
-        if br > 3:
-            bounce_score = 0
-            flags.append("bounce")
-        elif br <= 1:
-            bounce_score = 100
-        else:
-            bounce_score = 100 - ((br - 1) / 2) * 100
-    else:
-        bounce_score = 100  # no data = healthy
-
-    # Reply rate (15%) — 0pts at <2%, 100pts at ≥5%, linear between
-    rr = parse_rate(h.get("reply_rate"))
-    if rr is not None:
-        if rr < 2:
-            reply_score = 0
-            flags.append("reply")
-        elif rr >= 5:
-            reply_score = 100
-        else:
-            reply_score = ((rr - 2) / 3) * 100
-    else:
-        reply_score = 100
-
-    # Reputation (40%) — primary replacement signal
-    # 100pts at ≥99%, scales linearly down to 0pts at ≤90%
+    # Warmup reputation (80%) — primary replacement signal
+    # 100pts at ≥99%, linear 0-100 across 95-99%, 0pts at ≤95%
     rep_raw = wd.get("warmup_reputation", "?")
     try:
         rep = float(rep_raw)
         if rep >= 99:
             rep_score = 100
-        elif rep <= 90:
+        elif rep <= 95:
             rep_score = 0
             flags.append("reputation")
         else:
-            rep_score = ((rep - 90) / 9) * 100
+            rep_score = ((rep - 95) / 4) * 100
             flags.append("reputation")
     except (ValueError, TypeError):
         rep_score = 100  # no data = healthy
 
-    # Inbox placement (10%) — use warmup spam ratio as proxy
-    sent = wd.get("total_sent_count", 0) or 0
-    spam = wd.get("total_spam_count", 0) or 0
-    if sent > 0:
-        placement = ((sent - spam) / sent) * 100
-        if placement < 99:
-            placement_score = 0
-            flags.append("placement")
+    # Campaign reply rate (20%) — secondary spam signal
+    # 100pts at ≥2%, linear 0-100 across 0.5-2%, 0pts at ≤0.5%
+    rr = parse_rate(h.get("reply_rate"))
+    if rr is not None:
+        if rr >= 2:
+            reply_score = 100
+        elif rr <= 0.5:
+            reply_score = 0
+            flags.append("reply")
         else:
-            placement_score = 100
+            reply_score = ((rr - 0.5) / 1.5) * 100
     else:
-        placement_score = 100  # no data = healthy
+        reply_score = 100  # no data = healthy
 
-    # SMTP/IMAP (10%) — binary
-    smtp_ok = account.get("is_smtp_success", False)
-    imap_ok = account.get("is_imap_success", False)
-    if not smtp_ok or not imap_ok:
-        conn_score = 0
-        flags.append("smtp")
-    else:
-        conn_score = 100
-
-    # Blocked (5%) — binary
-    blocked = wd.get("status") not in ("ACTIVE", None) and wd.get("blocked_reason")
-    if blocked:
-        block_score = 0
-        flags.append("blocked")
-    else:
-        block_score = 100
-
-    # Warmup off flag (not scored, but flagged)
-    warmup_status = wd.get("status")
-    if warmup_status != "ACTIVE" and not blocked:
-        flags.append("warmup_off")
-
-    score = round(
-        rep_score * 0.40 +
-        bounce_score * 0.20 +
-        reply_score * 0.15 +
-        placement_score * 0.10 +
-        conn_score * 0.10 +
-        block_score * 0.05
-    )
+    score = round(rep_score * 0.80 + reply_score * 0.20)
 
     return {"score": score, "flags": flags}
 
