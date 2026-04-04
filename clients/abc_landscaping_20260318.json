@@ -1,5 +1,5 @@
 {
-  "client_name": "ABC Landscaping",
+  "client_name": "GM Landscaping & Design",
   "created_date": "2026-03-18",
   "infrastructure": {
     "daily_volume_target": 45,
@@ -35,10 +35,19 @@
       "nameservers_set": true,
       "zapmail_domain_id": "dd7e17bd-b2f6-4f60-8a97-9737a1010c13",
       "inboxes": [
-            {"mailboxId": "4caa05fa-aa17-4142-9149-4d97d2fea89a", "email": "s.reynolds@landscapingcareconnect.co"},
-            {"mailboxId": "e110323f-4f7b-4be0-9a8d-c2b67a3949d4", "email": "sean.r@landscapingcareconnect.co"},
-            {"mailboxId": "65c7705d-44df-4b03-8667-5b449b2ad75e", "email": "sean.reynolds@landscapingcareconnect.co"}
-          ]
+        {
+          "mailboxId": "4caa05fa-aa17-4142-9149-4d97d2fea89a",
+          "email": "s.reynolds@landscapingcareconnect.co"
+        },
+        {
+          "mailboxId": "e110323f-4f7b-4be0-9a8d-c2b67a3949d4",
+          "email": "sean.r@landscapingcareconnect.co"
+        },
+        {
+          "mailboxId": "65c7705d-44df-4b03-8667-5b449b2ad75e",
+          "email": "sean.reynolds@landscapingcareconnect.co"
+        }
+      ]
     }
   ],
   "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
@@ -48,5 +57,6 @@
     ]
   },
   "smartlead_accounts": [],
-  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/abc_landscaping_20260318.csv"
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/abc_landscaping_20260318.csv",
+  "original_client_name": "ABC Landscaping"
 }

@@ -1,5 +1,5 @@
 {
-  "client_name": "Deeter Landscape LLC",
+  "client_name": "Pioneer Landscaping",
   "created_date": "2026-03-18",
   "infrastructure": {
     "daily_volume_target": 750,
@@ -569,5 +569,6 @@
   ],
   "smartlead_accounts_tagged": 49,
   "smartlead_accounts_warmup_verified": 49,
-  "notes": "Zapmail API key expired - cannot re-export missing 2 accounts. Need manual re-export of lawnservicefocus.co domain."
+  "notes": "Zapmail API key expired - cannot re-export missing 2 accounts. Need manual re-export of lawnservicefocus.co domain.",
+  "original_client_name": "Deeter Landscape LLC"
 }
