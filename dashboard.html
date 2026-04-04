@@ -817,13 +817,19 @@ async function loadInventoryPreview() {
         const resp = await fetch('/api/domain-inventory');
         const data = await resp.json();
         const el = document.getElementById('nc-inventory');
-        el.textContent = data.available_count + ' domains available in inventory';
-        el.style.color = data.available_count < 5 ? '#ff6b6b' : '#4ecdc4';
+        const count = data.available_count ?? 0;
+        if (data.error) {
+            el.textContent = 'Could not load inventory';
+            el.style.color = '#ff6b6b';
+            return;
+        }
+        el.textContent = count + ' domains available in inventory';
+        el.style.color = count < 5 ? '#ff6b6b' : '#4ecdc4';
 
         const alertEl = document.getElementById('inventory-alert');
-        if (data.available_count < 5) {
+        if (count < 5) {
             alertEl.style.display = 'inline';
-            alertEl.textContent = 'Low inventory: only ' + data.available_count + ' domains available';
+            alertEl.textContent = 'Low inventory: only ' + count + ' domains available';
         }
     } catch(e) { console.error('Inventory error:', e); }
 }

@@ -317,7 +317,7 @@ def calculate_health_score(account, health_data, in_warmup_period=False):
 
     # Reply rate only matters with enough send volume (100+ emails)
     # Below that, rates swing wildly from single events
-    total_sent = h.get("total_sent", 0) or 0
+    total_sent = h.get("sent", 0) or 0
     if in_warmup_period or total_sent < 100:
         score = round(rep_score)
         return {"score": score, "flags": flags}
@@ -432,9 +432,9 @@ def api_overview():
             h = health.get(email)
             if h:
                 cl_health_count += 1
-                cl_sent += h.get("total_sent", 0)
-                cl_bounced += h.get("total_bounced", 0)
-                cl_replied += h.get("total_replied", 0)
+                cl_sent += h.get("sent", 0)
+                cl_bounced += h.get("bounced", 0)
+                cl_replied += h.get("replied", 0)
                 br_val = parse_rate(h.get("bounce_rate"))
                 if br_val is not None:
                     cl_bounce_rates.append(br_val)
@@ -529,9 +529,33 @@ def api_overview():
     }
 
 
+def get_campaign_counts_for_client(client_id):
+    """Get per-email campaign count by checking actual campaigns (list API field is unreliable)."""
+    counts = {}
+    r = requests.get(
+        f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}&client_id={client_id}",
+        timeout=30,
+    )
+    campaigns = r.json() if r.status_code == 200 else []
+    for camp in campaigns:
+        if camp.get("status") not in ("ACTIVE", "PAUSED"):
+            continue
+        cr = requests.get(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+            timeout=30,
+        )
+        camp_accounts = cr.json() if cr.status_code == 200 else []
+        if isinstance(camp_accounts, list):
+            for ca in camp_accounts:
+                email = ca.get("from_email", "")
+                counts[email] = counts.get(email, 0) + 1
+    return counts
+
+
 def api_client_accounts(client_id):
     accounts = get_accounts_by_client(int(client_id))
     health = get_health_metrics()
+    campaign_counts = get_campaign_counts_for_client(int(client_id))
 
     # Determine if this client is still in warmup period
     clients = get_clients()
@@ -565,15 +589,15 @@ def api_client_accounts(client_id):
             "warmup_spam": wd.get("total_spam_count", 0),
             "warmup_reputation": wd.get("warmup_reputation", "?"),
             "blocked_reason": wd.get("blocked_reason"),
-            "campaign_count": a.get("campaign_count", 0),
+            "campaign_count": campaign_counts.get(email, 0),
             "daily_sent": a.get("daily_sent_count", 0),
             "smtp_ok": a.get("is_smtp_success", False),
             "imap_ok": a.get("is_imap_success", False),
             "bounce_rate": h.get("bounce_rate"),
             "reply_rate": h.get("reply_rate"),
-            "health_sent": h.get("total_sent", 0),
-            "health_bounced": h.get("total_bounced", 0),
-            "health_replied": h.get("total_replied", 0),
+            "health_sent": h.get("sent", 0),
+            "health_bounced": h.get("bounced", 0),
+            "health_replied": h.get("replied", 0),
             "health_score": hs["score"],
             "health_flags": hs["flags"],
         })
