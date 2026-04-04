@@ -547,11 +547,25 @@ def sl_create_tag(name, color="#D0FCB1"):
     return result.get("data", {}).get("insert_tags_one", {})
 
 def sl_find_or_create_tag(name, color="#D0FCB1", existing_tags=None):
-    """Find an existing tag by name or create a new one. Returns tag ID."""
+    """Find an existing tag by name (fuzzy) or create a new one. Returns tag ID."""
     if existing_tags is None:
         existing_tags = sl_get_all_tags()
+    # Exact match first
     if name in existing_tags:
         return existing_tags[name]["id"]
+    # Fuzzy match: case-insensitive contains in either direction
+    name_lower = name.lower().strip()
+    best_match = None
+    for tag_name, tag_data in existing_tags.items():
+        tag_lower = tag_name.lower().strip()
+        if tag_lower == name_lower:
+            return tag_data["id"]
+        if name_lower in tag_lower or tag_lower in name_lower:
+            best_match = (tag_name, tag_data)
+    if best_match:
+        log(f"  Fuzzy matched tag: '{name}' → existing '{best_match[0]}' (ID: {best_match[1]['id']})")
+        return best_match[1]["id"]
+    # No match — create new tag
     tag = sl_create_tag(name, color)
     tag_id = tag.get("id")
     if tag_id:
