@@ -142,7 +142,11 @@ def main():
             skipped += 1
             continue
 
-        body = {"id": acc_id, "clientId": target_client_id}
+        # Fetch current tags so we don't wipe them when setting clientId
+        current_tags = acc.get("tags") or []
+        if isinstance(current_tags, list) and current_tags and isinstance(current_tags[0], dict):
+            current_tags = [t["id"] for t in current_tags]
+        body = {"id": acc_id, "clientId": target_client_id, "tags": current_tags}
         r = requests.post(
             f"{SMARTLEAD_INTERNAL_API}/email-account/save-management-details",
             headers=sl_internal_headers(),
