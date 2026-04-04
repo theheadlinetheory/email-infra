@@ -747,18 +747,21 @@ def api_zapmail_sync():
         if domain and client_id and client_id in client_map:
             sl_client_by_domain[domain] = client_map[client_id]
 
-    # Find mismatches
+    # Find mismatches (fuzzy: "Deeter Landscape" matches "Deeter Landscape LLC")
     mismatches = []
     all_domains = set(zm_tag_by_domain.keys()) | set(sl_client_by_domain.keys())
     for domain in sorted(all_domains):
         zm_client = zm_tag_by_domain.get(domain)
         sl_client = sl_client_by_domain.get(domain)
-        if zm_client and sl_client and zm_client.lower() != sl_client.lower():
-            mismatches.append({
-                "domain": domain,
-                "zapmail_tag": zm_client,
-                "smartlead_client": sl_client,
-            })
+        if zm_client and sl_client:
+            zm_lower = zm_client.lower().strip()
+            sl_lower = sl_client.lower().strip()
+            if zm_lower != sl_lower and zm_lower not in sl_lower and sl_lower not in zm_lower:
+                mismatches.append({
+                    "domain": domain,
+                    "zapmail_tag": zm_client,
+                    "smartlead_client": sl_client,
+                })
 
     # Domains in ZapMail but not SmartLead
     zm_only = [d for d in zm_tag_by_domain if d not in sl_client_by_domain]
