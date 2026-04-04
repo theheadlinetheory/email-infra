@@ -21,12 +21,12 @@ Single-process Python backend (`dashboard.py`) with a background automation thre
 When a domain is flagged:
 1. Query ZapMail subscriptions (`GET /v2/subscriptions`) and map mailboxes to subscriptions (`GET /v2/subscriptions/{id}/mailboxes`) to determine next renewal date
 2. Start replacement pipeline immediately regardless of billing cycle (new domain begins warming)
-3. **Volume protection rule:** Never remove old inboxes until replacements are fully warmed (reputation 99+) and ready to take their place. Sending volume is more important than billing optimization.
-4. Removal timing (only after replacements are ready):
-   - If replacement is ready AND old renewal is within 7 days → schedule `remove-on-renewal`, let subscription expire naturally
-   - If replacement is ready AND old renewal just happened → schedule `remove-on-renewal` before next charge, swap immediately
-   - If replacement is NOT ready AND old renewal is imminent → **let old inboxes renew**. Pay for the overlap month. Losing volume for up to 14 days is worse than one extra billing cycle.
-   - The system always calculates: "Will the replacement be warmed before the old inbox renews?" If no → let the old inbox renew and keep sending.
+3. **Volume protection rule:** Tolerate up to 7 days without the replaced volume. Never allow a gap longer than 7 days — if the replacement won't be ready in time, keep the old inbox active.
+4. Removal timing:
+   - The system calculates: "How many days until the replacement is warmed (reputation 99+)?" and "How many days until the old inbox renews?"
+   - If the gap between old inbox removal and replacement ready is **≤ 7 days** → cancel the old inbox, accept the short gap
+   - If the gap would be **> 7 days** → let the old inbox renew, keep it active until the replacement is closer to ready, then cancel
+   - If replacement is already ready → swap immediately, schedule old inbox `remove-on-renewal` or cancel depending on billing timing
 
 ### Weekly Placement Tests (every Monday)
 - Trigger `POST /v2/placement-test/purchase` for a sample of inboxes per client
