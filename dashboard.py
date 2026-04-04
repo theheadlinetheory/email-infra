@@ -315,12 +315,14 @@ def calculate_health_score(account, health_data, in_warmup_period=False):
     except (ValueError, TypeError):
         rep_score = 100  # no data = healthy
 
-    # During warmup period: bounce/reply rates are warmup pool noise, ignore them
-    if in_warmup_period:
+    # Reply rate only matters with enough send volume (100+ emails)
+    # Below that, rates swing wildly from single events
+    total_sent = h.get("total_sent", 0) or 0
+    if in_warmup_period or total_sent < 100:
         score = round(rep_score)
         return {"score": score, "flags": flags}
 
-    # Post-warmup: add campaign reply rate (20%)
+    # Sufficient data: add campaign reply rate (20%)
     # 100pts at ≥2%, linear 0-100 across 0.5-2%, 0pts at ≤0.5%
     rr = parse_rate(h.get("reply_rate"))
     if rr is not None:
@@ -332,7 +334,7 @@ def calculate_health_score(account, health_data, in_warmup_period=False):
         else:
             reply_score = ((rr - 0.5) / 1.5) * 100
     else:
-        reply_score = 100  # no data = healthy
+        reply_score = 100
 
     score = round(rep_score * 0.80 + reply_score * 0.20)
 
