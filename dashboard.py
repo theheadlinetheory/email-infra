@@ -13,6 +13,18 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta
 from pathlib import Path
+import threading
+from pipeline import (
+    create_pipeline, load_pipeline, load_all_pipelines,
+    run_pipeline_steps, save_pipeline, start_monitor_thread,
+)
+from zapmail_ops import (
+    zm_get_wallet_balance, zm_get_domain_health,
+    zm_get_subscriptions, zm_get_subscription_mailboxes,
+    zm_get_placement_results, zm_get_placement_eligible_mailboxes,
+    zm_run_placement_test, zm_get_placement_credits,
+)
+from sheets import get_available_domains, get_domain_summary
 
 SCRIPT_DIR = Path(__file__).parent
 ENV_PATH = SCRIPT_DIR / ".env"
@@ -788,6 +800,215 @@ def api_zapmail_sync():
     }
 
 
+# --- Pipeline API logic ---
+
+def api_pipeline_new_client(body):
+    """Start a new client setup pipeline."""
+    client_name = body.get("client_name", "")
+    domain_count = body.get("domain_count", 0)
+    forwarding_url = body.get("forwarding_url", "")
+    selected_domains = body.get("domains", [])
+
+    if not client_name or (not domain_count and not selected_domains):
+        return {"error": "client_name and domain_count (or domains) required"}
+
+    available = get_available_domains()
+    if not available:
+        return {"error": "No domains available in inventory"}
+
+    if selected_domains:
+        chosen = [d for d in available if d["domain"] in selected_domains]
+    else:
+        available.sort(key=lambda d: d.get("purchase_date", "9999"))
+        chosen = available[:domain_count]
+
+    if len(chosen) < (len(selected_domains) if selected_domains else domain_count):
+        return {"error": f"Only {len(chosen)} domains available, need {domain_count}"}
+
+    pipeline = create_pipeline("new_setup", client_name, chosen, forwarding_url)
+    threading.Thread(target=run_pipeline_steps, args=(pipeline,), daemon=True).start()
+
+    return {"pipeline_id": pipeline["id"], "status": "started", "domains": list(pipeline["domains"].keys())}
+
+
+def api_pipeline_replacement(body):
+    """Manually trigger replacement for a client/domain."""
+    client_name = body.get("client_name", "")
+    old_domain = body.get("old_domain", "")
+    old_emails = body.get("old_emails", [])
+    old_account_ids = body.get("old_account_ids", [])
+
+    if not client_name:
+        return {"error": "client_name required"}
+
+    available = get_available_domains()
+    if not available:
+        return {"error": "No domains available in inventory"}
+
+    available.sort(key=lambda d: d.get("purchase_date", "9999"))
+    chosen = available[:1]
+
+    pipeline = create_pipeline("replacement", client_name, chosen)
+    if old_domain:
+        pipeline["old_domains"] = [{
+            "domain": old_domain,
+            "emails": old_emails,
+            "smartlead_account_ids": old_account_ids,
+        }]
+        save_pipeline(pipeline)
+
+    threading.Thread(target=run_pipeline_steps, args=(pipeline,), daemon=True).start()
+
+    return {"pipeline_id": pipeline["id"], "status": "started"}
+
+
+def api_pipeline_active():
+    """List all active pipelines."""
+    all_p = load_all_pipelines()
+    result = []
+    for p in all_p:
+        result.append({
+            "id": p["id"],
+            "type": p["type"],
+            "client_name": p["client_name"],
+            "status": p["status"],
+            "current_step": p.get("current_step", ""),
+            "domains": list(p["domains"].keys()),
+            "created_at": p.get("created_at", ""),
+            "updated_at": p.get("updated_at", ""),
+            "errors": p.get("errors", []),
+            "pending_removals": p.get("pending_removals", {}),
+        })
+    result.sort(key=lambda p: p["created_at"], reverse=True)
+    return {"pipelines": result}
+
+
+def api_pipeline_detail(pipeline_id):
+    """Get detailed status for a specific pipeline."""
+    p = load_pipeline(pipeline_id)
+    if not p:
+        return {"error": "Pipeline not found"}
+    return p
+
+
+def api_inbox_campaigns(email):
+    """List active campaigns containing this inbox."""
+    r = requests.get(f"{SMARTLEAD_API}/campaign?api_key={SMARTLEAD_KEY}", timeout=30)
+    campaigns = r.json() if r.status_code == 200 else []
+    active = [c for c in campaigns if c.get("status") == "ACTIVE"]
+
+    found = []
+    for camp in active:
+        cr = requests.get(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+            timeout=30,
+        )
+        if cr.status_code == 200:
+            accs = cr.json() if isinstance(cr.json(), list) else []
+            for a in accs:
+                if a.get("from_email") == email:
+                    found.append({"campaign_id": camp["id"], "campaign_name": camp["name"]})
+                    break
+
+    return {"email": email, "campaigns": found}
+
+
+def api_remove_from_campaign(body):
+    """Remove an email account from a specific campaign."""
+    email = body.get("email", "")
+    campaign_id = body.get("campaign_id")
+    if not email or not campaign_id:
+        return {"error": "email and campaign_id required"}
+
+    cr = requests.get(
+        f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+        timeout=30,
+    )
+    if cr.status_code != 200:
+        return {"error": "Failed to get campaign accounts"}
+
+    accs = cr.json() if isinstance(cr.json(), list) else []
+    acc_id = None
+    for a in accs:
+        if a.get("from_email") == email:
+            acc_id = a.get("id")
+            break
+
+    if not acc_id:
+        return {"error": f"{email} not found in campaign {campaign_id}"}
+
+    dr = requests.delete(
+        f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
+        timeout=30,
+    )
+    return {"success": dr.status_code == 200, "email": email, "campaign_id": campaign_id}
+
+
+def api_remove_from_all_campaigns(body):
+    """Remove an email account from all active campaigns."""
+    email = body.get("email", "")
+    if not email:
+        return {"error": "email required"}
+
+    campaigns_data = api_inbox_campaigns(email)
+    results = []
+    for camp in campaigns_data["campaigns"]:
+        result = api_remove_from_campaign({"email": email, "campaign_id": camp["campaign_id"]})
+        results.append(result)
+
+    # If this inbox is in a pipeline awaiting removal, resume the pipeline
+    all_p = load_all_pipelines()
+    for p in all_p:
+        if p.get("status") == "awaiting_removal" and p.get("pending_removals"):
+            if email in p["pending_removals"]:
+                del p["pending_removals"][email]
+                if not p["pending_removals"]:
+                    p["status"] = "running"
+                    next_idx = p["steps"].index("check_campaigns") + 1
+                    if next_idx < len(p["steps"]):
+                        p["current_step"] = p["steps"][next_idx]
+                    save_pipeline(p)
+                    threading.Thread(target=run_pipeline_steps, args=(p,), daemon=True).start()
+                else:
+                    save_pipeline(p)
+
+    return {"email": email, "removed_from": len(results), "results": results}
+
+
+def api_wallet():
+    """Get ZapMail wallet balance."""
+    return zm_get_wallet_balance()
+
+
+def api_domain_inventory():
+    """Get available domain inventory from THT spreadsheet."""
+    available = get_available_domains()
+    summary = get_domain_summary()
+    return {
+        "available_count": len(available),
+        "available_domains": [
+            {
+                "domain": d["domain"],
+                "provider": d.get("provider", ""),
+                "purchase_date": d.get("purchase_date", ""),
+                "notes": d.get("notes", ""),
+            }
+            for d in available
+        ],
+        "summary": summary,
+    }
+
+
+def api_placement_tests():
+    """Get placement test results."""
+    return zm_get_placement_results()
+
+
+def api_subscriptions():
+    """Get ZapMail subscription/billing data."""
+    return zm_get_subscriptions()
+
+
 # --- HTTP Server ---
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -839,6 +1060,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_zapmail_sync())
                 elif path == "/api/domains":
                     self._json_response(api_domains())
+                elif path == "/api/pipeline/active":
+                    self._json_response(api_pipeline_active())
+                elif path.startswith("/api/pipeline/") and len(path.split("/")) == 4:
+                    pid = path.split("/")[3]
+                    self._json_response(api_pipeline_detail(pid))
+                elif path.startswith("/api/inbox/") and path.endswith("/campaigns"):
+                    email = path.split("/")[3]
+                    self._json_response(api_inbox_campaigns(email))
+                elif path == "/api/wallet":
+                    self._json_response(api_wallet())
+                elif path == "/api/domain-inventory":
+                    self._json_response(api_domain_inventory())
+                elif path == "/api/placement-tests":
+                    self._json_response(api_placement_tests())
+                elif path == "/api/subscriptions":
+                    self._json_response(api_subscriptions())
                 else:
                     self._error(404, "Not found")
             except Exception as e:
@@ -882,6 +1119,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             else:
                 result = {"success": False, "message": f"{registrar} auto-renew toggle not supported via API"}
             self._json_response(result)
+        elif self.path == "/api/pipeline/new-client":
+            result = api_pipeline_new_client(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif self.path == "/api/pipeline/replacement":
+            result = api_pipeline_replacement(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif self.path == "/api/inbox/remove-from-campaign":
+            result = api_remove_from_campaign(body)
+            self._json_response(result)
+        elif self.path == "/api/inbox/remove-from-all-campaigns":
+            result = api_remove_from_all_campaigns(body)
+            self._json_response(result)
         else:
             self._error(404, "Not found")
 
@@ -921,6 +1170,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def main():
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+
+    # Start background infrastructure monitor
+    monitor = start_monitor_thread()
+    print(f"Infrastructure monitor started (checking every 4 hours)")
+
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
     print("Press Ctrl+C to stop")
