@@ -108,6 +108,8 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
 <div class="topbar">
     <h1>THT Infrastructure Dashboard</h1>
     <div class="topbar-right">
+        <span id="wallet-balance" style="color:#4ecdc4;font-weight:600;"></span>
+        <span id="pipeline-badge" style="display:none;background:#7c4dff;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;"></span>
         <span id="last-updated"></span>
         <button onclick="loadOverview()">Refresh</button>
     </div>
@@ -125,11 +127,16 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
             <div class="tab active" onclick="switchTab('smartlead')">SmartLead</div>
             <div class="tab" onclick="switchTab('zapmail')">ZapMail</div>
             <div class="tab" onclick="switchTab('domains')">Domains</div>
+            <div class="tab" onclick="switchTab('pipelines')">Pipelines</div>
             <div class="tab" onclick="switchTab('sync')">Sync Check</div>
         </div>
 
         <!-- SmartLead Tab -->
         <div id="tab-smartlead" class="tab-content active">
+            <div style="display:flex;gap:12px;margin-bottom:16px;">
+                <button onclick="showNewClientForm()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;">+ New Client Setup</button>
+                <span id="inventory-alert" style="display:none;color:#ffd93d;font-size:13px;padding:10px 0;"></span>
+            </div>
             <div class="summary-row" id="summary-row"></div>
 
             <h2 class="section-title">Clients</h2>
@@ -173,6 +180,14 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
             <div id="dom-content"></div>
         </div>
 
+        <!-- Pipelines Tab -->
+        <div id="tab-pipelines" class="tab-content">
+            <div id="pipelines-loading" class="loading" style="display:none;">
+                <span class="spinner"></span> Loading pipelines...
+            </div>
+            <div id="pipelines-content"></div>
+        </div>
+
         <!-- Sync Tab -->
         <div id="tab-sync" class="tab-content">
             <div id="sync-loading" class="loading" style="display:none;">
@@ -181,6 +196,29 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
             <div id="sync-content"></div>
         </div>
     </div>
+</div>
+
+<div id="new-client-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeNewClientForm()"></div>
+<div id="new-client-form" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:500px;max-width:90vw;">
+    <h2 style="margin-bottom:20px;">New Client Setup</h2>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Client Name</label>
+        <input id="nc-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Number of Domains</label>
+        <input id="nc-domain-count" type="number" min="1" max="50" value="5" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding URL</label>
+        <input id="nc-forwarding" type="text" placeholder="https://..." style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div id="nc-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
+    <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="closeNewClientForm()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+        <button id="nc-start-btn" onclick="startNewClientPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
+    </div>
+    <div id="nc-status" style="margin-top:12px;font-size:13px;"></div>
 </div>
 
 <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
@@ -353,7 +391,9 @@ function renderDetailTable(data) {
             <div style="font-size:14px;color:#ff6b6b;font-weight:600;margin-bottom:6px;">Infrastructure Replacement Needed</div>
             <div style="font-size:13px;color:#ffaaaa;">${data.flagged_inbox_count} inbox(es) across ${data.flagged_domains.length} domain(s) are unhealthy.</div>
             <div style="font-size:13px;color:#ffaaaa;margin-bottom:10px;">Recommended: Set up ${data.replacement_domains_needed} new domain(s) (${data.replacement_inboxes} inboxes).</div>
-            <div style="font-size:12px;color:#888;">Flagged domains: ${data.flagged_domains.join(', ')}</div>
+            <div style="font-size:12px;color:#888;margin-bottom:10px;">Flagged domains: ${data.flagged_domains.join(', ')}</div>
+            <button onclick="triggerReplacement('${data.client_id}', ${JSON.stringify(data.flagged_domains).replace(/'/g, "\\'")})" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Start Replacement</button>
+            <span id="replacement-status-${data.client_id}" style="margin-left:12px;font-size:13px;"></span>
         </div>`;
     }
 
@@ -484,6 +524,7 @@ function switchTab(tab) {
 
     if (tab === 'zapmail' && !zmData) loadZapmail();
     if (tab === 'domains' && !domData) loadDomains();
+    if (tab === 'pipelines') loadPipelines();
     if (tab === 'sync' && !syncData) loadSync();
 }
 
@@ -745,11 +786,252 @@ function renderSync() {
     document.getElementById('sync-content').innerHTML = html;
 }
 
+// --- Wallet ---
+async function loadWallet() {
+    try {
+        const resp = await fetch('/api/wallet');
+        const data = await resp.json();
+        const balance = data.data?.balance || data.balance || '?';
+        const el = document.getElementById('wallet-balance');
+        const num = parseFloat(balance);
+        el.textContent = '$' + (isNaN(num) ? '?' : num.toFixed(2));
+        el.style.color = num < 50 ? '#ff6b6b' : num < 150 ? '#ffd93d' : '#4ecdc4';
+    } catch(e) { console.error('Wallet error:', e); }
+}
+
+// --- New Client Form ---
+function showNewClientForm() {
+    document.getElementById('new-client-overlay').style.display = 'block';
+    document.getElementById('new-client-form').style.display = 'block';
+    document.getElementById('nc-status').textContent = '';
+    loadInventoryPreview();
+}
+
+function closeNewClientForm() {
+    document.getElementById('new-client-overlay').style.display = 'none';
+    document.getElementById('new-client-form').style.display = 'none';
+}
+
+async function loadInventoryPreview() {
+    try {
+        const resp = await fetch('/api/domain-inventory');
+        const data = await resp.json();
+        const el = document.getElementById('nc-inventory');
+        el.textContent = data.available_count + ' domains available in inventory';
+        el.style.color = data.available_count < 5 ? '#ff6b6b' : '#4ecdc4';
+
+        const alertEl = document.getElementById('inventory-alert');
+        if (data.available_count < 5) {
+            alertEl.style.display = 'inline';
+            alertEl.textContent = 'Low inventory: only ' + data.available_count + ' domains available';
+        }
+    } catch(e) { console.error('Inventory error:', e); }
+}
+
+async function startNewClientPipeline() {
+    const clientName = document.getElementById('nc-client-name').value.trim();
+    const domainCount = parseInt(document.getElementById('nc-domain-count').value);
+    const forwarding = document.getElementById('nc-forwarding').value.trim();
+
+    if (!clientName) { alert('Client name required'); return; }
+    if (!domainCount || domainCount < 1) { alert('Domain count required'); return; }
+
+    document.getElementById('nc-start-btn').disabled = true;
+    document.getElementById('nc-status').innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Starting pipeline...';
+
+    try {
+        const resp = await fetch('/api/pipeline/new-client', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName, domain_count: domainCount, forwarding_url: forwarding})
+        });
+        const result = await resp.json();
+        if (result.error) {
+            document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            document.getElementById('nc-start-btn').disabled = false;
+        } else {
+            document.getElementById('nc-status').innerHTML = '<span style="color:#4ecdc4;">Pipeline started! ID: ' + result.pipeline_id + '</span>';
+            setTimeout(() => {
+                closeNewClientForm();
+                switchTab('pipelines');
+                loadPipelines();
+            }, 1500);
+        }
+    } catch(err) {
+        document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        document.getElementById('nc-start-btn').disabled = false;
+    }
+}
+
+// --- Pipelines Tab ---
+let pipelineData = null;
+
+async function loadPipelines() {
+    document.getElementById('pipelines-loading').style.display = 'block';
+    document.getElementById('pipelines-content').innerHTML = '';
+    try {
+        const resp = await fetch('/api/pipeline/active');
+        pipelineData = await resp.json();
+        renderPipelines();
+    } catch(err) {
+        document.getElementById('pipelines-content').innerHTML = 'Error: ' + err.message;
+    }
+    document.getElementById('pipelines-loading').style.display = 'none';
+}
+
+function renderPipelines() {
+    const pipelines = pipelineData.pipelines || [];
+
+    const active = pipelines.filter(p => p.status === 'running' || p.status === 'awaiting_removal');
+    const badge = document.getElementById('pipeline-badge');
+    if (active.length > 0) {
+        badge.style.display = 'inline';
+        badge.textContent = active.length + ' active';
+    } else {
+        badge.style.display = 'none';
+    }
+
+    if (pipelines.length === 0) {
+        document.getElementById('pipelines-content').innerHTML = '<div style="text-align:center;color:#888;padding:40px;">No pipelines yet. Start one from the SmartLead tab.</div>';
+        return;
+    }
+
+    const stepLabels = {
+        claim_domains: 'Claim Domains',
+        set_dns: 'Set DNS',
+        connect_zapmail: 'Connect ZapMail',
+        create_mailboxes: 'Create Mailboxes',
+        upload_photos: 'Upload Photos',
+        tag_and_configure: 'Tag & Configure',
+        export_to_smartlead: 'Export to SmartLead',
+        enable_warmup: 'Enable Warmup',
+        wait_for_warmup: 'Waiting for Warmup',
+        check_campaigns: 'Check Campaigns',
+        remove_old: 'Remove Old Inboxes',
+        cleanup: 'Cleanup',
+    };
+
+    let html = '';
+    pipelines.forEach(p => {
+        const statusColor = p.status === 'complete' ? '#4ecdc4' : p.status === 'error' ? '#ff6b6b' : p.status === 'awaiting_removal' ? '#ffd93d' : '#7c4dff';
+        const statusLabel = p.status === 'awaiting_removal' ? 'Awaiting Removal' : p.status.charAt(0).toUpperCase() + p.status.slice(1);
+
+        html += `<div style="background:#16213e;border:1px solid #0f3460;border-radius:10px;padding:16px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div>
+                    <span style="font-size:16px;font-weight:600;">${p.client_name}</span>
+                    <span style="font-size:13px;color:#888;margin-left:12px;">${p.type === 'new_setup' ? 'New Setup' : 'Replacement'}</span>
+                </div>
+                <span style="color:${statusColor};font-weight:500;">${statusLabel}</span>
+            </div>
+            <div style="font-size:13px;color:#888;margin-bottom:8px;">Domains: ${p.domains.join(', ')}</div>
+            <div style="font-size:12px;color:#888;">Started: ${new Date(p.created_at).toLocaleString()}</div>`;
+
+        if (p.status !== 'complete') {
+            const allSteps = p.type === 'new_setup'
+                ? ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup']
+                : ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','wait_for_warmup','check_campaigns','remove_old','cleanup'];
+            const currentIdx = allSteps.indexOf(p.current_step);
+            html += '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">';
+            allSteps.forEach((s, i) => {
+                const color = i < currentIdx ? '#4ecdc4' : i === currentIdx ? '#7c4dff' : '#333';
+                const label = stepLabels[s] || s;
+                html += `<div style="background:${color};padding:4px 10px;border-radius:4px;font-size:11px;color:${i <= currentIdx ? '#fff' : '#666'};" title="${label}">${label}</div>`;
+            });
+            html += '</div>';
+        }
+
+        if (p.status === 'awaiting_removal' && p.pending_removals) {
+            html += '<div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:12px;margin-top:12px;">';
+            html += '<div style="color:#ff6b6b;font-weight:600;margin-bottom:8px;">Inboxes need removal from campaigns</div>';
+            for (const [email, camps] of Object.entries(p.pending_removals)) {
+                html += `<div style="margin-bottom:8px;">
+                    <div style="font-size:13px;color:#ffaaaa;">${email} is in ${camps.length} campaign(s):</div>`;
+                camps.forEach(c => {
+                    html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 4px 16px;font-size:12px;">
+                        <span style="color:#888;">${c.campaign_name}</span>
+                        <button onclick="removeFromCampaign('${email}',${c.campaign_id})" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Remove</button>
+                    </div>`;
+                });
+                html += `<button onclick="removeFromAllCampaigns('${email}')" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Remove from all campaigns</button>`;
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+
+        if (p.errors && p.errors.length > 0) {
+            html += '<div style="margin-top:8px;font-size:12px;color:#ff6b6b;">';
+            p.errors.forEach(e => { html += '<div>' + e + '</div>'; });
+            html += '</div>';
+        }
+
+        html += '</div>';
+    });
+
+    document.getElementById('pipelines-content').innerHTML = html;
+}
+
+async function removeFromCampaign(email, campaignId) {
+    if (!confirm('Remove ' + email + ' from this campaign?')) return;
+    try {
+        await fetch('/api/inbox/remove-from-campaign', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email, campaign_id: campaignId})
+        });
+        loadPipelines();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function removeFromAllCampaigns(email) {
+    if (!confirm('Remove ' + email + ' from ALL active campaigns?')) return;
+    try {
+        await fetch('/api/inbox/remove-from-all-campaigns', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email})
+        });
+        loadPipelines();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Replacement Trigger ---
+async function triggerReplacement(clientId, flaggedDomains) {
+    const statusEl = document.getElementById('replacement-status-' + clientId);
+    statusEl.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Starting...';
+
+    const client = overviewData.clients.find(c => c.id === parseInt(clientId));
+    if (!client) { statusEl.textContent = 'Client not found'; return; }
+
+    try {
+        const resp = await fetch('/api/pipeline/replacement', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                client_name: client.name,
+                old_domain: flaggedDomains[0],
+                old_emails: [],
+                old_account_ids: [],
+            })
+        });
+        const result = await resp.json();
+        if (result.error) {
+            statusEl.innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+        } else {
+            statusEl.innerHTML = '<span style="color:#4ecdc4;">Pipeline started!</span>';
+        }
+    } catch(err) {
+        statusEl.innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+    }
+}
+
 // Initial load
 loadOverview();
+loadWallet();
 
 // Auto-refresh every 5 minutes
 setInterval(loadOverview, 5 * 60 * 1000);
+setInterval(loadWallet, 5 * 60 * 1000);
 </script>
 </body>
 </html>

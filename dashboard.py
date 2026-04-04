@@ -1043,6 +1043,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/dashboard.html":
             self._serve_file("dashboard.html", "text/html", set_cookie=pw)
+        elif path == "/headshots/sean_reynolds.png":
+            self._serve_file("headshots/sean_reynolds.png", "image/png")
         elif path.startswith("/api/"):
             try:
                 if path == "/api/overview":
