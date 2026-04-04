@@ -17,13 +17,16 @@ Single-process Python backend (`dashboard.py`) with a background automation thre
 - Skip domains that already have an active replacement pipeline
 - Log all flag events with timestamps
 
-### Replacement Scheduler (billing-aware)
+### Replacement Scheduler (billing-aware, volume-protected)
 When a domain is flagged:
 1. Query ZapMail subscriptions (`GET /v2/subscriptions`) and map mailboxes to subscriptions (`GET /v2/subscriptions/{id}/mailboxes`) to determine next renewal date
 2. Start replacement pipeline immediately regardless of billing cycle (new domain begins warming)
-3. Schedule old domain removal aligned to billing:
-   - If renewal within 7 days → schedule `remove-on-renewal` via `POST /v2/mailboxes/remove-on-renewal`, let subscription expire
-   - If renewal just happened (20+ days left) → keep old inboxes active until replacement is warmed, then schedule `remove-on-renewal` before next charge
+3. **Volume protection rule:** Never remove old inboxes until replacements are fully warmed (reputation 99+) and ready to take their place. Sending volume is more important than billing optimization.
+4. Removal timing (only after replacements are ready):
+   - If replacement is ready AND old renewal is within 7 days → schedule `remove-on-renewal`, let subscription expire naturally
+   - If replacement is ready AND old renewal just happened → schedule `remove-on-renewal` before next charge, swap immediately
+   - If replacement is NOT ready AND old renewal is imminent → **let old inboxes renew**. Pay for the overlap month. Losing volume for up to 14 days is worse than one extra billing cycle.
+   - The system always calculates: "Will the replacement be warmed before the old inbox renews?" If no → let the old inbox renew and keep sending.
 
 ### Weekly Placement Tests (every Monday)
 - Trigger `POST /v2/placement-test/purchase` for a sample of inboxes per client
