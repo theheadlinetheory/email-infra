@@ -635,6 +635,100 @@ def api_unassigned():
     return {"accounts": result, "count": len(result)}
 
 
+def api_acquisition():
+    """Acquisition inbox groups with health metrics."""
+    clients = get_clients()
+    health = get_health_metrics()
+
+    # Find group-named clients (e.g. "A Group (250/day)")
+    group_clients = [
+        c for c in clients
+        if "group" in c.get("name", "").lower() and ("/" in c.get("name", "") or "day" in c.get("name", "").lower())
+    ]
+
+    groups = []
+    total_accounts = 0
+    for cl in sorted(group_clients, key=lambda x: x.get("name", "")):
+        cl_accounts = get_accounts_by_client(cl["id"])
+        if not cl_accounts:
+            continue
+
+        total_accounts += len(cl_accounts)
+        cl_scores = []
+        warming = 0
+        in_campaign = 0
+        smtp_fail = 0
+        cl_sent = 0
+        cl_bounced = 0
+        cl_replied = 0
+        cl_bounce_rates = []
+        cl_reply_rates = []
+        flagged_domains = set()
+        all_domains = set()
+
+        for acc in cl_accounts:
+            email = acc.get("from_email", "")
+            domain = email.split("@")[-1] if "@" in email else ""
+            all_domains.add(domain)
+
+            hs = calculate_health_score(acc, health)
+            cl_scores.append(hs["score"])
+            if hs["flags"]:
+                flagged_domains.add(domain)
+
+            h = health.get(email, {})
+            sent = h.get("sent", 0) or 0
+            bounced = h.get("bounced", 0) or 0
+            replied = h.get("replied", 0) or 0
+            cl_sent += sent
+            cl_bounced += bounced
+            cl_replied += replied
+            br_val = parse_rate(h.get("bounce_rate"))
+            if br_val is not None:
+                cl_bounce_rates.append(br_val)
+            rr_val = parse_rate(h.get("reply_rate"))
+            if rr_val is not None:
+                cl_reply_rates.append(rr_val)
+
+            if (acc.get("warmup_details") or {}).get("status") == "ACTIVE":
+                warming += 1
+            if (acc.get("campaign_count", 0) or 0) > 0:
+                in_campaign += 1
+            if not acc.get("is_smtp_success"):
+                smtp_fail += 1
+
+        avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 100
+        avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 2) if cl_bounce_rates else 0
+        avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 2) if cl_reply_rates else 0
+        total_domains = len(all_domains)
+
+        groups.append({
+            "id": cl["id"],
+            "name": cl["name"],
+            "accounts": len(cl_accounts),
+            "warming": warming,
+            "in_campaign": in_campaign,
+            "smtp_failures": smtp_fail,
+            "total_sent": cl_sent,
+            "total_bounced": cl_bounced,
+            "total_replied": cl_replied,
+            "avg_bounce_rate": avg_bounce,
+            "avg_reply_rate": avg_reply,
+            "health_score": avg_health,
+            "total_domains": total_domains,
+            "flagged_domains": len(flagged_domains),
+            "flagged_pct": round(len(flagged_domains) / total_domains * 100) if total_domains else 0,
+            "needs_attention": len(flagged_domains) / total_domains >= 0.15 if total_domains else False,
+        })
+
+    return {
+        "groups": groups,
+        "total_accounts": total_accounts,
+        "total_groups": len(groups),
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
 def api_zapmail():
     """ZapMail domains grouped by tag (client), with renewal alerts."""
     domains = zm_list_domains()
@@ -1080,6 +1174,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_placement_tests())
                 elif path == "/api/subscriptions":
                     self._json_response(api_subscriptions())
+                elif path == "/api/acquisition":
+                    self._json_response(api_acquisition())
                 else:
                     self._error(404, "Not found")
             except Exception as e:
