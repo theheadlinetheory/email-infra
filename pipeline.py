@@ -6,6 +6,7 @@ Each pipeline is persisted to pipelines/<id>.json for crash recovery.
 
 import json
 import logging
+import os
 import random
 import time
 import uuid
@@ -60,8 +61,12 @@ import requests
 log = logging.getLogger("pipeline")
 
 SCRIPT_DIR = Path(__file__).parent
-PIPELINES_DIR = SCRIPT_DIR / "pipelines"
-PIPELINES_DIR.mkdir(exist_ok=True)
+# Use persistent disk on Render, local directory otherwise
+_DATA_DIR = Path(os.environ.get("DATA_DIR", "")) if os.environ.get("DATA_DIR") else SCRIPT_DIR
+PIPELINES_DIR = _DATA_DIR / "pipelines"
+PIPELINES_DIR.mkdir(parents=True, exist_ok=True)
+CLIENTS_DIR = _DATA_DIR / "clients"
+CLIENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Thread safety: one lock per pipeline ID to prevent concurrent step execution
 _pipeline_locks: dict[str, threading.Lock] = {}
@@ -74,8 +79,7 @@ EXPORT_TIMEOUT_S = 15 * 60
 
 # Headshot URL — served from the dashboard itself.
 # When deployed to Render, use the Render URL. Locally, use localhost.
-import os as _os
-_DASHBOARD_HOST = _os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8099")
+_DASHBOARD_HOST = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8099")
 HEADSHOT_URL = f"{_DASHBOARD_HOST}/headshots/sean_reynolds.png"
 
 # Pipeline step definitions (order matters)
@@ -576,6 +580,24 @@ def step_export_csv(pipeline):
 
     csv_path, rows = export_for_sheet(config)
     pipeline["export_csv_path"] = str(csv_path)
+
+    # Save client config for warmup tracking
+    safe_name = client_name.lower().replace(" ", "_")
+    config_path = CLIENTS_DIR / f"{safe_name}.json"
+    if config_path.exists():
+        # Merge with existing config (append domains, keep earliest warmup date)
+        try:
+            existing = json.loads(config_path.read_text())
+            existing.setdefault("purchased_domains", []).extend(purchased_domains)
+            existing_ws = existing.get("infrastructure", {}).get("warmup_start_date", "9999")
+            new_ws = config["infrastructure"]["warmup_start_date"]
+            if new_ws < existing_ws:
+                existing["infrastructure"]["warmup_start_date"] = new_ws
+            config = existing
+        except Exception:
+            pass
+    config_path.write_text(json.dumps(config, indent=2))
+
     _mark_all_domains_complete(pipeline, "export_csv")
     return True
 

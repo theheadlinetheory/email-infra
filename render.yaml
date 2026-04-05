@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: email-infra
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 dashboard.py
+    envVars:
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: infra-data
+      mountPath: /data
+      sizeGB: 1
