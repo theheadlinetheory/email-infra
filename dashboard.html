@@ -142,6 +142,12 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
             <h2 class="section-title">Clients</h2>
             <div class="clients-grid" id="clients-grid"></div>
 
+            <div id="acquisition-section" style="display:none;margin-top:24px;">
+                <h2 class="section-title">Acquisition Groups</h2>
+                <div class="summary-row" id="acquisition-stats"></div>
+                <div class="clients-grid" id="acquisition-grid"></div>
+            </div>
+
             <div class="unassigned-section" id="unassigned-section" style="display:none;">
                 <h2 class="section-title">Unassigned Accounts</h2>
                 <div class="assign-controls">
@@ -251,6 +257,7 @@ async function loadOverview() {
         }
         renderOverview();
         loadUnassigned();
+        loadAcquisition();
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
     }
@@ -513,6 +520,52 @@ async function assignSelected() {
     } catch (err) {
         document.getElementById('assign-status').textContent = 'Error: ' + err.message;
     }
+}
+
+async function loadAcquisition() {
+    try {
+        const resp = await fetch('/api/acquisition');
+        const data = await resp.json();
+        if (data.total_groups > 0) {
+            document.getElementById('acquisition-section').style.display = 'block';
+            document.getElementById('acquisition-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
+                <div class="stat-card"><div class="value">${data.total_groups}</div><div class="label">Active Groups</div></div>
+            `;
+            renderAcquisitionGroups(data.groups);
+        } else {
+            document.getElementById('acquisition-section').style.display = 'none';
+        }
+    } catch (e) {
+        console.error('Failed to load acquisition data:', e);
+    }
+}
+
+function renderAcquisitionGroups(groups) {
+    const grid = document.getElementById('acquisition-grid');
+    grid.innerHTML = groups.map(g => {
+        const healthColor = g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthBg = g.health_score >= 85 ? '#1a4a3a' : g.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+        return `
+        <div class="client-card ${g.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${g.id}, '${g.name.replace(/'/g, "\\'")}')">
+            <div class="cc-header">
+                <span class="cc-name">${g.name}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${g.health_score}</span>
+                    <span class="cc-count">${g.accounts} accounts</span>
+                </div>
+            </div>
+            ${g.needs_attention ? '<div style="background:#4a1a1a;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ff6b6b;">' + g.flagged_domains + '/' + g.total_domains + ' domains flagged (' + g.flagged_pct + '%)</div>' : ''}
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">In Campaign</span><span>${g.in_campaign}</span></div>
+                <div class="cc-stat"><span class="label">Warming</span><span>${g.warming}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Domains</span><span>${g.total_domains}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ff6b6b' : g.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4'}">${g.avg_bounce_rate}%</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#4ecdc4' : g.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b'}">${g.avg_reply_rate}%</span></div>
+            </div>
+        </div>`;
+    }).join('');
 }
 
 // --- Tab switching ---
