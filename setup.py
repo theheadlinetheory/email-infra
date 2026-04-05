@@ -1994,6 +1994,79 @@ def dns_only(csv_path):
     print(f"\n  Done: {success_count} success, {fail_count} failed\n")
 
 
+# ─── ACQUISITION MODE ───
+
+def interactive_acquisition(daily_volume=None, group_name=None):
+    """Interactive mode for acquisition infrastructure setup."""
+    print("\n" + "="*60)
+    print("  THT ACQUISITION INFRASTRUCTURE SETUP")
+    print("="*60 + "\n")
+
+    # Show THT domain inventory
+    try:
+        import sheets
+        acq_domains = sheets.get_acquisition_domains()
+        print(f"  THT domains available: {len(acq_domains)}")
+    except Exception:
+        print("  Could not check domain inventory")
+
+    if daily_volume is None:
+        daily_volume = int(input("  Daily volume for this group: ").strip())
+
+    infra = calculate_infra(daily_volume)
+
+    # Auto-detect next group letter from existing SmartLead tags
+    if group_name is None:
+        existing_tags = sl_get_all_tags()
+        used_letters = set()
+        for tag_name in existing_tags:
+            # Match "X Group" pattern
+            if "group" in tag_name.lower() and "(" in tag_name:
+                letter = tag_name.split()[0].strip()
+                if len(letter) == 1 and letter.isalpha():
+                    used_letters.add(letter.upper())
+        next_letter = "A"
+        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            if c not in used_letters:
+                next_letter = c
+                break
+        group_name = f"{next_letter} Group ({daily_volume}/day)"
+        print(f"\n  Next group: {group_name}")
+
+    print(f"\n  --- ACQUISITION INFRASTRUCTURE ---")
+    print(f"  Group:                 {group_name}")
+    print(f"  Daily volume target:   {infra['daily_volume_target']}")
+    print(f"  Accounts needed:       {infra['accounts_needed']}")
+    print(f"  Domains needed:        {infra['domains_needed']}")
+    print(f"  Sender:                Aidan Hutchinson")
+    print(f"  Forwarding:            https://theheadlinetheory.com/")
+
+    confirm = input(f"\n  Proceed? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("  Aborted.")
+        return
+
+    config = {
+        "mode": "acquisition",
+        "client_name": group_name,
+        "group_name": group_name,
+        "created_date": datetime.now().strftime("%Y-%m-%d"),
+        "infrastructure": infra,
+        "forwarding_domain": "https://theheadlinetheory.com/",
+        "status": "in_progress",
+        "steps_completed": [],
+    }
+
+    filename = f"acquisition_{group_name.split()[0].lower()}_{datetime.now().strftime('%Y%m%d')}.json"
+    config_path = SCRIPT_DIR / "clients" / filename
+    save_config(config, config_path)
+
+    print(f"\n  Config saved: {config_path}")
+    print(f"  Starting pipeline...\n")
+
+    run_pipeline(config, config_path)
+
+
 # ─── INTERACTIVE INTAKE ───
 
 def interactive(client_name=None, daily_volume=None, forwarding_domain=None):
@@ -2096,6 +2169,10 @@ if __name__ == "__main__":
                 daily_volume=int(sys.argv[3]),
                 forwarding_domain=fwd_arg,
             )
+        elif sys.argv[1] == "--acquisition":
+            vol = int(sys.argv[2]) if len(sys.argv) >= 3 else None
+            grp = sys.argv[3] if len(sys.argv) >= 4 else None
+            interactive_acquisition(daily_volume=vol, group_name=grp)
         else:
             print("Usage:")
             print("  python3 setup.py                                              # Interactive — full pipeline")
@@ -2103,6 +2180,8 @@ if __name__ == "__main__":
             print("  python3 setup.py --auto 'Client Name' 1000 --no-forward       # Automated, skip forwarding")
             print("  python3 setup.py --math 1000                                  # Just do the math")
             print("  python3 setup.py --run clients/config.json                    # Resume from config")
+            print("  python3 setup.py --acquisition 250                        # Acquisition mode, 250/day group")
+            print("  python3 setup.py --acquisition 250 \"G Group (250/day)\"    # Acquisition with explicit group name")
             print("  python3 setup.py --dns-only domains.csv                       # Set NS on existing domains")
             print("")
             print("  DNS-only CSV format: Domain,Provider")
