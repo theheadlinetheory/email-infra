@@ -758,9 +758,16 @@ INBOX_SPECS = [
     {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.reynolds"},
 ]
 
-def generate_mailbox_specs(domain_name, count=3, offset=0):
+ACQUISITION_INBOX_SPECS = [
+    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan"},
+    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan.hutchinson"},
+    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "a.hutchinson"},
+]
+
+def generate_mailbox_specs(domain_name, count=3, offset=0, mode="client"):
     """Return the standard 3 inbox specs for a domain."""
-    return INBOX_SPECS[:count]
+    specs = ACQUISITION_INBOX_SPECS if mode == "acquisition" else INBOX_SPECS
+    return specs[:count]
 
 
 def zm_get_workspace_id():
