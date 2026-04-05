@@ -127,6 +127,22 @@ def get_available_domains(exclude_keywords=None):
     return available
 
 
+def get_acquisition_domains(exclude_keywords=None):
+    """Get available domains that ARE headlinetheory domains (for acquisition infrastructure)."""
+    if exclude_keywords is None:
+        exclude_keywords = EXCLUDED_KEYWORDS
+    _, domains = get_all_master_domains()
+    available = []
+    for d in domains:
+        if d["status"].lower() != "available":
+            continue
+        domain_lower = d["domain"].lower()
+        # INCLUDE only domains matching excluded keywords (opposite of client logic)
+        if any(kw in domain_lower for kw in exclude_keywords):
+            available.append(d)
+    return available
+
+
 def claim_domains(domains_to_claim, client_name):
     """Mark domains as 'In use' in the master sheet. Returns list of claimed domains.
 
