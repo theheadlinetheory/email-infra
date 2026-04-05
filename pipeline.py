@@ -67,7 +67,7 @@ PIPELINES_DIR.mkdir(exist_ok=True)
 _pipeline_locks: dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
 
-WARMUP_TARGET_REPUTATION = 99
+WARMUP_TARGET_REPUTATION = 98
 MAILBOXES_PER_DOMAIN = 3
 ZAPMAIL_ACTIVATION_TIMEOUT_S = 30 * 60
 EXPORT_TIMEOUT_S = 15 * 60
@@ -677,7 +677,7 @@ def step_wait_for_warmup(pipeline):
             if r.status_code == 200:
                 acc = r.json()
                 wd = acc.get("warmup_details") or {}
-                rep = wd.get("warmup_reputation", "?")
+                rep = str(wd.get("warmup_reputation", "?")).replace("%", "").strip()
                 try:
                     if float(rep) < WARMUP_TARGET_REPUTATION:
                         all_warmed = False
@@ -691,77 +691,130 @@ def step_wait_for_warmup(pipeline):
 
 
 def step_check_campaigns(pipeline):
-    """Check if old inboxes are in any active campaigns.
-    If yes, set pipeline to 'awaiting_removal' (needs manual action from dashboard).
-    If no old inboxes or none in campaigns, auto-proceed.
+    """Swap new inboxes into old inboxes' campaigns, then remove old inboxes.
+
+    1. Find which campaigns the old inboxes are in
+    2. Add new inboxes to those same campaigns
+    3. Remove old inboxes from campaigns
     """
     old_domains = pipeline.get("old_domains", [])
     if not old_domains:
         _mark_all_domains_complete(pipeline, "check_campaigns")
         return True
 
-    # Get all campaigns
-    r = requests.get(
-        f"{SMARTLEAD_API}/campaign?api_key={SMARTLEAD_KEY}", timeout=30
-    )
-    campaigns = r.json() if r.status_code == 200 else []
-    active_campaigns = [c for c in campaigns if c.get("status") == "ACTIVE"]
+    # Collect old account IDs
+    old_account_ids = set()
+    for od in old_domains:
+        old_account_ids.update(od.get("smartlead_account_ids", []))
 
-    # Check each old inbox against active campaigns
-    inbox_campaigns = {}  # email -> [campaign_names]
-    for old_domain in old_domains:
-        for old_email in old_domain.get("emails", []):
-            for camp in active_campaigns:
-                camp_id = camp["id"]
-                cr = requests.get(
-                    f"{SMARTLEAD_API}/campaigns/{camp_id}/email-accounts?api_key={SMARTLEAD_KEY}",
-                    timeout=30,
-                )
-                if cr.status_code == 200:
-                    camp_accounts = cr.json() if isinstance(cr.json(), list) else []
-                    for ca in camp_accounts:
-                        if ca.get("from_email") == old_email:
-                            if old_email not in inbox_campaigns:
-                                inbox_campaigns[old_email] = []
-                            inbox_campaigns[old_email].append({
-                                "campaign_id": camp_id,
-                                "campaign_name": camp["name"],
-                            })
+    # Collect new account IDs from the pipeline's new domains
+    new_account_ids = []
+    for domain_name, info in pipeline["domains"].items():
+        new_account_ids.extend(info.get("smartlead_account_ids", []))
 
-    if inbox_campaigns:
-        pipeline["pending_removals"] = inbox_campaigns
-        pipeline["status"] = "awaiting_removal"
-        return False  # Needs manual action
+    # Get client's campaigns
+    client_name = pipeline.get("client_name", "")
+    r = requests.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
+    all_campaigns = r.json() if r.status_code == 200 else []
+    active_campaigns = [c for c in all_campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
 
+    # Find which campaigns contain old inboxes
+    campaigns_to_update = []
+    for camp in active_campaigns:
+        cr = requests.get(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+            timeout=30,
+        )
+        if cr.status_code != 200:
+            continue
+        camp_accounts = cr.json() if isinstance(cr.json(), list) else []
+        camp_account_ids = {ca["id"] for ca in camp_accounts}
+        if camp_account_ids & old_account_ids:
+            campaigns_to_update.append(camp["id"])
+        time.sleep(0.2)
+
+    log.info(f"[SWAP] Found {len(campaigns_to_update)} campaigns to update for {client_name}")
+
+    # Add new inboxes to those campaigns
+    for camp_id in campaigns_to_update:
+        r = requests.post(
+            f"{SMARTLEAD_API}/campaigns/{camp_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+            json={"email_account_ids": new_account_ids},
+            timeout=30,
+        )
+        log.info(f"[SWAP] Added new accounts to campaign {camp_id}: {r.status_code}")
+        time.sleep(0.3)
+
+    # Remove old inboxes from those campaigns
+    for camp_id in campaigns_to_update:
+        for old_id in old_account_ids:
+            r = requests.delete(
+                f"{SMARTLEAD_API}/campaigns/{camp_id}/email-accounts/{old_id}?api_key={SMARTLEAD_KEY}",
+                timeout=30,
+            )
+            log.info(f"[SWAP] Removed old account {old_id} from campaign {camp_id}: {r.status_code}")
+            time.sleep(0.3)
+
+    pipeline["campaigns_updated"] = campaigns_to_update
     _mark_all_domains_complete(pipeline, "check_campaigns")
     return True
 
 
 def step_remove_old(pipeline):
-    """Remove old email accounts from SmartLead entirely."""
-    old_domains = pipeline.get("old_domains", [])
-    for old_domain in old_domains:
-        for acc_id in old_domain.get("smartlead_account_ids", []):
-            r = requests.delete(
-                f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
-                timeout=30,
-            )
-            if r.status_code not in (200, 204):
-                log.warning("Failed to delete SmartLead account %s: %s", acc_id, r.text[:200])
-            time.sleep(0.5)
+    """Schedule old ZapMail mailboxes for removal at renewal and record renewal dates.
 
+    Does NOT delete SmartLead accounts yet — that happens automatically
+    when the renewal date passes (handled by the monitor cleanup job).
+    """
+    old_domains = pipeline.get("old_domains", [])
+
+    # Get subscription data to find renewal dates
+    from zapmail_ops import zm_get_subscriptions, zm_get_subscription_mailboxes
+    subs = zm_get_subscriptions()
+    sub_list = subs.get("data", []) if isinstance(subs, dict) else []
+
+    for old_domain in old_domains:
+        mailbox_ids = old_domain.get("mailbox_ids", [])
+        if mailbox_ids:
+            zm_remove_on_renewal(mailbox_ids)
+            log.info(f"[CLEANUP] Scheduled removal at renewal for {old_domain.get('domain')}")
+
+        # Find renewal date for this domain's subscription
+        domain_name = old_domain.get("domain", "")
+        for sub in sub_list:
+            sub_domain = sub.get("domain", {}).get("name", "")
+            if sub_domain == domain_name:
+                old_domain["renewal_date"] = sub.get("nextRenewalDate", "")
+                old_domain["subscription_id"] = sub.get("id")
+                break
+
+    # Save pending deletions for the monitor cleanup job
+    pending_file = PIPELINES_DIR / "pending_deletions.json"
+    pending = []
+    if pending_file.exists():
+        try:
+            pending = json.loads(pending_file.read_text())
+        except Exception:
+            pending = []
+
+    for old_domain in old_domains:
+        pending.append({
+            "domain": old_domain.get("domain", ""),
+            "smartlead_account_ids": old_domain.get("smartlead_account_ids", []),
+            "renewal_date": old_domain.get("renewal_date", ""),
+            "client_name": pipeline.get("client_name", ""),
+            "pipeline_id": pipeline["id"],
+            "scheduled_at": datetime.now().isoformat(),
+        })
+
+    pending_file.write_text(json.dumps(pending, indent=2))
     _mark_all_domains_complete(pipeline, "remove_old")
     return True
 
 
 def step_cleanup(pipeline):
-    """Schedule old ZapMail mailboxes for removal at renewal."""
-    old_domains = pipeline.get("old_domains", [])
-    for old_domain in old_domains:
-        mailbox_ids = old_domain.get("mailbox_ids", [])
-        if mailbox_ids:
-            zm_remove_on_renewal(mailbox_ids)
-
+    """Final cleanup — mark pipeline complete."""
+    pipeline["completed_at"] = datetime.now().isoformat()
     _mark_all_domains_complete(pipeline, "cleanup")
     return True
 
@@ -832,12 +885,12 @@ def run_pipeline_steps(pipeline):
 
 def get_flagged_domains_for_client(client_accounts):
     """Check warmup reputation for all accounts, return flagged domains.
-    A domain is flagged if ANY inbox has warmup reputation < 99.
+    A domain is flagged if ANY inbox has warmup reputation < 98%.
     """
     flagged = {}  # domain -> {emails, smartlead_account_ids}
     for acc in client_accounts:
         wd = acc.get("warmup_details") or {}
-        rep = wd.get("warmup_reputation", "?")
+        rep = str(wd.get("warmup_reputation", "?")).replace("%", "").strip()
         email = acc.get("from_email", "")
         domain = email.split("@")[-1] if "@" in email else ""
         try:
@@ -889,6 +942,19 @@ def _run_monitor_check():
             available.sort(key=lambda d: d.get("purchase_date", "9999"))
             replacement_domain = available[0]
 
+            # Look up Zapmail mailbox IDs for the old domain
+            old_mailbox_ids = []
+            try:
+                subs = zm_get_subscriptions()
+                for sub in (subs.get("data", []) if isinstance(subs, dict) else []):
+                    if sub.get("domain", {}).get("name") == domain:
+                        sub_mailboxes = zm_get_subscription_mailboxes(sub["id"])
+                        mb_list = sub_mailboxes.get("data", []) if isinstance(sub_mailboxes, dict) else []
+                        old_mailbox_ids = [m["id"] for m in mb_list]
+                        break
+            except Exception as e:
+                log.info(f"[MONITOR] Could not fetch mailbox IDs for {domain}: {e}")
+
             # Create replacement pipeline
             pipeline = create_pipeline(
                 "replacement",
@@ -900,6 +966,7 @@ def _run_monitor_check():
                 "domain": domain,
                 "emails": domain_info["emails"],
                 "smartlead_account_ids": domain_info["smartlead_account_ids"],
+                "mailbox_ids": old_mailbox_ids,
             }]
             save_pipeline(pipeline)
 
@@ -977,18 +1044,75 @@ def _run_weekly_placement_tests():
     log.info("[PLACEMENT] Ran placement tests for {sample_size} mailboxes")
 
 
+def _run_pending_deletions():
+    """Delete SmartLead accounts whose Zapmail renewal date has passed."""
+    pending_file = PIPELINES_DIR / "pending_deletions.json"
+    if not pending_file.exists():
+        return
+
+    try:
+        pending = json.loads(pending_file.read_text())
+    except Exception:
+        return
+
+    if not pending:
+        return
+
+    remaining = []
+    now = datetime.now()
+
+    for entry in pending:
+        renewal = entry.get("renewal_date", "")
+        if not renewal:
+            remaining.append(entry)
+            continue
+
+        try:
+            renewal_dt = datetime.fromisoformat(renewal.replace("Z", "+00:00").replace("+00:00", ""))
+        except Exception:
+            try:
+                renewal_dt = datetime.strptime(renewal[:10], "%Y-%m-%d")
+            except Exception:
+                remaining.append(entry)
+                continue
+
+        if now < renewal_dt:
+            remaining.append(entry)
+            continue
+
+        # Renewal has passed — delete from SmartLead
+        domain = entry.get("domain", "")
+        for acc_id in entry.get("smartlead_account_ids", []):
+            r = requests.delete(
+                f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
+                timeout=30,
+            )
+            status = "ok" if r.status_code in (200, 204) else f"fail({r.status_code})"
+            log.info(f"[CLEANUP] Deleted SmartLead account {acc_id} ({domain}): {status}")
+            time.sleep(0.5)
+
+        log.info(f"[CLEANUP] Finished deleting {domain} for {entry.get('client_name')}")
+
+    pending_file.write_text(json.dumps(remaining, indent=2))
+
+
 def monitor_loop(check_interval_hours=4):
     """Background loop: check reputation every N hours, trigger replacements."""
     while True:
         try:
             _run_monitor_check()
         except Exception as e:
-            log.info("[MONITOR] Error in reputation check: {e}")
+            log.info(f"[MONITOR] Error in reputation check: {e}")
+
+        try:
+            _run_pending_deletions()
+        except Exception as e:
+            log.info(f"[MONITOR] Error in pending deletions: {e}")
 
         try:
             _run_weekly_placement_tests()
         except Exception as e:
-            log.info("[MONITOR] Error in placement tests: {e}")
+            log.info(f"[MONITOR] Error in placement tests: {e}")
 
         time.sleep(check_interval_hours * 3600)
 
