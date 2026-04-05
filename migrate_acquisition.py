@@ -17,11 +17,10 @@ import sys
 import os
 import time
 import requests
-import re
 
 sys.path.insert(0, os.path.dirname(__file__))
 from setup import (
-    sl_list_accounts, sl_tag_account, sl_internal_headers,
+    sl_list_accounts, sl_internal_headers,
     SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API
 )
 

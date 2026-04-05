@@ -134,7 +134,7 @@ def get_acquisition_domains(exclude_keywords=None):
     _, domains = get_all_master_domains()
     available = []
     for d in domains:
-        if d["status"].lower() != "available":
+        if d["status"].lower().strip() != "available":
             continue
         domain_lower = d["domain"].lower()
         # INCLUDE only domains matching excluded keywords (opposite of client logic)
