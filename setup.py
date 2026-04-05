@@ -1004,8 +1004,13 @@ def run_pipeline(config, config_path):
         domains_needed = infra["domains_needed"]
 
         # Read available generic domains from the master sheet
-        available = sheets.get_available_domains()
-        log(f"Found {len(available)} available generic domains in sheet")
+        mode = config.get("mode", "client")
+        if mode == "acquisition":
+            available = sheets.get_acquisition_domains()
+            log(f"Found {len(available)} available THT/acquisition domains")
+        else:
+            available = sheets.get_available_domains()
+            log(f"Found {len(available)} available generic domains in sheet")
         log(f"Need {domains_needed} domains for {client}")
 
         # Cross-check: exclude domains that already exist in Zapmail with active mailboxes
@@ -1278,7 +1283,7 @@ def run_pipeline(config, config_path):
                 continue
 
             log(f"  {domain_name} is ACTIVE — creating {ACCOUNTS_PER_DOMAIN} inboxes...")
-            specs = generate_mailbox_specs(domain_name, ACCOUNTS_PER_DOMAIN)
+            specs = generate_mailbox_specs(domain_name, ACCOUNTS_PER_DOMAIN, mode=config.get("mode", "client"))
 
             max_retries = 5
             retry_delay = 15  # seconds
@@ -1740,10 +1745,18 @@ def run_pipeline(config, config_path):
             warmup_date = datetime.strptime(infra["warmup_start_date"], "%Y-%m-%d")
             date_tag_name = f"{warmup_date.month}/{warmup_date.day}/{warmup_date.strftime('%y')}"
 
-            # Find or create the 3 tags: client name, "Zapmail", date
-            # Colors are auto-assigned to be unique — no hardcoded colors
+            # Build tag list based on mode
+            mode = config.get("mode", "client")
+            if mode == "acquisition":
+                # Acquisition gets 4 tags: Acquisition Inbox, Zapmail, date, group
+                group_name = config.get("group_name", client)
+                tag_names = ["Acquisition Inbox", "Zapmail", date_tag_name, group_name]
+            else:
+                # Client gets 3 tags: client name, Zapmail, date
+                tag_names = [client, "Zapmail", date_tag_name]
+
             tag_ids = []
-            for tag_name in [client, "Zapmail", date_tag_name]:
+            for tag_name in tag_names:
                 tag_id = sl_find_or_create_tag(tag_name, existing_tags=existing_tags)
                 if tag_id:
                     tag_ids.append(tag_id)
