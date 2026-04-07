@@ -1,0 +1,54 @@
+-- Supabase schema for email infrastructure pipeline state
+-- Run this in the Supabase SQL Editor after creating your project
+
+-- Pipeline state (replaces pipelines/*.json)
+create table if not exists pipelines (
+    id text primary key,
+    data jsonb not null,
+    status text not null default 'running',
+    client_name text not null default '',
+    pipeline_type text not null default '',
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_pipelines_status on pipelines (status);
+create index if not exists idx_pipelines_client on pipelines (client_name);
+
+-- Pending SmartLead account deletions (replaces pending_deletions.json)
+create table if not exists pending_deletions (
+    id bigint generated always as identity primary key,
+    domain text not null,
+    smartlead_account_ids jsonb not null default '[]',
+    renewal_date text not null default '',
+    client_name text not null default '',
+    pipeline_id text not null default '',
+    scheduled_at timestamptz not null default now()
+);
+
+create index if not exists idx_pending_domain on pending_deletions (domain);
+
+-- Client configs (replaces clients/*.json)
+create table if not exists client_configs (
+    id text primary key,
+    client_name text not null,
+    data jsonb not null,
+    updated_at timestamptz not null default now()
+);
+
+-- Monitor audit log
+create table if not exists monitor_log (
+    id bigint generated always as identity primary key,
+    event_type text not null,
+    details jsonb not null default '{}',
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_monitor_event on monitor_log (event_type);
+create index if not exists idx_monitor_created on monitor_log (created_at);
+
+-- Generic key-value state (placement test timestamps, etc.)
+create table if not exists state (
+    key text primary key,
+    data jsonb not null default '{}',
+    updated_at timestamptz not null default now()
+);

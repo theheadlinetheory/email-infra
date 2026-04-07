@@ -215,9 +215,15 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
         <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Number of Domains</label>
         <input id="nc-domain-count" type="number" min="1" max="50" value="5" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
     </div>
-    <div style="margin-bottom:16px;">
+    <div id="nc-forwarding-section" style="margin-bottom:16px;">
         <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding URL</label>
         <input id="nc-forwarding" type="text" placeholder="https://..." style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#888;cursor:pointer;">
+            <input id="nc-generic" type="checkbox" onchange="toggleGenericMode()" style="accent-color:#4ecdc4;">
+            Generic (no forwarding URL — set later when client signs)
+        </label>
     </div>
     <div id="nc-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
     <div style="display:flex;gap:12px;justify-content:flex-end;">
@@ -857,6 +863,8 @@ function showNewClientForm() {
     document.getElementById('new-client-overlay').style.display = 'block';
     document.getElementById('new-client-form').style.display = 'block';
     document.getElementById('nc-status').textContent = '';
+    document.getElementById('nc-generic').checked = false;
+    document.getElementById('nc-forwarding-section').style.display = 'block';
     loadInventoryPreview();
 }
 
@@ -865,14 +873,22 @@ function closeNewClientForm() {
     document.getElementById('new-client-form').style.display = 'none';
 }
 
+function toggleGenericMode() {
+    const isGeneric = document.getElementById('nc-generic').checked;
+    document.getElementById('nc-forwarding-section').style.display = isGeneric ? 'none' : 'block';
+    if (isGeneric) document.getElementById('nc-forwarding').value = '';
+}
+
 async function loadInventoryPreview() {
+    const el = document.getElementById('nc-inventory');
     try {
         const resp = await fetch('/api/domain-inventory');
-        const data = await resp.json();
-        const el = document.getElementById('nc-inventory');
+        const text = await resp.text();
+        if (!text) { el.textContent = 'Could not load inventory'; el.style.color = '#ff6b6b'; return; }
+        const data = JSON.parse(text);
         const count = data.available_count ?? 0;
         if (data.error) {
-            el.textContent = 'Could not load inventory';
+            el.textContent = 'Could not load inventory: ' + data.error;
             el.style.color = '#ff6b6b';
             return;
         }
@@ -884,7 +900,11 @@ async function loadInventoryPreview() {
             alertEl.style.display = 'inline';
             alertEl.textContent = 'Low inventory: only ' + count + ' domains available';
         }
-    } catch(e) { console.error('Inventory error:', e); }
+    } catch(e) {
+        el.textContent = 'Could not load inventory';
+        el.style.color = '#ff6b6b';
+        console.error('Inventory error:', e);
+    }
 }
 
 async function startNewClientPipeline() {

@@ -1,7 +1,7 @@
 """Pipeline engine for autonomous infrastructure management.
 
 Handles new client setup and domain replacement as state machines.
-Each pipeline is persisted to pipelines/<id>.json for crash recovery.
+Each pipeline is persisted to Supabase for crash recovery.
 """
 
 import json
@@ -55,18 +55,13 @@ from zapmail_ops import (
     zm_get_subscription_mailboxes,
 )
 from sheets import get_available_domains, mark_domains_in_use_batch, setup_client_tab
+import db as store
 
 import requests
 
 log = logging.getLogger("pipeline")
 
 SCRIPT_DIR = Path(__file__).parent
-# Use persistent disk on Render, local directory otherwise
-_DATA_DIR = Path(os.environ.get("DATA_DIR", "")) if os.environ.get("DATA_DIR") else SCRIPT_DIR
-PIPELINES_DIR = _DATA_DIR / "pipelines"
-PIPELINES_DIR.mkdir(parents=True, exist_ok=True)
-CLIENTS_DIR = _DATA_DIR / "clients"
-CLIENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Thread safety: one lock per pipeline ID to prevent concurrent step execution
 _pipeline_locks: dict[str, threading.Lock] = {}
@@ -142,29 +137,18 @@ def generate_pipeline_id():
 
 
 def save_pipeline(pipeline):
-    """Persist pipeline state to JSON."""
-    path = PIPELINES_DIR / f"{pipeline['id']}.json"
-    path.write_text(json.dumps(pipeline, indent=2, default=str))
+    """Persist pipeline state to Supabase."""
+    store.save_pipeline(pipeline)
 
 
 def load_pipeline(pipeline_id):
-    """Load a pipeline from disk."""
-    path = PIPELINES_DIR / f"{pipeline_id}.json"
-    if path.exists():
-        return json.loads(path.read_text())
-    return None
+    """Load a pipeline from Supabase."""
+    return store.load_pipeline(pipeline_id)
 
 
 def load_all_pipelines():
-    """Load all pipeline state files."""
-    pipelines = []
-    for path in PIPELINES_DIR.glob("*.json"):
-        try:
-            pipelines.append(json.loads(path.read_text()))
-        except Exception as e:
-            log.warning("Failed to load pipeline %s: %s", path.name, e)
-            continue
-    return pipelines
+    """Load all pipeline records from Supabase."""
+    return store.load_all_pipelines()
 
 
 def create_pipeline(pipeline_type, client_name, domains, forwarding_url=""):
@@ -582,21 +566,15 @@ def step_export_csv(pipeline):
     pipeline["export_csv_path"] = str(csv_path)
 
     # Save client config for warmup tracking
-    safe_name = client_name.lower().replace(" ", "_")
-    config_path = CLIENTS_DIR / f"{safe_name}.json"
-    if config_path.exists():
-        # Merge with existing config (append domains, keep earliest warmup date)
-        try:
-            existing = json.loads(config_path.read_text())
-            existing.setdefault("purchased_domains", []).extend(purchased_domains)
-            existing_ws = existing.get("infrastructure", {}).get("warmup_start_date", "9999")
-            new_ws = config["infrastructure"]["warmup_start_date"]
-            if new_ws < existing_ws:
-                existing["infrastructure"]["warmup_start_date"] = new_ws
-            config = existing
-        except Exception:
-            pass
-    config_path.write_text(json.dumps(config, indent=2))
+    existing = store.load_client_config(client_name)
+    if existing:
+        existing.setdefault("purchased_domains", []).extend(purchased_domains)
+        existing_ws = existing.get("infrastructure", {}).get("warmup_start_date", "9999")
+        new_ws = config["infrastructure"]["warmup_start_date"]
+        if new_ws < existing_ws:
+            existing["infrastructure"]["warmup_start_date"] = new_ws
+        config = existing
+    store.save_client_config(client_name, config)
 
     _mark_all_domains_complete(pipeline, "export_csv")
     return True
@@ -810,17 +788,9 @@ def step_remove_old(pipeline):
                 old_domain["subscription_id"] = sub.get("id")
                 break
 
-    # Save pending deletions for the monitor cleanup job
-    pending_file = PIPELINES_DIR / "pending_deletions.json"
-    pending = []
-    if pending_file.exists():
-        try:
-            pending = json.loads(pending_file.read_text())
-        except Exception:
-            pending = []
-
+    # Save pending deletions to Supabase
     for old_domain in old_domains:
-        pending.append({
+        store.add_pending_deletion({
             "domain": old_domain.get("domain", ""),
             "smartlead_account_ids": old_domain.get("smartlead_account_ids", []),
             "renewal_date": old_domain.get("renewal_date", ""),
@@ -828,8 +798,6 @@ def step_remove_old(pipeline):
             "pipeline_id": pipeline["id"],
             "scheduled_at": datetime.now().isoformat(),
         })
-
-    pending_file.write_text(json.dumps(pending, indent=2))
     _mark_all_domains_complete(pipeline, "remove_old")
     return True
 
@@ -992,6 +960,13 @@ def _run_monitor_check():
             }]
             save_pipeline(pipeline)
 
+            store.log_monitor_event("replacement_triggered", {
+                "client": client["name"],
+                "flagged_domain": domain,
+                "replacement_domain": replacement_domain.get("domain", ""),
+                "pipeline_id": pipeline["id"],
+            })
+
             # Run setup steps in background thread
             threading.Thread(
                 target=run_pipeline_steps,
@@ -1023,11 +998,9 @@ def _run_weekly_placement_tests():
         zm_run_placement_test,
     )
 
-    state_file = PIPELINES_DIR / "last_placement_test.json"
-
     # Check if we already ran this week
-    if state_file.exists():
-        last = json.loads(state_file.read_text())
+    last = store.get_state("last_placement_test")
+    if last:
         last_run = datetime.fromisoformat(last.get("last_run", "2000-01-01"))
         if (datetime.now() - last_run).days < 7:
             return
@@ -1058,35 +1031,25 @@ def _run_weekly_placement_tests():
     result = zm_run_placement_test(sample_ids)
 
     # Save last run timestamp
-    state_file.write_text(json.dumps({
+    store.set_state("last_placement_test", {
         "last_run": datetime.now().isoformat(),
         "mailboxes_tested": sample_ids,
         "result": str(result)[:500],
-    }))
+    })
     log.info("[PLACEMENT] Ran placement tests for {sample_size} mailboxes")
 
 
 def _run_pending_deletions():
     """Delete SmartLead accounts whose Zapmail renewal date has passed."""
-    pending_file = PIPELINES_DIR / "pending_deletions.json"
-    if not pending_file.exists():
-        return
-
-    try:
-        pending = json.loads(pending_file.read_text())
-    except Exception:
-        return
-
+    pending = store.get_pending_deletions()
     if not pending:
         return
 
-    remaining = []
     now = datetime.now()
 
     for entry in pending:
         renewal = entry.get("renewal_date", "")
         if not renewal:
-            remaining.append(entry)
             continue
 
         try:
@@ -1095,16 +1058,18 @@ def _run_pending_deletions():
             try:
                 renewal_dt = datetime.strptime(renewal[:10], "%Y-%m-%d")
             except Exception:
-                remaining.append(entry)
                 continue
 
         if now < renewal_dt:
-            remaining.append(entry)
             continue
 
         # Renewal has passed — delete from SmartLead
         domain = entry.get("domain", "")
-        for acc_id in entry.get("smartlead_account_ids", []):
+        account_ids = entry.get("smartlead_account_ids", [])
+        if isinstance(account_ids, str):
+            account_ids = json.loads(account_ids)
+
+        for acc_id in account_ids:
             r = requests.delete(
                 f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
                 timeout=30,
@@ -1113,9 +1078,13 @@ def _run_pending_deletions():
             log.info(f"[CLEANUP] Deleted SmartLead account {acc_id} ({domain}): {status}")
             time.sleep(0.5)
 
+        store.remove_pending_deletion(domain)
+        store.log_monitor_event("deletion_completed", {
+            "domain": domain,
+            "client_name": entry.get("client_name", ""),
+            "account_ids": account_ids,
+        })
         log.info(f"[CLEANUP] Finished deleting {domain} for {entry.get('client_name')}")
-
-    pending_file.write_text(json.dumps(remaining, indent=2))
 
 
 def monitor_loop(check_interval_hours=4):

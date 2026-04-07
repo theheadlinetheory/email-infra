@@ -41,8 +41,7 @@ def load_env():
 
 load_env()
 
-# Persistent data directory — uses Render disk mount or local directory
-DATA_DIR = Path(os.environ.get("DATA_DIR", "")) if os.environ.get("DATA_DIR") else SCRIPT_DIR
+import db as store
 
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
@@ -264,20 +263,13 @@ def get_health_metrics(days=7):
 
 
 def get_warmup_start_dates():
-    """Read warmup start dates from client config files."""
+    """Read warmup start dates from client configs in Supabase."""
     dates = {}
-    clients_dir = DATA_DIR / "clients"
-    if not clients_dir.exists():
-        clients_dir = SCRIPT_DIR / "clients"
-    for path in clients_dir.glob("*.json"):
-        try:
-            c = json.loads(path.read_text())
-            name = c.get("client_name", "")
-            ws = c.get("infrastructure", {}).get("warmup_start_date", "")
-            if name and ws:
-                dates[name.lower()] = ws
-        except Exception:
-            continue
+    for c in store.load_all_client_configs():
+        name = c.get("client_name", "")
+        ws = c.get("infrastructure", {}).get("warmup_start_date", "")
+        if name and ws:
+            dates[name.lower()] = ws
     return dates
 
 
@@ -1273,28 +1265,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass
 
 
-def _migrate_data_to_persistent_disk():
-    """On first boot with persistent disk, copy existing data from repo dir."""
-    if DATA_DIR == SCRIPT_DIR:
-        return  # local dev, no migration needed
-    import shutil
-    for subdir in ("clients", "pipelines"):
-        src = SCRIPT_DIR / subdir
-        dst = DATA_DIR / subdir
-        dst.mkdir(parents=True, exist_ok=True)
-        if src.exists():
-            for f in src.glob("*.json"):
-                target = dst / f.name
-                if not target.exists():
-                    shutil.copy2(f, target)
-                    print(f"Migrated {subdir}/{f.name} to persistent disk")
-
-
 def main():
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
-
-    _migrate_data_to_persistent_disk()
 
     # Start background infrastructure monitor
     monitor = start_monitor_thread()
