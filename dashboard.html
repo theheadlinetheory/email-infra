@@ -880,8 +880,12 @@ function closeNewClientForm() {
 
 async function toggleMonitor(clientName, currentlyPaused) {
     const newPaused = !currentlyPaused;
-    const action = newPaused ? 'Pause auto-replacement' : 'Re-enable auto-replacement';
-    if (!confirm(action + ' for ' + clientName + '?')) return;
+    const btn = event.target;
+    btn.textContent = newPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
+    btn.style.background = newPaused ? '#4a3a1a' : '#0a1628';
+    btn.style.color = newPaused ? '#ffd93d' : '#888';
+    btn.style.borderColor = newPaused ? '#8b7a3a' : '#0f3460';
+    btn.disabled = true;
     try {
         const resp = await fetch('/api/client/pause-monitor', {
             method: 'POST',
@@ -890,11 +894,18 @@ async function toggleMonitor(clientName, currentlyPaused) {
         });
         const result = await resp.json();
         if (result.error) {
-            alert('Error: ' + result.error);
-        } else {
-            loadOverview();
+            btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
+            btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
+            btn.style.color = currentlyPaused ? '#ffd93d' : '#888';
+            btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
         }
-    } catch(e) { alert('Error: ' + e.message); }
+    } catch(e) {
+        btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
+        btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
+        btn.style.color = currentlyPaused ? '#ffd93d' : '#888';
+        btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
+    }
+    btn.disabled = false;
 }
 
 function toggleGenericMode() {
