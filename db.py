@@ -16,8 +16,8 @@ import httpx
 
 log = logging.getLogger("db")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip().replace("\n", "").replace("\r", "")
 
 _http: httpx.Client | None = None
 
