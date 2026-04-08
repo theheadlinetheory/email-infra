@@ -383,9 +383,15 @@ def api_overview():
         and (a.get("warmup_details") or {}).get("blocked_reason")
     ]
 
-    # Client summaries
+    # Client summaries — exclude acquisition groups (shown in their own section)
+    def _is_acquisition_group(name):
+        nl = name.lower()
+        return "group" in nl and ("/" in name or "day" in nl)
+
     client_summaries = []
     for cl in clients:
+        if _is_acquisition_group(cl.get("name", "")):
+            continue
         cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
         if not cl_accounts:
             continue
