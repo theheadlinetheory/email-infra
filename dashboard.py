@@ -1373,9 +1373,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass
 
 
+def cleanup_stuck_pipelines():
+    """Mark any 'running' pipelines as error on startup (they were abandoned by a previous instance)."""
+    try:
+        rows = store._request("GET", "/pipelines", params={"select": "id,data,status", "status": "eq.running"})
+        for row in rows:
+            data = json.loads(row["data"])
+            data["status"] = "error"
+            data["errors"] = data.get("errors", []) + ["Server restarted — pipeline interrupted"]
+            store._request("POST", "/pipelines", json_body={
+                "id": row["id"],
+                "data": json.dumps(data),
+                "status": "error",
+                "client_name": data.get("client_name", ""),
+                "pipeline_type": data.get("type", ""),
+                "updated_at": data.get("updated_at", ""),
+            }, headers={"Prefer": "resolution=merge-duplicates"})
+        if rows:
+            print(f"Cleaned up {len(rows)} stuck pipelines from previous instance")
+    except Exception as e:
+        print(f"Warning: could not clean up stuck pipelines: {e}")
+
+
 def main():
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+
+    # Clean up pipelines stuck from previous instance
+    cleanup_stuck_pipelines()
 
     # Start background infrastructure monitor
     monitor = start_monitor_thread()
