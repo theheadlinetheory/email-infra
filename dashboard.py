@@ -4,6 +4,7 @@
 Works both locally (reads .env file) and hosted (reads environment variables).
 """
 
+import gc
 import json
 import os
 import sys
@@ -14,6 +15,9 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta
 from pathlib import Path
 import threading
+
+# Limit concurrent heavy API calls to prevent OOM on 512MB Render
+_api_lock = threading.Lock()
 from pipeline import (
     create_pipeline, load_pipeline, load_all_pipelines,
     run_pipeline_steps, save_pipeline, start_monitor_thread,
@@ -214,9 +218,9 @@ def get_accounts_by_client(client_id):
 _accounts_cache = {"data": None, "time": 0}
 
 def get_all_accounts():
-    """Fetch all accounts with 60-second cache to reduce memory churn."""
+    """Fetch all accounts with 5-minute cache to reduce memory churn."""
     now = time.time()
-    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 60:
+    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 300:
         return _accounts_cache["data"]
     accounts = []
     offset = 0
@@ -253,8 +257,13 @@ def assign_accounts_to_client(account_ids, client_id):
     return {"success": success, "fail": fail}
 
 
+_health_cache = {"data": None, "time": 0}
+
 def get_health_metrics(days=7):
-    """Get per-inbox health metrics (bounce rate, reply rate, etc.) from SmartLead analytics."""
+    """Get per-inbox health metrics with 5-minute cache."""
+    now = time.time()
+    if _health_cache["data"] is not None and now - _health_cache["time"] < 300:
+        return _health_cache["data"]
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     r = requests.get(
@@ -264,10 +273,13 @@ def get_health_metrics(days=7):
         timeout=30,
     )
     if r.status_code != 200:
-        return {}
+        return _health_cache["data"] or {}
     data = r.json()
     metrics = data.get("data", {}).get("email_health_metrics", [])
-    return {m["from_email"]: m for m in metrics}
+    result = {m["from_email"]: m for m in metrics}
+    _health_cache["data"] = result
+    _health_cache["time"] = now
+    return result
 
 
 def get_warmup_start_dates():
@@ -371,6 +383,7 @@ def group_accounts_by_domain(accounts_with_scores):
 # --- API endpoint logic ---
 
 def api_overview():
+    gc.collect()  # Free memory before heavy operation
     clients = get_clients()
     all_accounts = get_all_accounts()
     warmup_dates = get_warmup_start_dates()
