@@ -2,6 +2,7 @@
 
 Replaces JSON file storage with durable cloud persistence.
 Requires SUPABASE_URL and SUPABASE_KEY environment variables.
+Uses httpx directly with HTTP/1.1 to avoid StreamReset errors on Render.
 """
 
 from __future__ import annotations
@@ -9,52 +10,47 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from datetime import datetime
 
-from supabase import create_client, Client
+import httpx
 
 log = logging.getLogger("db")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-_client: Client | None = None
-
-MAX_RETRIES = 3
+_http: httpx.Client | None = None
 
 
-def get_client() -> Client:
-    """Lazy-init the Supabase client."""
-    global _client
-    if _client is None:
+def _get_http() -> httpx.Client:
+    """Lazy-init an HTTP/1.1 client pointed at the Supabase REST API."""
+    global _http
+    if _http is None:
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set")
-        _client = create_client(
-            SUPABASE_URL,
-            SUPABASE_KEY,
+        _http = httpx.Client(
+            base_url=f"{SUPABASE_URL}/rest/v1",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            http2=False,
+            timeout=30,
         )
-    return _client
+    return _http
 
 
-def _retry(fn):
-    """Retry a Supabase call up to MAX_RETRIES on transient HTTP errors."""
-    last_err = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            return fn()
-        except Exception as e:
-            last_err = e
-            err_str = str(e).lower()
-            if "streamreset" in err_str or "remoteprotocol" in err_str or "read timeout" in err_str:
-                log.warning("Supabase transient error (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, e)
-                time.sleep(0.5 * (attempt + 1))
-                # Reset client on connection errors
-                global _client
-                _client = None
-                continue
-            raise
-    raise last_err
+def _request(method: str, path: str, *, params: dict | None = None,
+             json_body=None, headers: dict | None = None):
+    """Make a request to the Supabase REST API."""
+    h = headers or {}
+    resp = _get_http().request(method, path, params=params, json=json_body, headers=h)
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return []
+    return resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -71,22 +67,23 @@ def save_pipeline(pipeline: dict) -> None:
         "pipeline_type": pipeline.get("type", ""),
         "updated_at": datetime.now().isoformat(),
     }
-    _retry(lambda: get_client().table("pipelines").upsert(row).execute())
+    _request("POST", "/pipelines", json_body=row,
+             headers={"Prefer": "resolution=merge-duplicates"})
 
 
 def load_pipeline(pipeline_id: str) -> dict | None:
     """Load a single pipeline by ID."""
-    resp = _retry(lambda: get_client().table("pipelines").select("data").eq("id", pipeline_id).execute())
-    if resp.data:
-        return json.loads(resp.data[0]["data"])
+    rows = _request("GET", "/pipelines", params={"select": "data", "id": f"eq.{pipeline_id}"})
+    if rows:
+        return json.loads(rows[0]["data"])
     return None
 
 
 def load_all_pipelines() -> list[dict]:
     """Load all pipeline records."""
-    resp = _retry(lambda: get_client().table("pipelines").select("data").execute())
+    rows = _request("GET", "/pipelines", params={"select": "data"})
     pipelines = []
-    for row in resp.data or []:
+    for row in rows:
         try:
             pipelines.append(json.loads(row["data"]))
         except Exception as e:
@@ -100,8 +97,7 @@ def load_all_pipelines() -> list[dict]:
 
 def get_pending_deletions() -> list[dict]:
     """Get all pending deletion entries."""
-    resp = _retry(lambda: get_client().table("pending_deletions").select("*").execute())
-    return resp.data or []
+    return _request("GET", "/pending_deletions", params={"select": "*"})
 
 
 def add_pending_deletion(entry: dict) -> None:
@@ -114,12 +110,12 @@ def add_pending_deletion(entry: dict) -> None:
         "pipeline_id": entry.get("pipeline_id", ""),
         "scheduled_at": entry.get("scheduled_at", datetime.now().isoformat()),
     }
-    _retry(lambda: get_client().table("pending_deletions").insert(row).execute())
+    _request("POST", "/pending_deletions", json_body=row)
 
 
 def remove_pending_deletion(domain: str) -> None:
     """Remove a pending deletion after it's been processed."""
-    _retry(lambda: get_client().table("pending_deletions").delete().eq("domain", domain).execute())
+    _request("DELETE", "/pending_deletions", params={"domain": f"eq.{domain}"})
 
 
 # ---------------------------------------------------------------------------
@@ -135,23 +131,24 @@ def save_client_config(client_name: str, config: dict) -> None:
         "data": json.dumps(config, default=str),
         "updated_at": datetime.now().isoformat(),
     }
-    _retry(lambda: get_client().table("client_configs").upsert(row).execute())
+    _request("POST", "/client_configs", json_body=row,
+             headers={"Prefer": "resolution=merge-duplicates"})
 
 
 def load_client_config(client_name: str) -> dict | None:
     """Load a client config by name."""
     safe_name = client_name.lower().replace(" ", "_")
-    resp = _retry(lambda: get_client().table("client_configs").select("data").eq("id", safe_name).execute())
-    if resp.data:
-        return json.loads(resp.data[0]["data"])
+    rows = _request("GET", "/client_configs", params={"select": "data", "id": f"eq.{safe_name}"})
+    if rows:
+        return json.loads(rows[0]["data"])
     return None
 
 
 def load_all_client_configs() -> list[dict]:
     """Load all client configs."""
-    resp = _retry(lambda: get_client().table("client_configs").select("data").execute())
+    rows = _request("GET", "/client_configs", params={"select": "data"})
     configs = []
-    for row in resp.data or []:
+    for row in rows:
         try:
             configs.append(json.loads(row["data"]))
         except Exception:
@@ -170,7 +167,7 @@ def log_monitor_event(event_type: str, details: dict) -> None:
         "details": json.dumps(details, default=str),
         "created_at": datetime.now().isoformat(),
     }
-    _retry(lambda: get_client().table("monitor_log").insert(row).execute())
+    _request("POST", "/monitor_log", json_body=row)
 
 
 # ---------------------------------------------------------------------------
@@ -179,9 +176,9 @@ def log_monitor_event(event_type: str, details: dict) -> None:
 
 def get_state(key: str) -> dict | None:
     """Get a key-value state record."""
-    resp = _retry(lambda: get_client().table("state").select("data").eq("key", key).execute())
-    if resp.data:
-        return json.loads(resp.data[0]["data"])
+    rows = _request("GET", "/state", params={"select": "data", "key": f"eq.{key}"})
+    if rows:
+        return json.loads(rows[0]["data"])
     return None
 
 
@@ -192,4 +189,5 @@ def set_state(key: str, data: dict) -> None:
         "data": json.dumps(data, default=str),
         "updated_at": datetime.now().isoformat(),
     }
-    _retry(lambda: get_client().table("state").upsert(row).execute())
+    _request("POST", "/state", json_body=row,
+             headers={"Prefer": "resolution=merge-duplicates"})
