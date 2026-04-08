@@ -1206,6 +1206,113 @@ def api_subscriptions():
     return zm_get_subscriptions()
 
 
+# --- Generic Groups ---
+
+def api_generic_groups():
+    """Generic group status with warmup progress for the dashboard."""
+    clients = get_clients()
+    all_accounts = get_all_accounts()
+    health = get_health_metrics()
+
+    # Find generic clients (e.g. "Generic A", "Generic B", etc.)
+    generic_clients = [
+        c for c in clients
+        if c.get("name", "").lower().startswith("generic")
+    ]
+
+    # Try to load pipeline data for pipeline IDs
+    try:
+        all_pipelines = load_all_pipelines()
+    except Exception:
+        all_pipelines = []
+
+    groups = []
+    total_accounts = 0
+    total_capacity = 0
+    for cl in sorted(generic_clients, key=lambda x: x.get("name", "")):
+        cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
+        if not cl_accounts:
+            continue
+
+        total_accounts += len(cl_accounts)
+        domains = set()
+        smtp_fail = 0
+        daily_cap = 0
+        warmup_dates = []
+        health_scores = []
+
+        for acc in cl_accounts:
+            email = acc.get("from_email", "")
+            domain = email.split("@")[-1] if "@" in email else ""
+            if domain:
+                domains.add(domain)
+            daily_cap += acc.get("message_per_day", 0) or 0
+            if not acc.get("is_smtp_success"):
+                smtp_fail += 1
+            # Warmup start date
+            wd = (acc.get("warmup_details") or {}).get("warmup_created_at", "")
+            if wd:
+                warmup_dates.append(wd[:10])
+            # Health score
+            hs = calculate_health_score(acc, health)
+            health_scores.append(hs["score"])
+
+        total_capacity += daily_cap
+        avg_health = round(sum(health_scores) / len(health_scores)) if health_scores else 100
+
+        # Calculate warmup progress
+        earliest_warmup = min(warmup_dates) if warmup_dates else None
+        days_warming = 0
+        days_left = 0
+        ready_date_str = ""
+        warmup_start_str = ""
+        status = "warming"
+
+        if earliest_warmup:
+            try:
+                ws = datetime.strptime(earliest_warmup, "%Y-%m-%d")
+                warmup_start_str = ws.strftime("%-m/%-d")
+                days_warming = (datetime.now() - ws).days
+                ready = ws + timedelta(days=14)
+                ready_date_str = ready.strftime("%-m/%-d")
+                days_left = max(0, (ready - datetime.now()).days)
+                if days_left <= 0:
+                    status = "ready"
+            except Exception:
+                pass
+
+        # Find matching pipeline ID
+        pipeline_id = ""
+        cl_name_lower = cl["name"].lower().strip()
+        for p in all_pipelines:
+            if p.get("client_name", "").lower().strip() == cl_name_lower:
+                pipeline_id = p.get("id", "")
+                break
+
+        groups.append({
+            "name": cl["name"],
+            "client_id": cl["id"],
+            "pipeline_id": pipeline_id,
+            "accounts": len(cl_accounts),
+            "domains": len(domains),
+            "daily_capacity": daily_cap,
+            "smtp_failures": smtp_fail,
+            "health_score": avg_health,
+            "warmup_start": warmup_start_str,
+            "ready_date": ready_date_str,
+            "days_warming": days_warming,
+            "days_left": days_left,
+            "status": status,
+        })
+
+    return {
+        "groups": groups,
+        "total_accounts": total_accounts,
+        "total_daily_capacity": total_capacity,
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
 # --- Client Reassignment ---
 
 def api_clients_list():
@@ -1509,6 +1616,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_subscriptions())
                 elif path == "/api/acquisition":
                     self._json_response(api_acquisition())
+                elif path == "/api/generic-groups":
+                    self._json_response(api_generic_groups())
                 elif path == "/api/clients/list":
                     self._json_response(api_clients_list())
                 elif path == "/api/debug/supabase":

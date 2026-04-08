@@ -143,6 +143,12 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
             <h2 class="section-title">Clients</h2>
             <div class="clients-grid" id="clients-grid"></div>
 
+            <div id="generic-section" style="display:none;margin-top:24px;">
+                <h2 class="section-title">Generic Groups</h2>
+                <div class="summary-row" id="generic-stats"></div>
+                <div class="clients-grid" id="generic-grid"></div>
+            </div>
+
             <div id="acquisition-section" style="display:none;margin-top:24px;">
                 <h2 class="section-title">Acquisition Groups</h2>
                 <div class="summary-row" id="acquisition-stats"></div>
@@ -296,6 +302,7 @@ async function loadOverview() {
         }
         renderOverview();
         loadUnassigned();
+        loadGenericGroups();
         loadAcquisition();
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
@@ -574,6 +581,75 @@ async function assignSelected() {
     } catch (err) {
         document.getElementById('assign-status').textContent = 'Error: ' + err.message;
     }
+}
+
+async function loadGenericGroups() {
+    try {
+        const resp = await fetch('/api/generic-groups');
+        const data = await resp.json();
+        if (data.groups && data.groups.length > 0) {
+            document.getElementById('generic-section').style.display = 'block';
+            const ready = data.groups.filter(g => g.status === 'ready').length;
+            const warming = data.groups.filter(g => g.status === 'warming').length;
+            document.getElementById('generic-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Generic Inboxes</div></div>
+                <div class="stat-card good"><div class="value">${ready}</div><div class="label">Ready for Clients</div></div>
+                ${warming > 0 ? '<div class="stat-card warn"><div class="value">' + warming + '</div><div class="label">Still Warming</div></div>' : ''}
+                <div class="stat-card"><div class="value">${data.total_daily_capacity}/day</div><div class="label">Total Capacity</div></div>
+            `;
+            renderGenericGroups(data.groups);
+        } else {
+            document.getElementById('generic-section').style.display = 'none';
+        }
+    } catch (e) {
+        console.error('Failed to load generic groups:', e);
+    }
+}
+
+function renderGenericGroups(groups) {
+    const grid = document.getElementById('generic-grid');
+    grid.innerHTML = groups.map(g => {
+        const isReady = g.status === 'ready';
+        const statusColor = isReady ? '#4ecdc4' : '#7c4dff';
+        const statusBg = isReady ? '#1a4a3a' : '#2a1a4a';
+        const statusLabel = isReady ? 'Ready' : g.days_left + 'd left';
+        const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
+
+        let html = `
+        <div class="client-card" style="position:relative;">
+            <div class="cc-header">
+                <span class="cc-name">${g.name}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${statusBg};color:${statusColor};font-size:13px;padding:3px 10px;">${statusLabel}</span>
+                    <span class="cc-count">${g.accounts} accounts</span>
+                </div>
+            </div>
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">Domains</span><span>${g.domains}</span></div>
+                <div class="cc-stat"><span class="label">Capacity</span><span>${g.daily_capacity}/day</span></div>
+                <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
+                <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
+                <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b'}">${g.health_score}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;">
+                    <span>Warmup Progress</span><span>${progressPct}%</span>
+                </div>
+                <div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="background:${isReady ? '#4ecdc4' : '#7c4dff'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
+                </div>
+            </div>`;
+
+        if (isReady) {
+            html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                <button onclick="event.stopPropagation();openAssignModal('${g.pipeline_id || ''}','${g.name.replace(/'/g, "\\'")}')" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
+            </div>`;
+        }
+
+        html += '</div>';
+        return html;
+    }).join('');
 }
 
 async function loadAcquisition() {
