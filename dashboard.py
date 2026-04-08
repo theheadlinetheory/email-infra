@@ -529,6 +529,28 @@ def api_overview():
     except Exception:
         paused_clients = []
 
+    # Load target volumes per client
+    try:
+        target_volumes = store.get_state("target_volumes") or {}
+    except Exception:
+        target_volumes = {}
+
+    # Add capacity info to each client summary
+    for cs in client_summaries:
+        healthy = cs["accounts"] - cs["smtp_failures"] - cs["blocked"]
+        capacity = healthy * 15
+        target = target_volumes.get(cs["name"], 0)
+        cs["healthy_inboxes"] = healthy
+        cs["daily_capacity"] = capacity
+        cs["target_volume"] = target
+        if target > 0:
+            shortfall = target - capacity
+            cs["inboxes_needed"] = max(0, -(-shortfall // 15))  # ceiling division
+            cs["capacity_status"] = "on_track" if capacity >= target else "need_more"
+        else:
+            cs["inboxes_needed"] = 0
+            cs["capacity_status"] = "no_target"
+
     return {
         "total_accounts": total,
         "warming": total_warming,
@@ -1294,6 +1316,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     clients_list.remove(client_name)
                 store.set_state("paused_clients", {"clients": clients_list})
                 self._json_response({"ok": True, "paused_clients": clients_list})
+            except Exception as e:
+                self._json_response({"error": str(e)}, 500)
+        elif path == "/api/client/set-target-volume":
+            client_name = body.get("client_name", "")
+            volume = body.get("target_volume", 0)
+            if not client_name:
+                self._error(400, "client_name required")
+                return
+            try:
+                targets = store.get_state("target_volumes") or {}
+                targets[client_name] = int(volume)
+                store.set_state("target_volumes", targets)
+                self._json_response({"ok": True, "client_name": client_name, "target_volume": int(volume)})
             except Exception as e:
                 self._json_response({"error": str(e)}, 500)
         elif path == "/api/inbox/remove-from-campaign":

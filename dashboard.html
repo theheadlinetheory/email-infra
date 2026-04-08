@@ -355,13 +355,23 @@ function renderOverview() {
             </div>
             ${cl.needs_attention ? '<div style="background:#4a1a1a;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ff6b6b;">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
             <div class="cc-stats">
-                <div class="cc-stat"><span class="label">${cl.warming > 0 ? 'Warming Up' : 'Active'}</span><span>${cl.warming > 0 ? cl.warming : cl.accounts}</span></div>
-                <div class="cc-stat"><span class="label">In Campaign</span><span>${cl.in_campaign}</span></div>
+                <div class="cc-stat"><span class="label">Healthy</span><span style="color:#4ecdc4">${cl.healthy_inboxes}</span></div>
+                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day</span></div>
                 <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.smtp_failures}</span></div>
                 <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.blocked}</span></div>
                 <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ff6b6b' : cl.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4') : '#888'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
                 <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? '#4ecdc4' : cl.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b') : '#888'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
             </div>
+            <div style="margin-top:8px;padding:8px 10px;background:#0a1628;border-radius:6px;font-size:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:#888;">Target Volume</span>
+                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
+                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:#16213e;color:#eee;border:1px solid #0f3460;border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
+                        <span style="color:#888;">/day</span>
+                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
+                    </div>
+                </div>
+                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? '#4ecdc4' : '#ff6b6b') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
             ${cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : ''}
             <div class="cc-dates">
                 ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
@@ -906,6 +916,21 @@ async function toggleMonitor(clientName, currentlyPaused) {
         btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
     }
     btn.disabled = false;
+}
+
+async function setTargetVolume(clientName, value) {
+    const vol = parseInt(value) || 0;
+    try {
+        const resp = await fetch('/api/client/set-target-volume', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName, target_volume: vol})
+        });
+        const result = await resp.json();
+        if (!result.error) {
+            loadOverview();
+        }
+    } catch(e) {}
 }
 
 function toggleGenericMode() {
