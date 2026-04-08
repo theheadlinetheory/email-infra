@@ -1,0 +1,587 @@
+{
+  "client_name": "Generic D",
+  "created_date": "2026-04-07",
+  "infrastructure": {
+    "daily_volume_target": 720,
+    "accounts_needed": 48,
+    "domains_needed": 16,
+    "actual_accounts": 48,
+    "actual_daily_capacity": 720,
+    "warmup_start_date": "2026-04-07",
+    "estimated_launch_date": "2026-04-21"
+  },
+  "forwarding_domain": "",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation"
+  ],
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "yardservicedirect.co",
+      "provider": "Spaceship",
+      "row_number": 559,
+      "nameservers_set": true,
+      "zapmail_domain_id": "90fb4210-3b17-449f-b128-0b8937eadc29",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardservicedirect.co",
+        "sean.r@yardservicedirect.co",
+        "sean.reynolds@yardservicedirect.co"
+      ]
+    },
+    {
+      "domain": "yardservicefocus.co",
+      "provider": "Spaceship",
+      "row_number": 560,
+      "nameservers_set": true,
+      "zapmail_domain_id": "535cef20-dd10-45f8-b89a-8c3754457158",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardservicefocus.co",
+        "sean.r@yardservicefocus.co",
+        "sean.reynolds@yardservicefocus.co"
+      ]
+    },
+    {
+      "domain": "yardservicehq.co",
+      "provider": "Spaceship",
+      "row_number": 561,
+      "nameservers_set": true,
+      "zapmail_domain_id": "79c3bab7-dee8-492d-a730-d5a9d86bbf2e",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardservicehq.co",
+        "sean.r@yardservicehq.co",
+        "sean.reynolds@yardservicehq.co"
+      ]
+    },
+    {
+      "domain": "yardservicepoint.co",
+      "provider": "Spaceship",
+      "row_number": 562,
+      "nameservers_set": true,
+      "zapmail_domain_id": "41b0b68f-454f-4f58-bf45-2ec849a57edf",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardservicepoint.co",
+        "sean.r@yardservicepoint.co",
+        "sean.reynolds@yardservicepoint.co"
+      ]
+    },
+    {
+      "domain": "yardserviceprime.co",
+      "provider": "Spaceship",
+      "row_number": 563,
+      "nameservers_set": true,
+      "zapmail_domain_id": "43b4c9fd-c2f9-428f-a6bb-9cc87db15857",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardserviceprime.co",
+        "sean.r@yardserviceprime.co",
+        "sean.reynolds@yardserviceprime.co"
+      ]
+    },
+    {
+      "domain": "yardserviceselect.co",
+      "provider": "Spaceship",
+      "row_number": 564,
+      "nameservers_set": true,
+      "zapmail_domain_id": "0c2a4547-5044-47ff-b0c1-f4b7c9ca612d",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardserviceselect.co",
+        "sean.r@yardserviceselect.co",
+        "sean.reynolds@yardserviceselect.co"
+      ]
+    },
+    {
+      "domain": "yardserviceteam.co",
+      "provider": "Spaceship",
+      "row_number": 565,
+      "nameservers_set": true,
+      "zapmail_domain_id": "15c0a60d-3d5f-47c6-b126-562661ca9bed",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardserviceteam.co",
+        "sean.r@yardserviceteam.co",
+        "sean.reynolds@yardserviceteam.co"
+      ]
+    },
+    {
+      "domain": "yardworkdirect.co",
+      "provider": "Spaceship",
+      "row_number": 566,
+      "nameservers_set": true,
+      "zapmail_domain_id": "7c250c12-3a22-44ef-800f-8fa2bfab5809",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardworkdirect.co",
+        "sean.r@yardworkdirect.co",
+        "sean.reynolds@yardworkdirect.co"
+      ]
+    },
+    {
+      "domain": "yardworkprime.co",
+      "provider": "Spaceship",
+      "row_number": 567,
+      "nameservers_set": true,
+      "zapmail_domain_id": "f97646c5-1087-4d84-ab7d-f8666a3eb0f4",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardworkprime.co",
+        "sean.r@yardworkprime.co",
+        "sean.reynolds@yardworkprime.co"
+      ]
+    },
+    {
+      "domain": "yardworkzone.co",
+      "provider": "Spaceship",
+      "row_number": 568,
+      "nameservers_set": true,
+      "zapmail_domain_id": "ab2f8265-cd9a-417f-8acf-88802b2d3362",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardworkzone.co",
+        "sean.r@yardworkzone.co",
+        "sean.reynolds@yardworkzone.co"
+      ]
+    },
+    {
+      "domain": "turfcarecrew.info",
+      "provider": "Spaceship",
+      "row_number": 569,
+      "nameservers_set": true,
+      "zapmail_domain_id": "b243c101-472b-4f70-aa19-3cd12ac14abc",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@turfcarecrew.info",
+        "sean.r@turfcarecrew.info",
+        "sean.reynolds@turfcarecrew.info"
+      ]
+    },
+    {
+      "domain": "lawnupkeepservices.info",
+      "provider": "Spaceship",
+      "row_number": 570,
+      "nameservers_set": true,
+      "zapmail_domain_id": "d6772a1c-cf55-4ca6-a8f8-4f737f19ec34",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@lawnupkeepservices.info",
+        "sean.r@lawnupkeepservices.info",
+        "sean.reynolds@lawnupkeepservices.info"
+      ]
+    },
+    {
+      "domain": "groundsworkspecialists.info",
+      "provider": "Spaceship",
+      "row_number": 571,
+      "nameservers_set": true,
+      "zapmail_domain_id": "7f2e18dd-c2de-40e7-8cd2-2a0c131cdf3b",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundsworkspecialists.info",
+        "sean.r@groundsworkspecialists.info",
+        "sean.reynolds@groundsworkspecialists.info"
+      ]
+    },
+    {
+      "domain": "propertygroundsservicepros.info",
+      "provider": "Spaceship",
+      "row_number": 572,
+      "nameservers_set": true,
+      "zapmail_domain_id": "b30df628-86f9-427a-94ae-6fd00805ff17",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@propertygroundsservicepros.info",
+        "sean.r@propertygroundsservicepros.info",
+        "sean.reynolds@propertygroundsservicepros.info"
+      ]
+    },
+    {
+      "domain": "yardmaintenancepartners.info",
+      "provider": "Spaceship",
+      "row_number": 573,
+      "nameservers_set": true,
+      "zapmail_domain_id": "abb8fbee-607e-49fe-a807-3a989611a5dc",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@yardmaintenancepartners.info",
+        "sean.r@yardmaintenancepartners.info",
+        "sean.reynolds@yardmaintenancepartners.info"
+      ]
+    },
+    {
+      "domain": "exteriorlandscapegroup.info",
+      "provider": "Spaceship",
+      "row_number": 574,
+      "nameservers_set": true,
+      "zapmail_domain_id": "8cc09d5b-0bea-4240-9582-eb2ae6ff8098",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@exteriorlandscapegroup.info",
+        "sean.r@exteriorlandscapegroup.info",
+        "sean.reynolds@exteriorlandscapegroup.info"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "yardservicedirect.co",
+      "yardservicefocus.co",
+      "yardservicehq.co",
+      "yardservicepoint.co",
+      "yardserviceprime.co",
+      "yardserviceselect.co",
+      "yardserviceteam.co",
+      "yardworkdirect.co",
+      "yardworkprime.co",
+      "yardworkzone.co",
+      "turfcarecrew.info",
+      "lawnupkeepservices.info",
+      "groundsworkspecialists.info",
+      "propertygroundsservicepros.info",
+      "yardmaintenancepartners.info",
+      "exteriorlandscapegroup.info"
+    ],
+    "initial_count": 46
+  },
+  "smartlead_accounts": [
+    "sean.r@turfcarecrew.info",
+    "sean.reynolds@exteriorlandscapegroup.info",
+    "s.reynolds@yardworkprime.co",
+    "sean.r@propertygroundsservicepros.info",
+    "sean.r@yardserviceteam.co",
+    "s.reynolds@groundsworkspecialists.info",
+    "sean.r@yardworkdirect.co",
+    "s.reynolds@propertygroundsservicepros.info",
+    "sean.r@yardworkprime.co",
+    "sean.r@yardservicehq.co",
+    "sean.reynolds@yardserviceteam.co",
+    "s.reynolds@lawnupkeepservices.info",
+    "sean.r@yardservicefocus.co",
+    "sean.reynolds@yardworkprime.co",
+    "s.reynolds@yardservicedirect.co",
+    "s.reynolds@turfcarecrew.info",
+    "s.reynolds@yardmaintenancepartners.info",
+    "sean.r@yardmaintenancepartners.info",
+    "sean.reynolds@propertygroundsservicepros.info",
+    "sean.reynolds@yardmaintenancepartners.info",
+    "sean.reynolds@lawnupkeepservices.info",
+    "sean.r@yardservicepoint.co",
+    "s.reynolds@yardserviceselect.co",
+    "s.reynolds@yardservicehq.co",
+    "sean.r@yardservicedirect.co",
+    "s.reynolds@exteriorlandscapegroup.info",
+    "sean.reynolds@turfcarecrew.info",
+    "sean.reynolds@yardservicehq.co",
+    "s.reynolds@yardservicepoint.co",
+    "s.reynolds@yardworkzone.co",
+    "sean.r@yardworkzone.co",
+    "s.reynolds@yardserviceteam.co",
+    "sean.reynolds@yardservicepoint.co",
+    "sean.r@yardserviceselect.co",
+    "sean.reynolds@yardworkzone.co",
+    "sean.reynolds@yardserviceprime.co",
+    "sean.reynolds@yardservicedirect.co",
+    "sean.reynolds@yardworkdirect.co",
+    "sean.reynolds@groundsworkspecialists.info",
+    "sean.r@lawnupkeepservices.info",
+    "sean.reynolds@yardserviceselect.co",
+    "sean.r@groundsworkspecialists.info",
+    "s.reynolds@yardserviceprime.co",
+    "s.reynolds@yardservicefocus.co",
+    "sean.reynolds@yardservicefocus.co",
+    "sean.r@yardserviceprime.co",
+    "s.reynolds@yardworkdirect.co",
+    "sean.r@exteriorlandscapegroup.info"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/generic_d_20260408.csv"
+}

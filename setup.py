@@ -295,28 +295,49 @@ def zm_headers(workspace_key=None):
     h["x-service-provider"] = "GOOGLE"
     return h
 
+def _api_retry(fn, max_retries=3, backoff=10):
+    """Retry wrapper for API calls — handles timeouts and transient failures."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return fn()
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout) as e:
+            if attempt < max_retries:
+                wait = backoff * attempt
+                log(f"  API timeout (attempt {attempt}/{max_retries}), retrying in {wait}s: {e}", "WARN")
+                time.sleep(wait)
+            else:
+                log(f"  API failed after {max_retries} attempts: {e}", "ERROR")
+                raise
+
 def zm_get(path, workspace_key=None):
-    r = requests.get(f"{ZAPMAIL_API}{path}", headers=zm_headers(workspace_key), timeout=30)
-    try:
-        return r.json()
-    except Exception:
-        return {"_raw_status": r.status_code, "_raw_text": r.text[:500]}
+    def _call():
+        r = requests.get(f"{ZAPMAIL_API}{path}", headers=zm_headers(workspace_key), timeout=30)
+        try:
+            return r.json()
+        except Exception:
+            return {"_raw_status": r.status_code, "_raw_text": r.text[:500]}
+    return _api_retry(_call)
 
 def zm_post(path, body=None, workspace_key=None):
-    r = requests.post(f"{ZAPMAIL_API}{path}", headers=zm_headers(workspace_key),
-                      json=body or {}, timeout=60)
-    try:
-        return r.json()
-    except Exception:
-        return {"_raw_status": r.status_code, "_raw_text": r.text[:500]}
+    def _call():
+        r = requests.post(f"{ZAPMAIL_API}{path}", headers=zm_headers(workspace_key),
+                          json=body or {}, timeout=60)
+        try:
+            return r.json()
+        except Exception:
+            return {"_raw_status": r.status_code, "_raw_text": r.text[:500]}
+    return _api_retry(_call)
 
 def zm_put(path, body=None, workspace_key=None):
-    r = requests.put(f"{ZAPMAIL_API}{path}", headers=zm_headers(workspace_key),
-                     json=body or {}, timeout=30)
-    try:
-        return r.json()
-    except Exception:
-        return {"_raw_status": r.status_code, "_raw_text": r.text[:500]}
+    def _call():
+        r = requests.put(f"{ZAPMAIL_API}{path}", headers=zm_headers(workspace_key),
+                         json=body or {}, timeout=30)
+        try:
+            return r.json()
+        except Exception:
+            return {"_raw_status": r.status_code, "_raw_text": r.text[:500]}
+    return _api_retry(_call)
 
 def zm_list_workspaces():
     return zm_get("/v2/workspaces")
@@ -474,18 +495,23 @@ def sl_create_email_account(from_name, from_email, username, password,
 def sl_set_warmup(account_id):
     """Set warmup via internal save-warmup endpoint (full control over all settings)."""
     # First enable warmup via public API
-    r = requests.post(sl_url(f"/email-accounts/{account_id}/warmup"),
-                      json=GOOGLE_WARMUP, timeout=30)
-    result = r.json()
+    def _public_warmup():
+        r = requests.post(sl_url(f"/email-accounts/{account_id}/warmup"),
+                          json=GOOGLE_WARMUP, timeout=30)
+        return r.json()
+    result = _api_retry(_public_warmup)
 
     # Then configure all settings via internal API (rampup toggle, reply limit, etc.)
     if SMARTLEAD_JWT:
         headers = sl_internal_headers()
         # Get warmup key ID
-        wd = requests.get(
-            f"{SMARTLEAD_INTERNAL_API}/email-account/fetch-warmup-details-by-email-account-id/{account_id}",
-            headers=headers, timeout=30
-        )
+        def _get_warmup_key():
+            wd = requests.get(
+                f"{SMARTLEAD_INTERNAL_API}/email-account/fetch-warmup-details-by-email-account-id/{account_id}",
+                headers=headers, timeout=30
+            )
+            return wd
+        wd = _api_retry(_get_warmup_key)
         warmup_key = ""
         if wd.status_code == 200:
             warmup_key = wd.json().get("message", {}).get("warmup_key_id", "")
@@ -506,10 +532,12 @@ def sl_set_warmup(account_id):
                 "status": "ACTIVE",
                 "warmupKeyId": warmup_key
             }
-            r2 = requests.post(
-                f"{SMARTLEAD_INTERNAL_API}/email-account/save-warmup",
-                headers=headers, json=body, timeout=30
-            )
+            def _save_warmup():
+                return requests.post(
+                    f"{SMARTLEAD_INTERNAL_API}/email-account/save-warmup",
+                    headers=headers, json=body, timeout=30
+                )
+            r2 = _api_retry(_save_warmup)
             if r2.status_code == 200:
                 result["full_config"] = True
 
@@ -526,11 +554,13 @@ def sl_internal_headers():
 
 def sl_gql(query, variables=None):
     """Execute a GraphQL query against SmartLead's Hasura endpoint."""
-    body = {"query": query}
-    if variables:
-        body["variables"] = variables
-    r = requests.post(SMARTLEAD_GQL, headers=sl_internal_headers(), json=body, timeout=30)
-    return r.json()
+    def _call():
+        body = {"query": query}
+        if variables:
+            body["variables"] = variables
+        r = requests.post(SMARTLEAD_GQL, headers=sl_internal_headers(), json=body, timeout=30)
+        return r.json()
+    return _api_retry(_call)
 
 def sl_get_all_tags():
     """Get all tags from SmartLead via GraphQL. Returns {name: {id, name, color}}."""
@@ -710,14 +740,18 @@ def sl_tag_accounts_bulk(account_ids, tag_ids, client_id=None):
     return success, fail
 
 def sl_list_accounts(offset=0, limit=100):
-    url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}"
-    r = requests.get(url, timeout=30)
-    return r.json()
+    def _call():
+        url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}"
+        r = requests.get(url, timeout=30)
+        return r.json()
+    return _api_retry(_call)
 
 def sl_get_account(account_id):
-    url = f"{SMARTLEAD_API}/email-accounts/{account_id}/?api_key={SMARTLEAD_KEY}"
-    r = requests.get(url, timeout=30)
-    return r.json()
+    def _call():
+        url = f"{SMARTLEAD_API}/email-accounts/{account_id}/?api_key={SMARTLEAD_KEY}"
+        r = requests.get(url, timeout=30)
+        return r.json()
+    return _api_retry(_call)
 
 def sl_update_account(account_id, data):
     r = requests.post(sl_url(f"/email-accounts/{account_id}"), json=data, timeout=30)
@@ -921,7 +955,11 @@ def export_for_sheet(config, output_path=None):
 
 # ─── MAIN PIPELINE ───
 
-TOTAL_STEPS = 11
+TOTAL_STEPS = 12
+
+# Profile photo URL for Sean Reynolds (publicly accessible)
+PROFILE_PHOTO_URL = "https://ui-avatars.com/api/?name=Sean+Reynolds&size=256&background=4A90D9&color=ffffff&bold=true"
+ACQUISITION_PHOTO_URL = "https://ui-avatars.com/api/?name=Aidan+Hutchinson&size=256&background=2ECC71&color=ffffff&bold=true"
 
 # Google Calendar config for rotation reminders
 GCAL_CALENDAR_ID = "c_86c4f6b9ef436cb6e4570df1d4d445331d2453ccf357935df8503209023cd58a@group.calendar.google.com"
@@ -1295,6 +1333,10 @@ def run_pipeline(config, config_path):
                 if isinstance(result, dict) and result.get("status") not in (400, 422, 500):
                     d["inboxes"] = specs
                     d["inbox_emails"] = [f"{s['mailboxUsername']}@{domain_name}" for s in specs]
+                    # Store mailbox UUIDs for bulk export later
+                    mb_ids = result.get("data", [])
+                    if isinstance(mb_ids, list):
+                        d["mailbox_ids"] = mb_ids
                     log(f"  Created: {', '.join(d['inbox_emails'])}")
                     created = True
                     break
@@ -1395,9 +1437,55 @@ def run_pipeline(config, config_path):
         config["steps_completed"] = completed
         save_config(config, config_path)
 
-    # ── STEP 7: Export to SmartLead ──
+    # ── STEP 7: Upload Profile Photos ──
+    if "profile_photos" not in completed:
+        log_step(7, TOTAL_STEPS, "UPLOAD PROFILE PHOTOS")
+
+        is_acquisition = config.get("type") == "acquisition"
+        photo_url = ACQUISITION_PHOTO_URL if is_acquisition else PROFILE_PHOTO_URL
+
+        # Collect all mailbox IDs
+        all_mb_ids = []
+        for d in config["purchased_domains"]:
+            stored = d.get("mailbox_ids", [])
+            if stored:
+                all_mb_ids.extend(stored)
+
+        if not all_mb_ids:
+            # Fallback: get from Zapmail domain list
+            log("No stored mailbox IDs — fetching from Zapmail domain list...")
+            all_zm = zm_list_domains(config.get("workspace_id", ""))
+            our_domain_set = {d["domain"] for d in config["purchased_domains"]}
+            for zm_d in all_zm:
+                if zm_d.get("domain") in our_domain_set:
+                    for mb in zm_d.get("mailboxes", []):
+                        if mb.get("id"):
+                            all_mb_ids.append(mb["id"])
+
+        if all_mb_ids:
+            log(f"Setting profile photos on {len(all_mb_ids)} mailboxes...")
+            batch_size = 20
+            success = 0
+            for i in range(0, len(all_mb_ids), batch_size):
+                batch = all_mb_ids[i:i+batch_size]
+                mailbox_data = [{"mailboxId": mid, "profilePicture": photo_url} for mid in batch]
+                result = zm_put("/v2/mailboxes", {"mailboxData": mailbox_data})
+                if isinstance(result, dict) and result.get("status") == 200:
+                    success += len(batch)
+                else:
+                    log(f"  Batch {i//batch_size + 1} issue: {json.dumps(result)[:200]}", "WARN")
+                time.sleep(1)
+            log(f"  Profile photos set on {success}/{len(all_mb_ids)} mailboxes")
+        else:
+            log("No mailbox IDs found — skipping profile photos", "WARN")
+
+        completed.append("profile_photos")
+        config["steps_completed"] = completed
+        save_config(config, config_path)
+
+    # ── STEP 8: Export to SmartLead ──
     if "smartlead_export" not in completed:
-        log_step(7, TOTAL_STEPS, "EXPORT INBOXES TO SMARTLEAD")
+        log_step(8, TOTAL_STEPS, "EXPORT INBOXES TO SMARTLEAD")
 
         our_domains = [d["domain"] for d in config["purchased_domains"]]
         our_domain_set = set(our_domains)
@@ -1495,25 +1583,39 @@ def run_pipeline(config, config_path):
         # --- Export to SmartLead ---
         log("Exporting mailboxes to SmartLead...")
 
-        # Collect all mailbox IDs across all domains
+        # Collect all mailbox IDs — prefer stored IDs from creation, fallback to API
         all_mailbox_ids = []
         for d in config["purchased_domains"]:
-            domain_id = d.get("zapmail_domain_id")
-            if domain_id:
-                mailboxes = zm_list_mailboxes(workspace_id, domain_id)
-                if isinstance(mailboxes, dict) and "data" in mailboxes:
-                    for mb in mailboxes["data"].get("mailboxes", mailboxes["data"] if isinstance(mailboxes["data"], list) else []):
-                        mb_id = mb.get("id")
-                        if mb_id:
-                            all_mailbox_ids.append(mb_id)
+            stored_ids = d.get("mailbox_ids", [])
+            if stored_ids:
+                all_mailbox_ids.extend(stored_ids)
+
+        if not all_mailbox_ids:
+            log("No stored mailbox IDs — fetching from Zapmail API...")
+            for d in config["purchased_domains"]:
+                domain_id = d.get("zapmail_domain_id")
+                if domain_id:
+                    mailboxes = zm_list_mailboxes(workspace_id, domain_id)
+                    if isinstance(mailboxes, dict):
+                        mb_data = mailboxes.get("data", {})
+                        if isinstance(mb_data, dict):
+                            mb_list = mb_data.get("mailboxes", [])
+                        elif isinstance(mb_data, list):
+                            mb_list = mb_data
+                        else:
+                            mb_list = []
+                        for mb in mb_list:
+                            mb_id = mb.get("id")
+                            if mb_id:
+                                all_mailbox_ids.append(mb_id)
 
         if all_mailbox_ids:
-            log(f"Bulk exporting {len(all_mailbox_ids)} mailboxes to SmartLead...")
+            log(f"Bulk exporting {len(all_mailbox_ids)} mailboxes to SmartLead in ONE call...")
             result = zm_export_mailboxes(apps=["SMARTLEAD"], mailbox_ids=all_mailbox_ids)
             log(f"  Export result: {json.dumps(result)[:300]}")
         else:
-            # Fallback: export by domain name
-            log("No mailbox IDs found, falling back to per-domain export...")
+            # Last resort fallback: export by domain name
+            log("No mailbox IDs found, falling back to per-domain export...", "WARN")
             for domain_name in our_domains:
                 result = zm_export_mailboxes(apps=["SMARTLEAD"], contains=domain_name)
                 log(f"  Export {domain_name}: {json.dumps(result)[:200]}")
@@ -1592,7 +1694,7 @@ def run_pipeline(config, config_path):
 
     # ── STEP 9: Configure Warmup in SmartLead ──
     if "smartlead_warmup" not in completed:
-        log_step(8, TOTAL_STEPS, "CONFIGURE WARMUP IN SMARTLEAD")
+        log_step(9, TOTAL_STEPS, "CONFIGURE WARMUP IN SMARTLEAD")
 
         our_domains = {d["domain"] for d in config["purchased_domains"]}
         expected_total = len(our_domains) * ACCOUNTS_PER_DOMAIN
@@ -1727,7 +1829,7 @@ def run_pipeline(config, config_path):
 
     # ── STEP 10: Tag Accounts + Assign Client in SmartLead ──
     if "smartlead_tags" not in completed:
-        log_step(9, TOTAL_STEPS, "TAG ACCOUNTS + ASSIGN CLIENT IN SMARTLEAD")
+        log_step(10, TOTAL_STEPS, "TAG ACCOUNTS + ASSIGN CLIENT IN SMARTLEAD")
 
         if not SMARTLEAD_JWT:
             log("SMARTLEAD_JWT not set in .env — cannot tag accounts.", "ERROR")
@@ -1824,7 +1926,7 @@ def run_pipeline(config, config_path):
 
     # ── STEP 11: Export CSV for Google Sheet ──
     if "export_csv" not in completed:
-        log_step(10, TOTAL_STEPS, "FINAL SUMMARY")
+        log_step(11, TOTAL_STEPS, "FINAL SUMMARY")
 
         csv_path, rows = export_for_sheet(config)
         log(f"Exported {len(rows)} rows to {csv_path}")
@@ -1836,7 +1938,7 @@ def run_pipeline(config, config_path):
 
     # ── STEP 12: Schedule Infrastructure Rotation in Google Calendar ──
     if "gcal_rotation" not in completed:
-        log_step(11, TOTAL_STEPS, "SCHEDULE INFRA ROTATION REMINDER")
+        log_step(12, TOTAL_STEPS, "SCHEDULE INFRA ROTATION REMINDER")
 
         warmup_start = datetime.strptime(infra["warmup_start_date"], "%Y-%m-%d")
         rotation_date = warmup_start + timedelta(weeks=GCAL_ROTATION_WEEKS)
