@@ -49,20 +49,20 @@ ENV = load_env()
 
 # API Config
 ZAPMAIL_API = "https://api.zapmail.ai/api"
-ZAPMAIL_KEY = ENV.get("ZAPMAIL_API_KEY", "")
+ZAPMAIL_KEY = ENV.get("ZAPMAIL_API_KEY", "") or os.environ.get("ZAPMAIL_API_KEY", "")
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
-SMARTLEAD_KEY = ENV.get("SMARTLEAD_API_KEY", "")
+SMARTLEAD_KEY = ENV.get("SMARTLEAD_API_KEY", "") or os.environ.get("SMARTLEAD_API_KEY", "")
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
-SMARTLEAD_GQL = ENV.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
-SMARTLEAD_JWT = ENV.get("SMARTLEAD_JWT", "")
+SMARTLEAD_GQL = ENV.get("SMARTLEAD_GQL", "") or os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+SMARTLEAD_JWT = ENV.get("SMARTLEAD_JWT", "") or os.environ.get("SMARTLEAD_JWT", "")
 
 # Domain Registrars
 PORKBUN_API = "https://api.porkbun.com/api/json/v3"
-PORKBUN_KEY = ENV.get("PORKBUN_API_KEY", "")
-PORKBUN_SECRET = ENV.get("PORKBUN_SECRET_KEY", "")
+PORKBUN_KEY = ENV.get("PORKBUN_API_KEY", "") or os.environ.get("PORKBUN_API_KEY", "")
+PORKBUN_SECRET = ENV.get("PORKBUN_SECRET_KEY", "") or os.environ.get("PORKBUN_SECRET_KEY", "")
 SPACESHIP_API = "https://spaceship.dev/api/v1"
-SPACESHIP_KEY = ENV.get("SPACESHIP_API_KEY", "")
-SPACESHIP_SECRET = ENV.get("SPACESHIP_SECRET_KEY", "")
+SPACESHIP_KEY = ENV.get("SPACESHIP_API_KEY", "") or os.environ.get("SPACESHIP_API_KEY", "")
+SPACESHIP_SECRET = ENV.get("SPACESHIP_SECRET_KEY", "") or os.environ.get("SPACESHIP_SECRET_KEY", "")
 
 CLOUDNS_NAMESERVERS = [
     "pns61.cloudns.net",
