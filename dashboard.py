@@ -211,7 +211,13 @@ def get_accounts_by_client(client_id):
     return accounts
 
 
+_accounts_cache = {"data": None, "time": 0}
+
 def get_all_accounts():
+    """Fetch all accounts with 60-second cache to reduce memory churn."""
+    now = time.time()
+    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 60:
+        return _accounts_cache["data"]
     accounts = []
     offset = 0
     while True:
@@ -223,6 +229,8 @@ def get_all_accounts():
             offset += 100
         else:
             break
+    _accounts_cache["data"] = accounts
+    _accounts_cache["time"] = now
     return accounts
 
 
@@ -1402,9 +1410,12 @@ def main():
     # Clean up pipelines stuck from previous instance
     cleanup_stuck_pipelines()
 
-    # Start background infrastructure monitor
-    monitor = start_monitor_thread()
-    print(f"Infrastructure monitor started (checking every 4 hours)")
+    # Start background infrastructure monitor (disabled on Render free tier to save memory)
+    if os.environ.get("DISABLE_MONITOR", "").lower() not in ("1", "true", "yes"):
+        monitor = start_monitor_thread()
+        print("Infrastructure monitor started (checking every 4 hours)")
+    else:
+        print("Infrastructure monitor DISABLED (DISABLE_MONITOR=1)")
 
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
