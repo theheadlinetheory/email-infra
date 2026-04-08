@@ -734,6 +734,7 @@ def api_debug_supabase():
 def api_acquisition():
     """Acquisition inbox groups with health metrics."""
     clients = get_clients()
+    all_accounts = get_all_accounts()  # uses 30s cache — no extra API calls
     health = get_health_metrics()
 
     # Find group-named clients (e.g. "A Group (250/day)")
@@ -745,7 +746,7 @@ def api_acquisition():
     groups = []
     total_accounts = 0
     for cl in sorted(group_clients, key=lambda x: x.get("name", "")):
-        cl_accounts = get_accounts_by_client(cl["id"])
+        cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
         if not cl_accounts:
             continue
 
