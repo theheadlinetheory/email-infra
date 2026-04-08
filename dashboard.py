@@ -1208,10 +1208,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._check_auth():
             return
+        parsed = urlparse(self.path)
+        path = parsed.path
         content_length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(content_length)) if content_length else {}
 
-        if self.path == "/api/assign":
+        if path == "/api/assign":
             account_ids = body.get("account_ids", [])
             client_id = body.get("client_id")
             if not account_ids or not client_id:
@@ -1219,14 +1221,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             result = assign_accounts_to_client(account_ids, client_id)
             self._json_response(result)
-        elif self.path == "/api/zapmail/cancel":
+        elif path == "/api/zapmail/cancel":
             domain_ids = body.get("domain_ids", [])
             if not domain_ids:
                 self._error(400, "domain_ids required")
                 return
             result = zm_delete_domains(domain_ids)
             self._json_response(result)
-        elif self.path == "/api/domains/auto-renew":
+        elif path == "/api/domains/auto-renew":
             domain = body.get("domain", "")
             registrar = body.get("registrar", "")
             enabled = body.get("enabled", False)
@@ -1238,13 +1240,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             else:
                 result = {"success": False, "message": f"{registrar} auto-renew toggle not supported via API"}
             self._json_response(result)
-        elif self.path == "/api/pipeline/new-client":
+        elif path == "/api/pipeline/new-client":
             result = api_pipeline_new_client(body)
             self._json_response(result, 400 if "error" in result else 200)
-        elif self.path == "/api/pipeline/replacement":
+        elif path == "/api/pipeline/replacement":
             result = api_pipeline_replacement(body)
             self._json_response(result, 400 if "error" in result else 200)
-        elif self.path == "/api/client/pause-monitor":
+        elif path == "/api/client/pause-monitor":
             client_name = body.get("client_name", "")
             paused = body.get("paused", True)
             if not client_name:
@@ -1261,10 +1263,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True, "paused_clients": clients_list})
             except Exception as e:
                 self._json_response({"error": str(e)}, 500)
-        elif self.path == "/api/inbox/remove-from-campaign":
+        elif path == "/api/inbox/remove-from-campaign":
             result = api_remove_from_campaign(body)
             self._json_response(result)
-        elif self.path == "/api/inbox/remove-from-all-campaigns":
+        elif path == "/api/inbox/remove-from-all-campaigns":
             result = api_remove_from_all_campaigns(body)
             self._json_response(result)
         else:

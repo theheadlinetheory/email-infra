@@ -880,15 +880,20 @@ function closeNewClientForm() {
 
 async function toggleMonitor(clientName, currentlyPaused) {
     const newPaused = !currentlyPaused;
-    const action = newPaused ? 'pause auto-replacement' : 're-enable auto-replacement';
-    if (!confirm(`${action} for ${clientName}?`)) return;
+    const action = newPaused ? 'Pause auto-replacement' : 'Re-enable auto-replacement';
+    if (!confirm(action + ' for ' + clientName + '?')) return;
     try {
-        await fetch('/api/client/pause-monitor', {
+        const resp = await fetch('/api/client/pause-monitor', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({client_name: clientName, paused: newPaused})
         });
-        loadOverview();
+        const result = await resp.json();
+        if (result.error) {
+            alert('Error: ' + result.error);
+        } else {
+            loadOverview();
+        }
     } catch(e) { alert('Error: ' + e.message); }
 }
 
