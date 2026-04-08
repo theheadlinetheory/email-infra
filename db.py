@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime
 
+import httpx
 from supabase import create_client, Client
 
 log = logging.getLogger("db")
@@ -22,12 +24,23 @@ _client: Client | None = None
 
 
 def get_client() -> Client:
-    """Lazy-init the Supabase client."""
+    """Lazy-init the Supabase client with HTTP/1.1 to avoid HTTP/2 StreamReset errors."""
     global _client
     if _client is None:
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set")
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        _client = create_client(
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            options={"postgrest_client_timeout": 30},
+        )
+        # Force HTTP/1.1 on the PostgREST client to avoid HTTP/2 StreamReset errors
+        _client.postgrest.session = httpx.Client(
+            base_url=f"{SUPABASE_URL}/rest/v1",
+            headers=_client.postgrest.session.headers,
+            http2=False,
+            timeout=30,
+        )
     return _client
 
 
