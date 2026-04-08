@@ -218,9 +218,9 @@ def get_accounts_by_client(client_id):
 _accounts_cache = {"data": None, "time": 0}
 
 def get_all_accounts():
-    """Fetch all accounts with 5-minute cache to reduce memory churn."""
+    """Fetch all accounts with 30-second cache to prevent duplicate fetches."""
     now = time.time()
-    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 300:
+    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 30:
         return _accounts_cache["data"]
     accounts = []
     offset = 0
@@ -260,9 +260,9 @@ def assign_accounts_to_client(account_ids, client_id):
 _health_cache = {"data": None, "time": 0}
 
 def get_health_metrics(days=7):
-    """Get per-inbox health metrics with 5-minute cache."""
+    """Get per-inbox health metrics with 30-second cache."""
     now = time.time()
-    if _health_cache["data"] is not None and now - _health_cache["time"] < 300:
+    if _health_cache["data"] is not None and now - _health_cache["time"] < 30:
         return _health_cache["data"]
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
