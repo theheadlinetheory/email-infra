@@ -28,7 +28,14 @@ from zapmail_ops import (
     zm_get_placement_results, zm_get_placement_eligible_mailboxes,
     zm_run_placement_test, zm_get_placement_credits,
 )
-from sheets import get_available_domains, get_domain_summary
+from sheets import get_available_domains, get_domain_summary, get_all_master_domains, write_range, setup_client_tab
+from setup import (
+    sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
+    zm_list_domain_tags, zm_create_domain_tag, zm_assign_domain_tag,
+    zm_set_forwarding, zm_list_domains,
+    SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API,
+    sl_internal_headers as setup_sl_internal_headers,
+)
 
 SCRIPT_DIR = Path(__file__).parent
 ENV_PATH = SCRIPT_DIR / ".env"
@@ -1198,6 +1205,238 @@ def api_subscriptions():
     return zm_get_subscriptions()
 
 
+# --- Client Reassignment ---
+
+def api_clients_list():
+    """Deduplicated client list from SmartLead + Google Sheet for the dropdown."""
+    names = set()
+    # SmartLead clients
+    try:
+        sl_clients = requests.get(
+            f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
+        ).json()
+        for c in sl_clients:
+            if c.get("name"):
+                names.add(c["name"].strip())
+    except Exception:
+        pass
+    # Google Sheet notes column (column D = client names for in-use domains)
+    try:
+        _, all_domains = get_all_master_domains()
+        for d in all_domains:
+            note = d.get("notes", "").strip()
+            if note and d.get("status", "").lower().strip() == "in use":
+                names.add(note)
+    except Exception:
+        pass
+    # Remove generic names
+    return {"clients": sorted(n for n in names if n and not n.lower().startswith("generic"))}
+
+
+def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client):
+    """Generator that yields SSE events for each step of the reassignment process."""
+    import traceback
+
+    def event(step, status, message=""):
+        data = json.dumps({"step": step, "status": status, "message": message})
+        return f"data: {data}\n\n"
+
+    # Load the pipeline
+    pipeline = store.load_pipeline(pipeline_id)
+    if not pipeline:
+        yield event(0, "error", "Pipeline not found")
+        return
+
+    domains = [d["domain"] for d in pipeline.get("purchased_domains", [])]
+    if not domains:
+        yield event(0, "error", "No domains in pipeline")
+        return
+
+    original_name = pipeline.get("client_name", "")
+
+    # ── Step 1: SmartLead client ──
+    yield event(1, "running")
+    sl_client_id = None
+    try:
+        sl_clients = requests.get(
+            f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
+        ).json()
+        client_lower = client_name.lower().strip()
+        for c in sl_clients:
+            if c["name"].lower().strip() == client_lower:
+                sl_client_id = c["id"]
+                break
+        if not sl_client_id and not is_new_client:
+            # Fuzzy match
+            for c in sl_clients:
+                cn = c["name"].lower().strip()
+                if client_lower in cn or cn in client_lower:
+                    sl_client_id = c["id"]
+                    break
+        if not sl_client_id:
+            slug = client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
+            cl_email = f"tht.{slug}.client@gmail.com"
+            cr = requests.post(
+                f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
+                json={"name": client_name, "email": cl_email, "password": "THTclient2026!"},
+                timeout=30,
+            )
+            if cr.status_code == 201:
+                sl_client_id = cr.json().get("clientId")
+            else:
+                yield event(1, "error", f"Failed to create client: {cr.status_code} {cr.text[:200]}")
+                return
+        yield event(1, "done")
+    except Exception as e:
+        yield event(1, "error", str(e))
+        return
+
+    # ── Step 2: SmartLead tags ──
+    yield event(2, "running")
+    try:
+        all_tags = sl_get_all_tags()
+        # Find client tag (create if needed)
+        client_tag_id = sl_find_or_create_tag(client_name, existing_tags=all_tags)
+        # Find the generic tag to remove
+        generic_tag_id = None
+        for tag_name, tag_data in all_tags.items():
+            if tag_name.lower().strip() == original_name.lower().strip():
+                generic_tag_id = tag_data["id"]
+                break
+
+        # Get all SmartLead accounts for these domains
+        our_domains = set(domains)
+        our_accounts = []
+        offset = 0
+        while True:
+            batch = requests.get(
+                f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100",
+                timeout=30,
+            ).json()
+            if isinstance(batch, list):
+                for acc in batch:
+                    email = acc.get("from_email", acc.get("email", ""))
+                    domain = email.split("@")[-1] if "@" in email else ""
+                    if domain in our_domains:
+                        our_accounts.append(acc)
+                if len(batch) < 100:
+                    break
+                offset += 100
+            else:
+                break
+
+        if not our_accounts:
+            yield event(2, "error", "No SmartLead accounts found for these domains")
+            return
+
+        # For each account, get current tags and replace generic with client
+        for acc in our_accounts:
+            acc_id = acc["id"]
+            current_tags = [t["id"] for t in acc.get("tags", [])] if acc.get("tags") else []
+            # Remove generic tag, add client tag
+            new_tags = [t for t in current_tags if t != generic_tag_id]
+            if client_tag_id and client_tag_id not in new_tags:
+                new_tags.append(client_tag_id)
+            sl_tag_account(acc_id, new_tags, client_id=sl_client_id)
+
+        yield event(2, "done")
+    except Exception as e:
+        yield event(2, "error", f"{e}\n{traceback.format_exc()}")
+        return
+
+    # ── Step 3: SmartLead client assignment verification ──
+    yield event(3, "running")
+    try:
+        # Already handled in step 2 via client_id param in sl_tag_account
+        # Verify a sample account
+        if our_accounts:
+            sample = requests.get(
+                f"{SMARTLEAD_API}/email-accounts/{our_accounts[0]['id']}/?api_key={SMARTLEAD_KEY}",
+                timeout=30,
+            ).json()
+            assigned_client = sample.get("client_id") or sample.get("clientId")
+            if assigned_client != sl_client_id:
+                yield event(3, "error", f"Client assignment mismatch: expected {sl_client_id}, got {assigned_client}")
+                return
+        yield event(3, "done")
+    except Exception as e:
+        yield event(3, "error", str(e))
+        return
+
+    # ── Step 4: Zapmail domain tags ──
+    yield event(4, "running")
+    try:
+        # Get all Zapmail domains and find ours
+        zm_domains = zm_list_domains()
+        zm_domain_ids = []
+        for d in zm_domains:
+            if d.get("domain") in our_domains:
+                zm_domain_ids.append(d["id"])
+
+        if zm_domain_ids:
+            # Check if client tag already exists
+            existing_tags = zm_list_domain_tags()
+            tag_list = existing_tags.get("data", []) if isinstance(existing_tags, dict) else []
+            client_zm_tag_id = None
+            for t in tag_list:
+                if t.get("name", "").lower().strip() == client_name.lower().strip():
+                    client_zm_tag_id = t["id"]
+                    break
+            if not client_zm_tag_id:
+                result = zm_create_domain_tag(client_name)
+                if isinstance(result, dict) and "data" in result:
+                    created_tags = result["data"]
+                    if isinstance(created_tags, list) and created_tags:
+                        client_zm_tag_id = created_tags[0].get("id")
+                    elif isinstance(created_tags, dict):
+                        client_zm_tag_id = created_tags.get("id")
+            if client_zm_tag_id:
+                zm_assign_domain_tag(zm_domain_ids, [client_zm_tag_id])
+        yield event(4, "done")
+    except Exception as e:
+        yield event(4, "error", str(e))
+        return
+
+    # ── Step 5: Zapmail forwarding ──
+    yield event(5, "running")
+    try:
+        if zm_domain_ids and forwarding_domain:
+            fwd = forwarding_domain if forwarding_domain.startswith("http") else f"https://{forwarding_domain}"
+            zm_set_forwarding(zm_domain_ids, fwd)
+        yield event(5, "done")
+    except Exception as e:
+        yield event(5, "error", str(e))
+        return
+
+    # ── Step 6: Google Sheet ──
+    yield event(6, "running")
+    try:
+        _, all_sheet_domains = get_all_master_domains()
+        for sd in all_sheet_domains:
+            if sd["domain"] in our_domains:
+                write_range("THT Domains ", f"D{sd['row_number']}", [[client_name]])
+        # Set up client tab
+        setup_client_tab(client_name, list(our_domains))
+        yield event(6, "done")
+    except Exception as e:
+        yield event(6, "error", str(e))
+        return
+
+    # ── Step 7: Pipeline record ──
+    yield event(7, "running")
+    try:
+        pipeline["client_name"] = client_name
+        pipeline["original_group"] = original_name
+        pipeline["updated_at"] = datetime.now().isoformat()
+        store.save_pipeline(pipeline)
+        yield event(7, "done")
+    except Exception as e:
+        yield event(7, "error", str(e))
+        return
+
+    yield event(0, "complete")
+
+
 # --- HTTP Server ---
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -1269,6 +1508,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_subscriptions())
                 elif path == "/api/acquisition":
                     self._json_response(api_acquisition())
+                elif path == "/api/clients/list":
+                    self._json_response(api_clients_list())
                 elif path == "/api/debug/supabase":
                     self._json_response(api_debug_supabase())
                 else:
@@ -1352,6 +1593,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True, "client_name": client_name, "target_volume": int(volume)})
             except Exception as e:
                 self._json_response({"error": str(e)}, 500)
+        elif path == "/api/pipeline/assign-client":
+            pipeline_id = body.get("pipeline_id")
+            client_name = body.get("client_name", "").strip()
+            forwarding_domain = body.get("forwarding_domain", "").strip()
+            is_new_client = body.get("is_new_client", False)
+            if not pipeline_id or not client_name or not forwarding_domain:
+                self._error(400, "pipeline_id, client_name, and forwarding_domain required")
+                return
+            # SSE streaming response
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                for chunk in assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client):
+                    self.wfile.write(chunk.encode())
+                    self.wfile.flush()
+            except Exception as e:
+                error_data = json.dumps({"step": 0, "status": "error", "message": str(e)})
+                self.wfile.write(f"data: {error_data}\n\n".encode())
+                self.wfile.flush()
         elif path == "/api/inbox/remove-from-campaign":
             result = api_remove_from_campaign(body)
             self._json_response(result)

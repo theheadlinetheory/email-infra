@@ -233,6 +233,38 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
     <div id="nc-status" style="margin-top:12px;font-size:13px;"></div>
 </div>
 
+<div id="assign-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeAssignModal()"></div>
+<div id="assign-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+    <div id="assign-form">
+        <h2 style="margin-bottom:20px;">Assign to Client</h2>
+        <input type="hidden" id="ac-pipeline-id">
+        <div style="margin-bottom:4px;font-size:13px;color:#888;" id="ac-group-label"></div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Client</label>
+            <select id="ac-client-select" onchange="onClientSelectChange()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+                <option value="">Select a client...</option>
+            </select>
+        </div>
+        <div id="ac-new-client-row" style="display:none;margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client Name</label>
+            <input id="ac-new-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkAssignReady()">
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding Domain</label>
+            <input id="ac-forwarding" type="text" placeholder="clientwebsite.com" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkAssignReady()">
+        </div>
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <button onclick="closeAssignModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+            <button id="ac-assign-btn" onclick="startAssignment()" disabled style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Assign</button>
+        </div>
+    </div>
+    <div id="assign-progress" style="display:none;">
+        <h2 style="margin-bottom:20px;">Assigning to <span id="ac-progress-client"></span></h2>
+        <div id="ac-steps"></div>
+        <div id="ac-result" style="margin-top:16px;display:none;"></div>
+    </div>
+</div>
+
 <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
 <div class="detail-panel" id="detail-panel" style="display:none;">
     <button class="close-btn" onclick="closeDetail()">&times;</button>
@@ -1101,6 +1133,14 @@ function renderPipelines() {
             html += '</div>';
         }
 
+        // Assign to Client button for generic pipelines
+        const isGeneric = p.client_name && p.client_name.toLowerCase().startsWith('generic');
+        if (isGeneric && (p.status === 'complete' || p.status === 'running')) {
+            html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                <button onclick="event.stopPropagation();openAssignModal('${p.id}','${p.client_name.replace(/'/g, "\\'")}')" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
+            </div>`;
+        }
+
         if (p.errors && p.errors.length > 0) {
             html += '<div style="margin-top:8px;font-size:12px;color:#ff6b6b;">';
             p.errors.forEach(e => { html += '<div>' + e + '</div>'; });
@@ -1135,6 +1175,168 @@ async function removeFromAllCampaigns(email) {
         });
         loadPipelines();
     } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Assign to Client ---
+const ASSIGN_STEPS = [
+    {id: 1, label: 'Creating SmartLead client'},
+    {id: 2, label: 'Updating SmartLead tags'},
+    {id: 3, label: 'Verifying client assignment'},
+    {id: 4, label: 'Updating Zapmail domain tags'},
+    {id: 5, label: 'Setting forwarding domain'},
+    {id: 6, label: 'Updating Google Sheet'},
+    {id: 7, label: 'Updating pipeline record'},
+];
+
+async function openAssignModal(pipelineId, groupName) {
+    document.getElementById('ac-pipeline-id').value = pipelineId;
+    document.getElementById('ac-group-label').textContent = 'Reassigning: ' + groupName;
+    document.getElementById('assign-form').style.display = 'block';
+    document.getElementById('assign-progress').style.display = 'none';
+    document.getElementById('ac-new-client-row').style.display = 'none';
+    document.getElementById('ac-forwarding').value = '';
+    document.getElementById('ac-assign-btn').disabled = true;
+    document.getElementById('ac-assign-btn').style.opacity = '0.5';
+    document.getElementById('assign-overlay').style.display = 'block';
+    document.getElementById('assign-modal').style.display = 'block';
+
+    // Populate client dropdown
+    const select = document.getElementById('ac-client-select');
+    select.innerHTML = '<option value="">Loading...</option>';
+    try {
+        const resp = await fetch('/api/clients/list');
+        const data = await resp.json();
+        let opts = '<option value="">Select a client...</option>';
+        (data.clients || []).forEach(c => {
+            opts += `<option value="${c}">${c}</option>`;
+        });
+        opts += '<option value="__new__">+ Add New Client</option>';
+        select.innerHTML = opts;
+    } catch(e) {
+        select.innerHTML = '<option value="">Error loading clients</option>';
+    }
+}
+
+function closeAssignModal() {
+    document.getElementById('assign-overlay').style.display = 'none';
+    document.getElementById('assign-modal').style.display = 'none';
+}
+
+function onClientSelectChange() {
+    const val = document.getElementById('ac-client-select').value;
+    document.getElementById('ac-new-client-row').style.display = val === '__new__' ? 'block' : 'none';
+    if (val !== '__new__') document.getElementById('ac-new-client-name').value = '';
+    checkAssignReady();
+}
+
+function checkAssignReady() {
+    const selectVal = document.getElementById('ac-client-select').value;
+    const newName = document.getElementById('ac-new-client-name').value.trim();
+    const fwd = document.getElementById('ac-forwarding').value.trim();
+    const hasClient = selectVal === '__new__' ? newName.length > 0 : selectVal.length > 0;
+    const ready = hasClient && fwd.length > 0;
+    document.getElementById('ac-assign-btn').disabled = !ready;
+    document.getElementById('ac-assign-btn').style.opacity = ready ? '1' : '0.5';
+}
+
+function startAssignment() {
+    const pipelineId = document.getElementById('ac-pipeline-id').value;
+    const selectVal = document.getElementById('ac-client-select').value;
+    const isNew = selectVal === '__new__';
+    const clientName = isNew ? document.getElementById('ac-new-client-name').value.trim() : selectVal;
+    const fwd = document.getElementById('ac-forwarding').value.trim();
+
+    // Switch to progress view
+    document.getElementById('assign-form').style.display = 'none';
+    document.getElementById('assign-progress').style.display = 'block';
+    document.getElementById('ac-progress-client').textContent = clientName;
+
+    // Render step list
+    let stepsHtml = '';
+    ASSIGN_STEPS.forEach(s => {
+        stepsHtml += `<div id="ac-step-${s.id}" style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
+            <span id="ac-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
+            <span id="ac-label-${s.id}" style="color:#888;">${s.label}</span>
+        </div>`;
+    });
+    document.getElementById('ac-steps').innerHTML = stepsHtml;
+    document.getElementById('ac-result').style.display = 'none';
+
+    // Start SSE
+    fetch('/api/pipeline/assign-client', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pipeline_id: pipelineId, client_name: clientName, forwarding_domain: fwd, is_new_client: isNew})
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const evt = JSON.parse(line.slice(6));
+                            handleAssignEvent(evt);
+                        } catch(e) {}
+                    }
+                });
+                read();
+            });
+        }
+        read();
+    }).catch(err => {
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
+            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+    });
+}
+
+function handleAssignEvent(evt) {
+    if (evt.status === 'complete') {
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Assignment complete!</div>
+            <button onclick="closeAssignModal();loadPipelines();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        return;
+    }
+    if (evt.step === 0 && evt.status === 'error') {
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
+            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        return;
+    }
+
+    const icon = document.getElementById('ac-icon-' + evt.step);
+    const label = document.getElementById('ac-label-' + evt.step);
+    if (!icon || !label) return;
+
+    if (evt.status === 'running') {
+        icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+        label.style.color = '#eee';
+    } else if (evt.status === 'done') {
+        icon.innerHTML = '✓';
+        icon.style.color = '#4ecdc4';
+        label.style.color = '#4ecdc4';
+    } else if (evt.status === 'error') {
+        icon.innerHTML = '✗';
+        icon.style.color = '#ff6b6b';
+        label.style.color = '#ff6b6b';
+        // Mark remaining steps as skipped
+        for (let i = evt.step + 1; i <= 7; i++) {
+            const si = document.getElementById('ac-icon-' + i);
+            const sl = document.getElementById('ac-label-' + i);
+            if (si) { si.innerHTML = '—'; si.style.color = '#444'; }
+            if (sl) sl.style.color = '#444';
+        }
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+    }
 }
 
 // --- Replacement Trigger ---
