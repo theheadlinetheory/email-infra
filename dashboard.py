@@ -1410,12 +1410,13 @@ def main():
     # Clean up pipelines stuck from previous instance
     cleanup_stuck_pipelines()
 
-    # Start background infrastructure monitor (disabled on Render free tier to save memory)
-    if os.environ.get("DISABLE_MONITOR", "").lower() not in ("1", "true", "yes"):
+    # Start background infrastructure monitor (auto-disabled on Render to save memory)
+    is_render = bool(os.environ.get("PORT")) and not os.environ.get("ENABLE_MONITOR")
+    if not is_render:
         monitor = start_monitor_thread()
         print("Infrastructure monitor started (checking every 4 hours)")
     else:
-        print("Infrastructure monitor DISABLED (DISABLE_MONITOR=1)")
+        print("Infrastructure monitor DISABLED (Render free tier — set ENABLE_MONITOR=1 to override)")
 
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
