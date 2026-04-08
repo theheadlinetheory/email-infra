@@ -265,11 +265,14 @@ def get_health_metrics(days=7):
 def get_warmup_start_dates():
     """Read warmup start dates from client configs in Supabase."""
     dates = {}
-    for c in store.load_all_client_configs():
-        name = c.get("client_name", "")
-        ws = c.get("infrastructure", {}).get("warmup_start_date", "")
-        if name and ws:
-            dates[name.lower()] = ws
+    try:
+        for c in store.load_all_client_configs():
+            name = c.get("client_name", "")
+            ws = c.get("infrastructure", {}).get("warmup_start_date", "")
+            if name and ws:
+                dates[name.lower()] = ws
+    except Exception as e:
+        print(f"WARN: Could not load client configs: {e}")
     return dates
 
 
@@ -958,7 +961,11 @@ def api_pipeline_replacement(body):
 
 def api_pipeline_active():
     """List all active pipelines."""
-    all_p = load_all_pipelines()
+    try:
+        all_p = load_all_pipelines()
+    except Exception as e:
+        print(f"WARN: Could not load pipelines: {e}")
+        all_p = []
     result = []
     for p in all_p:
         result.append({
