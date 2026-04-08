@@ -650,6 +650,37 @@ def api_unassigned():
     return {"accounts": result, "count": len(result)}
 
 
+def api_debug_supabase():
+    """Debug Supabase connection — shows key diagnostics and test result."""
+    import base64
+    key = store.SUPABASE_KEY
+    url = store.SUPABASE_URL
+    info = {
+        "url": url,
+        "key_length": len(key),
+        "key_first10": key[:10] if key else "",
+        "key_last10": key[-10:] if key else "",
+        "key_has_newline": "\n" in key,
+        "key_has_space": " " in key,
+    }
+    try:
+        payload = key.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        decoded = json.loads(base64.b64decode(payload))
+        info["jwt_role"] = decoded.get("role", "unknown")
+        info["jwt_ref"] = decoded.get("ref", "unknown")
+    except Exception as e:
+        info["jwt_decode_error"] = str(e)
+    try:
+        result = store.get_state("paused_clients")
+        info["test_query"] = "SUCCESS"
+        info["test_result"] = result
+    except Exception as e:
+        info["test_query"] = "FAILED"
+        info["test_error"] = str(e)
+    return info
+
+
 def api_acquisition():
     """Acquisition inbox groups with health metrics."""
     clients = get_clients()
@@ -1195,6 +1226,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_subscriptions())
                 elif path == "/api/acquisition":
                     self._json_response(api_acquisition())
+                elif path == "/api/debug/supabase":
+                    self._json_response(api_debug_supabase())
                 else:
                     self._error(404, "Not found")
             except Exception as e:

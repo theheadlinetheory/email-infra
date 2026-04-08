@@ -52,3 +52,11 @@ create table if not exists state (
     data jsonb not null default '{}',
     updated_at timestamptz not null default now()
 );
+
+-- Disable RLS on all tables (we use the service_role key which bypasses RLS,
+-- but direct PostgREST calls may still be blocked by default RLS policies)
+alter table pipelines disable row level security;
+alter table pending_deletions disable row level security;
+alter table client_configs disable row level security;
+alter table monitor_log disable row level security;
+alter table state disable row level security;

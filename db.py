@@ -17,7 +17,19 @@ import httpx
 log = logging.getLogger("db")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip().replace("\n", "").replace("\r", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip().replace("\n", "").replace("\r", "").replace(" ", "")
+
+# Log key diagnostics on startup (first/last chars only, not the full key)
+if SUPABASE_KEY:
+    import base64 as _b64
+    try:
+        _payload = SUPABASE_KEY.split(".")[1]
+        _payload += "=" * (4 - len(_payload) % 4)
+        _decoded = json.loads(_b64.b64decode(_payload))
+        log.info("Supabase key role: %s, key length: %d", _decoded.get("role"), len(SUPABASE_KEY))
+    except Exception as _e:
+        log.warning("Could not decode Supabase key: %s (length=%d, first10=%s, last10=%s)",
+                    _e, len(SUPABASE_KEY), SUPABASE_KEY[:10], SUPABASE_KEY[-10:])
 
 _http: httpx.Client | None = None
 
@@ -28,6 +40,8 @@ def _get_http() -> httpx.Client:
     if _http is None:
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set")
+        log.info("Initializing Supabase HTTP client: url=%s, key_len=%d, key_first10=%s, key_last10=%s",
+                 SUPABASE_URL, len(SUPABASE_KEY), SUPABASE_KEY[:10], SUPABASE_KEY[-10:])
         _http = httpx.Client(
             base_url=f"{SUPABASE_URL}/rest/v1",
             headers={
