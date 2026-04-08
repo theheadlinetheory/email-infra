@@ -12,6 +12,8 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from pathlib import Path
 from datetime import datetime
+import json
+import os
 
 SCRIPT_DIR = Path(__file__).parent
 TOKEN_FILE = SCRIPT_DIR / "google_token.json"
@@ -25,10 +27,15 @@ EXCLUDED_KEYWORDS = ["headlinetheory"]
 
 def get_service():
     """Get authenticated Google Sheets service, refreshing token if needed."""
-    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE))
+    token_env = os.environ.get("GOOGLE_TOKEN_JSON", "")
+    if token_env:
+        creds = Credentials.from_authorized_user_info(json.loads(token_env))
+    else:
+        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE))
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        TOKEN_FILE.write_text(creds.to_json())
+        if not token_env:
+            TOKEN_FILE.write_text(creds.to_json())
     return build("sheets", "v4", credentials=creds)
 
 
