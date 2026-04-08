@@ -37,7 +37,12 @@ def get_client() -> Client:
         # Force HTTP/1.1 on the PostgREST client to avoid HTTP/2 StreamReset errors
         _client.postgrest.session = httpx.Client(
             base_url=f"{SUPABASE_URL}/rest/v1",
-            headers=_client.postgrest.session.headers,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
             http2=False,
             timeout=30,
         )
