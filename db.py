@@ -12,7 +12,6 @@ import os
 import time
 from datetime import datetime
 
-import httpx
 from supabase import create_client, Client
 
 log = logging.getLogger("db")
@@ -22,9 +21,11 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 _client: Client | None = None
 
+MAX_RETRIES = 3
+
 
 def get_client() -> Client:
-    """Lazy-init the Supabase client with HTTP/1.1 to avoid HTTP/2 StreamReset errors."""
+    """Lazy-init the Supabase client."""
     global _client
     if _client is None:
         if not SUPABASE_URL or not SUPABASE_KEY:
@@ -32,21 +33,28 @@ def get_client() -> Client:
         _client = create_client(
             SUPABASE_URL,
             SUPABASE_KEY,
-            options={"postgrest_client_timeout": 30},
-        )
-        # Force HTTP/1.1 on the PostgREST client to avoid HTTP/2 StreamReset errors
-        _client.postgrest.session = httpx.Client(
-            base_url=f"{SUPABASE_URL}/rest/v1",
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            http2=False,
-            timeout=30,
         )
     return _client
+
+
+def _retry(fn):
+    """Retry a Supabase call up to MAX_RETRIES on transient HTTP errors."""
+    last_err = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return fn()
+        except Exception as e:
+            last_err = e
+            err_str = str(e).lower()
+            if "streamreset" in err_str or "remoteprotocol" in err_str or "read timeout" in err_str:
+                log.warning("Supabase transient error (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, e)
+                time.sleep(0.5 * (attempt + 1))
+                # Reset client on connection errors
+                global _client
+                _client = None
+                continue
+            raise
+    raise last_err
 
 
 # ---------------------------------------------------------------------------
@@ -63,18 +71,12 @@ def save_pipeline(pipeline: dict) -> None:
         "pipeline_type": pipeline.get("type", ""),
         "updated_at": datetime.now().isoformat(),
     }
-    get_client().table("pipelines").upsert(row).execute()
+    _retry(lambda: get_client().table("pipelines").upsert(row).execute())
 
 
 def load_pipeline(pipeline_id: str) -> dict | None:
     """Load a single pipeline by ID."""
-    resp = (
-        get_client()
-        .table("pipelines")
-        .select("data")
-        .eq("id", pipeline_id)
-        .execute()
-    )
+    resp = _retry(lambda: get_client().table("pipelines").select("data").eq("id", pipeline_id).execute())
     if resp.data:
         return json.loads(resp.data[0]["data"])
     return None
@@ -82,7 +84,7 @@ def load_pipeline(pipeline_id: str) -> dict | None:
 
 def load_all_pipelines() -> list[dict]:
     """Load all pipeline records."""
-    resp = get_client().table("pipelines").select("data").execute()
+    resp = _retry(lambda: get_client().table("pipelines").select("data").execute())
     pipelines = []
     for row in resp.data or []:
         try:
@@ -98,7 +100,7 @@ def load_all_pipelines() -> list[dict]:
 
 def get_pending_deletions() -> list[dict]:
     """Get all pending deletion entries."""
-    resp = get_client().table("pending_deletions").select("*").execute()
+    resp = _retry(lambda: get_client().table("pending_deletions").select("*").execute())
     return resp.data or []
 
 
@@ -112,12 +114,12 @@ def add_pending_deletion(entry: dict) -> None:
         "pipeline_id": entry.get("pipeline_id", ""),
         "scheduled_at": entry.get("scheduled_at", datetime.now().isoformat()),
     }
-    get_client().table("pending_deletions").insert(row).execute()
+    _retry(lambda: get_client().table("pending_deletions").insert(row).execute())
 
 
 def remove_pending_deletion(domain: str) -> None:
     """Remove a pending deletion after it's been processed."""
-    get_client().table("pending_deletions").delete().eq("domain", domain).execute()
+    _retry(lambda: get_client().table("pending_deletions").delete().eq("domain", domain).execute())
 
 
 # ---------------------------------------------------------------------------
@@ -133,19 +135,13 @@ def save_client_config(client_name: str, config: dict) -> None:
         "data": json.dumps(config, default=str),
         "updated_at": datetime.now().isoformat(),
     }
-    get_client().table("client_configs").upsert(row).execute()
+    _retry(lambda: get_client().table("client_configs").upsert(row).execute())
 
 
 def load_client_config(client_name: str) -> dict | None:
     """Load a client config by name."""
     safe_name = client_name.lower().replace(" ", "_")
-    resp = (
-        get_client()
-        .table("client_configs")
-        .select("data")
-        .eq("id", safe_name)
-        .execute()
-    )
+    resp = _retry(lambda: get_client().table("client_configs").select("data").eq("id", safe_name).execute())
     if resp.data:
         return json.loads(resp.data[0]["data"])
     return None
@@ -153,7 +149,7 @@ def load_client_config(client_name: str) -> dict | None:
 
 def load_all_client_configs() -> list[dict]:
     """Load all client configs."""
-    resp = get_client().table("client_configs").select("data").execute()
+    resp = _retry(lambda: get_client().table("client_configs").select("data").execute())
     configs = []
     for row in resp.data or []:
         try:
@@ -174,7 +170,7 @@ def log_monitor_event(event_type: str, details: dict) -> None:
         "details": json.dumps(details, default=str),
         "created_at": datetime.now().isoformat(),
     }
-    get_client().table("monitor_log").insert(row).execute()
+    _retry(lambda: get_client().table("monitor_log").insert(row).execute())
 
 
 # ---------------------------------------------------------------------------
@@ -183,13 +179,7 @@ def log_monitor_event(event_type: str, details: dict) -> None:
 
 def get_state(key: str) -> dict | None:
     """Get a key-value state record."""
-    resp = (
-        get_client()
-        .table("state")
-        .select("data")
-        .eq("key", key)
-        .execute()
-    )
+    resp = _retry(lambda: get_client().table("state").select("data").eq("key", key).execute())
     if resp.data:
         return json.loads(resp.data[0]["data"])
     return None
@@ -202,4 +192,4 @@ def set_state(key: str, data: dict) -> None:
         "data": json.dumps(data, default=str),
         "updated_at": datetime.now().isoformat(),
     }
-    get_client().table("state").upsert(row).execute()
+    _retry(lambda: get_client().table("state").upsert(row).execute())
