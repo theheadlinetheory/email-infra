@@ -272,6 +272,78 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
     </div>
 </div>
 
+<div id="delete-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeDeleteModal()"></div>
+<div id="delete-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+    <div id="delete-confirm">
+        <h2 style="margin-bottom:16px;color:#ff6b6b;">Delete Infrastructure</h2>
+        <input type="hidden" id="del-client-id">
+        <input type="hidden" id="del-client-name">
+        <div id="del-step1" style="margin-bottom:16px;">
+            <p style="font-size:14px;margin-bottom:12px;">This will permanently delete all infrastructure for <strong id="del-client-label"></strong>:</p>
+            <ul style="font-size:13px;color:#ffaaaa;margin-left:20px;line-height:1.8;">
+                <li>Remove all accounts from active campaigns</li>
+                <li>Delete all SmartLead email accounts</li>
+                <li>Cancel all Zapmail domains</li>
+                <li>Mark domains as cancelled in Google Sheet</li>
+                <li>Delete the SmartLead client</li>
+            </ul>
+            <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button onclick="closeDeleteModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+                <button onclick="showDeleteStep2()" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;">Yes, Delete Everything</button>
+            </div>
+        </div>
+        <div id="del-step2" style="display:none;">
+            <div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:16px;margin-bottom:16px;">
+                <p style="font-size:14px;color:#ff6b6b;font-weight:600;margin-bottom:8px;">Are you absolutely sure?</p>
+                <p style="font-size:13px;color:#ffaaaa;">Type the client name to confirm: <strong id="del-confirm-name"></strong></p>
+                <input id="del-confirm-input" type="text" style="width:100%;margin-top:8px;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #8b3a3a;border-radius:6px;font-size:14px;" oninput="checkDeleteConfirm()">
+            </div>
+            <div style="display:flex;gap:12px;justify-content:flex-end;">
+                <button onclick="closeDeleteModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+                <button id="del-final-btn" onclick="startDeletion()" disabled style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Permanently Delete</button>
+            </div>
+        </div>
+    </div>
+    <div id="delete-progress" style="display:none;">
+        <h2 style="margin-bottom:20px;color:#ff6b6b;">Deleting <span id="del-progress-client"></span></h2>
+        <div id="del-steps"></div>
+        <div id="del-result" style="margin-top:16px;display:none;"></div>
+    </div>
+</div>
+
+<div id="transition-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeTransitionModal()"></div>
+<div id="transition-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+    <div id="transition-form">
+        <h2 style="margin-bottom:20px;">Transition Infrastructure</h2>
+        <input type="hidden" id="tr-client-id">
+        <input type="hidden" id="tr-client-name">
+        <div style="margin-bottom:4px;font-size:13px;color:#888;" id="tr-source-label"></div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client</label>
+            <select id="tr-client-select" onchange="onTransitionClientChange()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+                <option value="">Select a client...</option>
+            </select>
+        </div>
+        <div id="tr-new-client-row" style="display:none;margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client Name</label>
+            <input id="tr-new-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkTransitionReady()">
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding Domain</label>
+            <input id="tr-forwarding" type="text" placeholder="clientwebsite.com" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkTransitionReady()">
+        </div>
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <button onclick="closeTransitionModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+            <button id="tr-start-btn" onclick="startTransition()" disabled style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Transition</button>
+        </div>
+    </div>
+    <div id="transition-progress" style="display:none;">
+        <h2 style="margin-bottom:20px;">Transitioning to <span id="tr-progress-client"></span></h2>
+        <div id="tr-steps"></div>
+        <div id="tr-result" style="margin-top:16px;display:none;"></div>
+    </div>
+</div>
+
 <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
 <div class="detail-panel" id="detail-panel" style="display:none;">
     <button class="close-btn" onclick="closeDetail()">&times;</button>
@@ -509,6 +581,13 @@ function renderDetailTable(data) {
         </tr>`;
     });
     html += '</tbody></table>';
+
+    // Delete + Transition buttons
+    html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #0f3460;display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="openTransitionModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Transition to Another Client</button>
+        <button onclick="openDeleteModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Delete All Infrastructure</button>
+    </div>`;
+
     document.getElementById('detail-content').innerHTML = html;
 }
 
@@ -1413,6 +1492,282 @@ function handleAssignEvent(evt) {
         document.getElementById('ac-result').style.display = 'block';
         document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
             <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+    }
+}
+
+// --- Delete Infrastructure ---
+const DELETE_STEPS = [
+    {id: 1, label: 'Removing from campaigns'},
+    {id: 2, label: 'Deleting SmartLead accounts'},
+    {id: 3, label: 'Cancelling Zapmail domains'},
+    {id: 4, label: 'Updating Google Sheet'},
+    {id: 5, label: 'Deleting SmartLead client'},
+];
+
+function openDeleteModal(clientId, clientName) {
+    document.getElementById('del-client-id').value = clientId;
+    document.getElementById('del-client-name').value = clientName;
+    document.getElementById('del-client-label').textContent = clientName;
+    document.getElementById('del-confirm-name').textContent = clientName;
+    document.getElementById('del-confirm-input').value = '';
+    document.getElementById('del-step1').style.display = 'block';
+    document.getElementById('del-step2').style.display = 'none';
+    document.getElementById('delete-confirm').style.display = 'block';
+    document.getElementById('delete-progress').style.display = 'none';
+    document.getElementById('del-final-btn').disabled = true;
+    document.getElementById('del-final-btn').style.opacity = '0.5';
+    document.getElementById('delete-overlay').style.display = 'block';
+    document.getElementById('delete-modal').style.display = 'block';
+}
+
+function closeDeleteModal() {
+    document.getElementById('delete-overlay').style.display = 'none';
+    document.getElementById('delete-modal').style.display = 'none';
+}
+
+function showDeleteStep2() {
+    document.getElementById('del-step1').style.display = 'none';
+    document.getElementById('del-step2').style.display = 'block';
+    document.getElementById('del-confirm-input').focus();
+}
+
+function checkDeleteConfirm() {
+    const input = document.getElementById('del-confirm-input').value.trim();
+    const expected = document.getElementById('del-client-name').value.trim();
+    const match = input.toLowerCase() === expected.toLowerCase();
+    document.getElementById('del-final-btn').disabled = !match;
+    document.getElementById('del-final-btn').style.opacity = match ? '1' : '0.5';
+}
+
+function startDeletion() {
+    const clientId = document.getElementById('del-client-id').value;
+    const clientName = document.getElementById('del-client-name').value;
+
+    document.getElementById('delete-confirm').style.display = 'none';
+    document.getElementById('delete-progress').style.display = 'block';
+    document.getElementById('del-progress-client').textContent = clientName;
+
+    let stepsHtml = '';
+    DELETE_STEPS.forEach(s => {
+        stepsHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
+            <span id="del-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
+            <span id="del-label-${s.id}" style="color:#888;">${s.label}</span>
+        </div>`;
+    });
+    document.getElementById('del-steps').innerHTML = stepsHtml;
+    document.getElementById('del-result').style.display = 'none';
+
+    fetch('/api/client/delete-infra', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({client_id: clientId, client_name: clientName})
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                        try { handleDeleteEvent(JSON.parse(line.slice(6))); } catch(e) {}
+                    }
+                });
+                read();
+            });
+        }
+        read();
+    }).catch(err => {
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
+            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+    });
+}
+
+function handleDeleteEvent(evt) {
+    if (evt.status === 'complete') {
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Infrastructure deleted successfully.</div>
+            <button onclick="closeDeleteModal();closeDetail();loadOverview();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        return;
+    }
+    if (evt.step === 0 && evt.status === 'error') {
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
+            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        return;
+    }
+    const icon = document.getElementById('del-icon-' + evt.step);
+    const label = document.getElementById('del-label-' + evt.step);
+    if (!icon || !label) return;
+    if (evt.status === 'running') {
+        icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+        label.style.color = '#eee';
+    } else if (evt.status === 'done') {
+        icon.innerHTML = '✓'; icon.style.color = '#4ecdc4'; label.style.color = '#4ecdc4';
+        if (evt.message) label.textContent += ' — ' + evt.message;
+    } else if (evt.status === 'error') {
+        icon.innerHTML = '✗'; icon.style.color = '#ff6b6b'; label.style.color = '#ff6b6b';
+        for (let i = evt.step + 1; i <= 5; i++) {
+            const si = document.getElementById('del-icon-' + i);
+            const sl = document.getElementById('del-label-' + i);
+            if (si) { si.innerHTML = '—'; si.style.color = '#444'; }
+            if (sl) sl.style.color = '#444';
+        }
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+    }
+}
+
+// --- Transition Infrastructure ---
+const TRANSITION_STEPS = [
+    {id: 1, label: 'Setting up new SmartLead client'},
+    {id: 2, label: 'Updating SmartLead tags'},
+    {id: 3, label: 'Verifying client assignment'},
+    {id: 4, label: 'Updating Zapmail domain tags'},
+    {id: 5, label: 'Setting forwarding domain'},
+    {id: 6, label: 'Updating Google Sheet'},
+];
+
+async function openTransitionModal(clientId, clientName) {
+    document.getElementById('tr-client-id').value = clientId;
+    document.getElementById('tr-client-name').value = clientName;
+    document.getElementById('tr-source-label').textContent = 'Transitioning from: ' + clientName;
+    document.getElementById('tr-new-client-row').style.display = 'none';
+    document.getElementById('tr-forwarding').value = '';
+    document.getElementById('tr-start-btn').disabled = true;
+    document.getElementById('tr-start-btn').style.opacity = '0.5';
+    document.getElementById('transition-form').style.display = 'block';
+    document.getElementById('transition-progress').style.display = 'none';
+    document.getElementById('transition-overlay').style.display = 'block';
+    document.getElementById('transition-modal').style.display = 'block';
+
+    const select = document.getElementById('tr-client-select');
+    select.innerHTML = '<option value="">Loading...</option>';
+    try {
+        const resp = await fetch('/api/clients/list');
+        const data = await resp.json();
+        let opts = '<option value="">Select a client...</option>';
+        (data.clients || []).filter(c => c !== clientName).forEach(c => {
+            opts += `<option value="${c}">${c}</option>`;
+        });
+        opts += '<option value="__new__">+ Add New Client</option>';
+        select.innerHTML = opts;
+    } catch(e) {
+        select.innerHTML = '<option value="">Error loading clients</option>';
+    }
+}
+
+function closeTransitionModal() {
+    document.getElementById('transition-overlay').style.display = 'none';
+    document.getElementById('transition-modal').style.display = 'none';
+}
+
+function onTransitionClientChange() {
+    const val = document.getElementById('tr-client-select').value;
+    document.getElementById('tr-new-client-row').style.display = val === '__new__' ? 'block' : 'none';
+    if (val !== '__new__') document.getElementById('tr-new-client-name').value = '';
+    checkTransitionReady();
+}
+
+function checkTransitionReady() {
+    const selectVal = document.getElementById('tr-client-select').value;
+    const newName = document.getElementById('tr-new-client-name').value.trim();
+    const fwd = document.getElementById('tr-forwarding').value.trim();
+    const hasClient = selectVal === '__new__' ? newName.length > 0 : selectVal.length > 0;
+    const ready = hasClient && fwd.length > 0;
+    document.getElementById('tr-start-btn').disabled = !ready;
+    document.getElementById('tr-start-btn').style.opacity = ready ? '1' : '0.5';
+}
+
+function startTransition() {
+    const clientId = document.getElementById('tr-client-id').value;
+    const clientName = document.getElementById('tr-client-name').value;
+    const selectVal = document.getElementById('tr-client-select').value;
+    const isNew = selectVal === '__new__';
+    const newClientName = isNew ? document.getElementById('tr-new-client-name').value.trim() : selectVal;
+    const fwd = document.getElementById('tr-forwarding').value.trim();
+
+    document.getElementById('transition-form').style.display = 'none';
+    document.getElementById('transition-progress').style.display = 'block';
+    document.getElementById('tr-progress-client').textContent = newClientName;
+
+    let stepsHtml = '';
+    TRANSITION_STEPS.forEach(s => {
+        stepsHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
+            <span id="tr-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
+            <span id="tr-label-${s.id}" style="color:#888;">${s.label}</span>
+        </div>`;
+    });
+    document.getElementById('tr-steps').innerHTML = stepsHtml;
+    document.getElementById('tr-result').style.display = 'none';
+
+    fetch('/api/client/transition', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({client_id: clientId, client_name: clientName, new_client_name: newClientName, forwarding_domain: fwd, is_new_client: isNew})
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                        try { handleTransitionEvent(JSON.parse(line.slice(6))); } catch(e) {}
+                    }
+                });
+                read();
+            });
+        }
+        read();
+    }).catch(err => {
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
+            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+    });
+}
+
+function handleTransitionEvent(evt) {
+    if (evt.status === 'complete') {
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Transition complete!</div>
+            <button onclick="closeTransitionModal();closeDetail();loadOverview();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        return;
+    }
+    if (evt.step === 0 && evt.status === 'error') {
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
+            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        return;
+    }
+    const icon = document.getElementById('tr-icon-' + evt.step);
+    const label = document.getElementById('tr-label-' + evt.step);
+    if (!icon || !label) return;
+    if (evt.status === 'running') {
+        icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+        label.style.color = '#eee';
+    } else if (evt.status === 'done') {
+        icon.innerHTML = '✓'; icon.style.color = '#4ecdc4'; label.style.color = '#4ecdc4';
+    } else if (evt.status === 'error') {
+        icon.innerHTML = '✗'; icon.style.color = '#ff6b6b'; label.style.color = '#ff6b6b';
+        for (let i = evt.step + 1; i <= 6; i++) {
+            const si = document.getElementById('tr-icon-' + i);
+            const sl = document.getElementById('tr-label-' + i);
+            if (si) { si.innerHTML = '—'; si.style.color = '#444'; }
+            if (sl) sl.style.color = '#444';
+        }
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
     }
 }
 
