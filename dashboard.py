@@ -516,6 +516,13 @@ def api_overview():
     # Global "warming up" = sum of accounts across clients still in 14-day warmup period
     total_warming = sum(c["warming"] for c in client_summaries)
 
+    # Load paused clients list
+    try:
+        paused_state = store.get_state("paused_clients") or {"clients": []}
+        paused_clients = paused_state.get("clients", [])
+    except Exception:
+        paused_clients = []
+
     return {
         "total_accounts": total,
         "warming": total_warming,
@@ -526,6 +533,7 @@ def api_overview():
         "blocked_accounts": blocked[:20],
         "clients": client_summaries,
         "attention_count": attention_count,
+        "paused_clients": paused_clients,
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -1230,6 +1238,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/pipeline/replacement":
             result = api_pipeline_replacement(body)
             self._json_response(result, 400 if "error" in result else 200)
+        elif self.path == "/api/client/pause-monitor":
+            client_name = body.get("client_name", "")
+            paused = body.get("paused", True)
+            if not client_name:
+                self._error(400, "client_name required")
+                return
+            try:
+                state = store.get_state("paused_clients") or {"clients": []}
+                clients_list = state.get("clients", [])
+                if paused and client_name not in clients_list:
+                    clients_list.append(client_name)
+                elif not paused and client_name in clients_list:
+                    clients_list.remove(client_name)
+                store.set_state("paused_clients", {"clients": clients_list})
+                self._json_response({"ok": True, "paused_clients": clients_list})
+            except Exception as e:
+                self._json_response({"error": str(e)}, 500)
         elif self.path == "/api/inbox/remove-from-campaign":
             result = api_remove_from_campaign(body)
             self._json_response(result)

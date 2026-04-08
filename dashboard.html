@@ -326,9 +326,11 @@ function renderOverview() {
     `;
 
     // Client cards
+    const pausedClients = d.paused_clients || [];
     const gridEl = document.getElementById('clients-grid');
     clientsList = d.clients;
     gridEl.innerHTML = d.clients.map(cl => {
+        const isPaused = pausedClients.includes(cl.name);
         const hasAlert = cl.smtp_failures > 0 || cl.blocked > 0;
         const readyBadge = cl.days_until_ready !== null
             ? (cl.days_until_ready <= 0
@@ -365,6 +367,9 @@ function renderOverview() {
                 ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
                 ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
                 ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #0f3460;text-align:right;">
+                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? '#4a3a1a' : '#0a1628'};color:${isPaused ? '#ffd93d' : '#888'};border:1px solid ${isPaused ? '#8b7a3a' : '#0f3460'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
             </div>
         </div>`;
     }).join('');
@@ -871,6 +876,20 @@ function showNewClientForm() {
 function closeNewClientForm() {
     document.getElementById('new-client-overlay').style.display = 'none';
     document.getElementById('new-client-form').style.display = 'none';
+}
+
+async function toggleMonitor(clientName, currentlyPaused) {
+    const newPaused = !currentlyPaused;
+    const action = newPaused ? 'pause auto-replacement' : 're-enable auto-replacement';
+    if (!confirm(`${action} for ${clientName}?`)) return;
+    try {
+        await fetch('/api/client/pause-monitor', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName, paused: newPaused})
+        });
+        loadOverview();
+    } catch(e) { alert('Error: ' + e.message); }
 }
 
 function toggleGenericMode() {

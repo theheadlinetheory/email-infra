@@ -911,7 +911,18 @@ def _run_monitor_check():
             for old in p.get("old_domains", []):
                 domains_in_pipeline.add(old.get("domain", ""))
 
+    # Load paused clients — skip auto-replacement for these
+    try:
+        paused_state = store.get_state("paused_clients") or {"clients": []}
+        paused_clients = set(paused_state.get("clients", []))
+    except Exception:
+        paused_clients = set()
+
     for client in clients:
+        if client["name"] in paused_clients:
+            log.info("[MONITOR] Skipping paused client: %s", client["name"])
+            continue
+
         cl_accounts = [a for a in all_accounts if a.get("client_id") == client["id"]]
         if not cl_accounts:
             continue
