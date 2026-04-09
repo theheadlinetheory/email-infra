@@ -1,0 +1,326 @@
+{
+  "client_name": "Shade Tree Landscaping",
+  "created_date": "2026-04-09",
+  "infrastructure": {
+    "daily_volume_target": 270,
+    "accounts_needed": 18,
+    "domains_needed": 6,
+    "actual_accounts": 18,
+    "actual_daily_capacity": 270,
+    "warmup_start_date": "2026-04-09",
+    "estimated_launch_date": "2026-04-23"
+  },
+  "forwarding_domain": "shadetreelandscaping.ca",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "profile_photos",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation"
+  ],
+  "zapmail_workspaces": {
+    "status": 200,
+    "message": "Workspaces fetched successfully",
+    "data": {
+      "totalSearchedCount": 1,
+      "currentPage": 1,
+      "nextPage": 2,
+      "totalPages": 1,
+      "totalWorkspacesCount": 1,
+      "totalDomainsCountGoogle": 421,
+      "totalDomainsCountMicrosoft": 64,
+      "totalPurchasedMailboxesCountGoogle": 879,
+      "totalPurchasedMailboxesCountMicrosoft": 0,
+      "currentWorkspace": {
+        "id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "name": "The Headline Theory",
+        "user_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "domainCountGoogle": "421",
+        "domainCountMicrosoft": "64",
+        "assignedMailboxesCountGoogle": "879",
+        "assignedMailboxesCountMicrosoft": "0",
+        "totalMailboxesPurchasedGoogle": "879",
+        "totalMailboxesPurchasedMicrosoft": "0",
+        "activeMailboxCountGoogle": "816",
+        "activeMailboxCountMicrosoft": "0",
+        "billingDetails": {
+          "id": "36434eb1-e7cf-439d-9e46-295286208a1b",
+          "userId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "firstName": "Aidan",
+          "lastName": "Hutchinson",
+          "workspaceId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "company": "The Headline Theory",
+          "addressLineOne": "475 Cascade Drive",
+          "addressLineTwo": "",
+          "addressLineThree": null,
+          "city": "Fairfax",
+          "state": "California",
+          "country": "US",
+          "postalCode": "94930",
+          "phoneCc": "1",
+          "phone": "4155788464",
+          "languagePreference": "en"
+        },
+        "role": "OWNER"
+      },
+      "workspaces": []
+    }
+  },
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "landscapecarecrew.info",
+      "provider": "Spaceship",
+      "row_number": 625,
+      "nameservers_set": true,
+      "zapmail_domain_id": "77662177-3aef-4ad9-9d03-5f995a6be808",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@landscapecarecrew.info",
+        "sean.r@landscapecarecrew.info",
+        "sean.reynolds@landscapecarecrew.info"
+      ],
+      "mailbox_ids": [
+        "0310a1db-8a7c-4ebc-8cb2-53e72c33e32b",
+        "dbc6089d-0f70-44a7-8124-f6820c52bde6",
+        "181b9694-a70d-4135-ae01-86ac99edb7d2"
+      ]
+    },
+    {
+      "domain": "landscapecaregroup.info",
+      "provider": "Spaceship",
+      "row_number": 626,
+      "nameservers_set": true,
+      "zapmail_domain_id": "73d92eb5-a62b-415d-9b45-8811fc46c337",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@landscapecaregroup.info",
+        "sean.r@landscapecaregroup.info",
+        "sean.reynolds@landscapecaregroup.info"
+      ],
+      "mailbox_ids": [
+        "89eb8d64-00a3-4634-ad7a-bcac18ecc391",
+        "037dee76-8c0d-44ef-9748-5895ed008526",
+        "99190ed2-3689-4732-8553-8b10c34a9f7d"
+      ]
+    },
+    {
+      "domain": "landscapeservicecrew.info",
+      "provider": "Spaceship",
+      "row_number": 627,
+      "nameservers_set": true,
+      "zapmail_domain_id": "feb0310a-5eb6-4392-bd53-3a71c86d73bd",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@landscapeservicecrew.info",
+        "sean.r@landscapeservicecrew.info",
+        "sean.reynolds@landscapeservicecrew.info"
+      ],
+      "mailbox_ids": [
+        "ec26ff12-0316-4b09-b090-8c45874327d2",
+        "5cac0cf4-a2bd-4e16-b83d-949f9882f55e",
+        "61073c25-1a6c-41f4-b354-130a820fcac6"
+      ]
+    },
+    {
+      "domain": "landscapeservicepartners.info",
+      "provider": "Spaceship",
+      "row_number": 628,
+      "nameservers_set": true,
+      "zapmail_domain_id": "fbc0913b-4dd9-4473-9ac2-d3fce97d5437",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@landscapeservicepartners.info",
+        "sean.r@landscapeservicepartners.info",
+        "sean.reynolds@landscapeservicepartners.info"
+      ],
+      "mailbox_ids": [
+        "b72381b8-d1b2-4662-b01a-7d1b5e03c297",
+        "d914f253-11b1-4229-b597-5caf8c33361c",
+        "b4c0d5b6-8c14-4b5d-b287-4874e8a41855"
+      ]
+    },
+    {
+      "domain": "landscapeworkspecialists.info",
+      "provider": "Spaceship",
+      "row_number": 629,
+      "nameservers_set": true,
+      "zapmail_domain_id": "87368a1b-de93-44a7-893b-2c2ffdfe0a05",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@landscapeworkspecialists.info",
+        "sean.r@landscapeworkspecialists.info",
+        "sean.reynolds@landscapeworkspecialists.info"
+      ],
+      "mailbox_ids": [
+        "f96d7025-a4ce-4b2a-abe5-435565f2d0ee",
+        "11231658-a307-4cc6-a68d-dc4ff57fe29e",
+        "2bdcc9e2-cead-4f24-9a3c-8ae5c4a61f24"
+      ]
+    },
+    {
+      "domain": "landscapeworkteam.info",
+      "provider": "Spaceship",
+      "row_number": 630,
+      "nameservers_set": true,
+      "zapmail_domain_id": "9088c851-0e6a-409f-b260-ba224dd40230",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@landscapeworkteam.info",
+        "sean.r@landscapeworkteam.info",
+        "sean.reynolds@landscapeworkteam.info"
+      ],
+      "mailbox_ids": [
+        "2508d110-a335-499e-8f6e-e159db90ec49",
+        "7f2566d8-0479-4fc0-b6f5-c46f8599e3c2",
+        "68056922-d04c-42ef-808a-8e830521adfb"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "landscapecarecrew.info",
+      "landscapecaregroup.info",
+      "landscapeservicecrew.info",
+      "landscapeservicepartners.info",
+      "landscapeworkspecialists.info",
+      "landscapeworkteam.info"
+    ],
+    "initial_count": 18
+  },
+  "smartlead_accounts": [
+    "s.reynolds@landscapeservicepartners.info",
+    "s.reynolds@landscapeworkspecialists.info",
+    "sean.reynolds@landscapeworkspecialists.info",
+    "sean.r@landscapeworkteam.info",
+    "s.reynolds@landscapecaregroup.info",
+    "s.reynolds@landscapeservicecrew.info",
+    "sean.reynolds@landscapecaregroup.info",
+    "sean.reynolds@landscapecarecrew.info",
+    "sean.r@landscapeworkspecialists.info",
+    "sean.r@landscapecaregroup.info",
+    "sean.r@landscapecarecrew.info",
+    "sean.r@landscapeservicecrew.info",
+    "sean.r@landscapeservicepartners.info",
+    "sean.reynolds@landscapeservicecrew.info",
+    "s.reynolds@landscapecarecrew.info",
+    "sean.reynolds@landscapeworkteam.info",
+    "s.reynolds@landscapeworkteam.info",
+    "sean.reynolds@landscapeservicepartners.info"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/shade_tree_landscaping_20260409.csv"
+}

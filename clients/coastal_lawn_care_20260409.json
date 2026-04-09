@@ -1,0 +1,326 @@
+{
+  "client_name": "Coastal Lawn Care",
+  "created_date": "2026-04-09",
+  "infrastructure": {
+    "daily_volume_target": 270,
+    "accounts_needed": 18,
+    "domains_needed": 6,
+    "actual_accounts": 18,
+    "actual_daily_capacity": 270,
+    "warmup_start_date": "2026-04-09",
+    "estimated_launch_date": "2026-04-23"
+  },
+  "forwarding_domain": "coastallawncare.org",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "profile_photos",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation"
+  ],
+  "zapmail_workspaces": {
+    "status": 200,
+    "message": "Workspaces fetched successfully",
+    "data": {
+      "totalSearchedCount": 1,
+      "currentPage": 1,
+      "nextPage": 2,
+      "totalPages": 1,
+      "totalWorkspacesCount": 1,
+      "totalDomainsCountGoogle": 409,
+      "totalDomainsCountMicrosoft": 64,
+      "totalPurchasedMailboxesCountGoogle": 861,
+      "totalPurchasedMailboxesCountMicrosoft": 0,
+      "currentWorkspace": {
+        "id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "name": "The Headline Theory",
+        "user_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "domainCountGoogle": "409",
+        "domainCountMicrosoft": "64",
+        "assignedMailboxesCountGoogle": "861",
+        "assignedMailboxesCountMicrosoft": "0",
+        "totalMailboxesPurchasedGoogle": "861",
+        "totalMailboxesPurchasedMicrosoft": "0",
+        "activeMailboxCountGoogle": "798",
+        "activeMailboxCountMicrosoft": "0",
+        "billingDetails": {
+          "id": "36434eb1-e7cf-439d-9e46-295286208a1b",
+          "userId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "firstName": "Aidan",
+          "lastName": "Hutchinson",
+          "workspaceId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "company": "The Headline Theory",
+          "addressLineOne": "475 Cascade Drive",
+          "addressLineTwo": "",
+          "addressLineThree": null,
+          "city": "Fairfax",
+          "state": "California",
+          "country": "US",
+          "postalCode": "94930",
+          "phoneCc": "1",
+          "phone": "4155788464",
+          "languagePreference": "en"
+        },
+        "role": "OWNER"
+      },
+      "workspaces": []
+    }
+  },
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "groundscareupkeep.info",
+      "provider": "Spaceship",
+      "row_number": 613,
+      "nameservers_set": true,
+      "zapmail_domain_id": "d288fef3-d33e-431c-9e9b-c299fcae1c7b",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundscareupkeep.info",
+        "sean.r@groundscareupkeep.info",
+        "sean.reynolds@groundscareupkeep.info"
+      ],
+      "mailbox_ids": [
+        "3ce2d80c-5615-43d8-bc6a-287085d11879",
+        "527c0b7a-e7a7-48f5-b6bb-02ca835fbe78",
+        "94ff5bf3-d89c-49ba-93a6-a7150beeb460"
+      ]
+    },
+    {
+      "domain": "groundskeepingcontractors.info",
+      "provider": "Spaceship",
+      "row_number": 614,
+      "nameservers_set": true,
+      "zapmail_domain_id": "8fc7fb64-1311-4b16-b848-481d231172f6",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundskeepingcontractors.info",
+        "sean.r@groundskeepingcontractors.info",
+        "sean.reynolds@groundskeepingcontractors.info"
+      ],
+      "mailbox_ids": [
+        "c0ba1fdf-ec15-47e0-9402-f7e8ec16e0f8",
+        "be429fc7-a0a3-4b16-acdf-8f2de9a181bc",
+        "3eff9c4c-10e6-4b6f-af70-a549628b690c"
+      ]
+    },
+    {
+      "domain": "groundskeepingpartners.info",
+      "provider": "Spaceship",
+      "row_number": 615,
+      "nameservers_set": true,
+      "zapmail_domain_id": "c3b56b70-99e6-4cb0-a161-573b603debf7",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundskeepingpartners.info",
+        "sean.r@groundskeepingpartners.info",
+        "sean.reynolds@groundskeepingpartners.info"
+      ],
+      "mailbox_ids": [
+        "30ec70f3-29c8-43db-8f53-46d40c139382",
+        "39799e71-74de-46cd-afe2-65f2108788c5",
+        "b9da2906-606e-4b1e-9082-cb00c16598ff"
+      ]
+    },
+    {
+      "domain": "groundskeepingspecialists.info",
+      "provider": "Spaceship",
+      "row_number": 616,
+      "nameservers_set": true,
+      "zapmail_domain_id": "b073f9a4-e045-4545-af8d-29d136f2e45c",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundskeepingspecialists.info",
+        "sean.r@groundskeepingspecialists.info",
+        "sean.reynolds@groundskeepingspecialists.info"
+      ],
+      "mailbox_ids": [
+        "5747ca47-48ca-4e06-893b-583a492a790b",
+        "0bf1a7e9-ce77-4a96-abf1-cd0a0a958e7f",
+        "068bc917-2a82-4d09-9915-370b5fe22a44"
+      ]
+    },
+    {
+      "domain": "groundskeepingteam.info",
+      "provider": "Spaceship",
+      "row_number": 617,
+      "nameservers_set": true,
+      "zapmail_domain_id": "1ff4bb75-9474-4f90-a9b4-e102968894e7",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundskeepingteam.info",
+        "sean.r@groundskeepingteam.info",
+        "sean.reynolds@groundskeepingteam.info"
+      ],
+      "mailbox_ids": [
+        "5232f844-6632-4a46-b47d-4aad0bede449",
+        "6820c243-c547-4745-9603-a48100b2183a",
+        "d919534b-4091-4c7c-83a9-182afbef0256"
+      ]
+    },
+    {
+      "domain": "groundsmaintenancepartners.info",
+      "provider": "Spaceship",
+      "row_number": 618,
+      "nameservers_set": true,
+      "zapmail_domain_id": "e3a4c4f6-be20-4eef-9dd1-af0401b2274b",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundsmaintenancepartners.info",
+        "sean.r@groundsmaintenancepartners.info",
+        "sean.reynolds@groundsmaintenancepartners.info"
+      ],
+      "mailbox_ids": [
+        "ecd49f47-a4e2-4e5d-95a9-ab5bee1b8bcd",
+        "3b083eec-9434-443d-a2f7-5787c4072d19",
+        "01fc052d-6c52-46b8-aa6e-a709d3b7bebf"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "groundscareupkeep.info",
+      "groundskeepingcontractors.info",
+      "groundskeepingpartners.info",
+      "groundskeepingspecialists.info",
+      "groundskeepingteam.info",
+      "groundsmaintenancepartners.info"
+    ],
+    "initial_count": 18
+  },
+  "smartlead_accounts": [
+    "s.reynolds@groundskeepingpartners.info",
+    "s.reynolds@groundskeepingteam.info",
+    "sean.reynolds@groundskeepingpartners.info",
+    "sean.r@groundskeepingpartners.info",
+    "sean.reynolds@groundskeepingteam.info",
+    "sean.r@groundsmaintenancepartners.info",
+    "sean.r@groundskeepingteam.info",
+    "sean.reynolds@groundscareupkeep.info",
+    "sean.r@groundskeepingcontractors.info",
+    "sean.reynolds@groundskeepingspecialists.info",
+    "sean.r@groundscareupkeep.info",
+    "s.reynolds@groundsmaintenancepartners.info",
+    "s.reynolds@groundskeepingspecialists.info",
+    "sean.reynolds@groundskeepingcontractors.info",
+    "sean.r@groundskeepingspecialists.info",
+    "s.reynolds@groundscareupkeep.info",
+    "s.reynolds@groundskeepingcontractors.info",
+    "sean.reynolds@groundsmaintenancepartners.info"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/coastal_lawn_care_20260409.csv"
+}

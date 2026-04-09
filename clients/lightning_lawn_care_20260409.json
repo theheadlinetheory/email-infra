@@ -1,0 +1,326 @@
+{
+  "client_name": "Lightning Lawn Care",
+  "created_date": "2026-04-09",
+  "infrastructure": {
+    "daily_volume_target": 270,
+    "accounts_needed": 18,
+    "domains_needed": 6,
+    "actual_accounts": 18,
+    "actual_daily_capacity": 270,
+    "warmup_start_date": "2026-04-09",
+    "estimated_launch_date": "2026-04-23"
+  },
+  "forwarding_domain": "lightninglawncare.net",
+  "status": "complete",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains",
+    "zapmail_inboxes",
+    "zapmail_config",
+    "profile_photos",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation"
+  ],
+  "zapmail_workspaces": {
+    "status": 200,
+    "message": "Workspaces fetched successfully",
+    "data": {
+      "totalSearchedCount": 1,
+      "currentPage": 1,
+      "nextPage": 2,
+      "totalPages": 1,
+      "totalWorkspacesCount": 1,
+      "totalDomainsCountGoogle": 403,
+      "totalDomainsCountMicrosoft": 64,
+      "totalPurchasedMailboxesCountGoogle": 843,
+      "totalPurchasedMailboxesCountMicrosoft": 0,
+      "currentWorkspace": {
+        "id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "name": "The Headline Theory",
+        "user_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+        "domainCountGoogle": "403",
+        "domainCountMicrosoft": "64",
+        "assignedMailboxesCountGoogle": "843",
+        "assignedMailboxesCountMicrosoft": "0",
+        "totalMailboxesPurchasedGoogle": "843",
+        "totalMailboxesPurchasedMicrosoft": "0",
+        "activeMailboxCountGoogle": "780",
+        "activeMailboxCountMicrosoft": "0",
+        "billingDetails": {
+          "id": "36434eb1-e7cf-439d-9e46-295286208a1b",
+          "userId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "firstName": "Aidan",
+          "lastName": "Hutchinson",
+          "workspaceId": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+          "company": "The Headline Theory",
+          "addressLineOne": "475 Cascade Drive",
+          "addressLineTwo": "",
+          "addressLineThree": null,
+          "city": "Fairfax",
+          "state": "California",
+          "country": "US",
+          "postalCode": "94930",
+          "phoneCc": "1",
+          "phone": "4155788464",
+          "languagePreference": "en"
+        },
+        "role": "OWNER"
+      },
+      "workspaces": []
+    }
+  },
+  "configured_registrars": [
+    "porkbun",
+    "spaceship"
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70",
+  "purchased_domains": [
+    {
+      "domain": "exteriorlandscapecrew.info",
+      "provider": "Spaceship",
+      "row_number": 607,
+      "nameservers_set": true,
+      "zapmail_domain_id": "903011b5-c1fa-4817-b6e9-8ca350c3a9a2",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@exteriorlandscapecrew.info",
+        "sean.r@exteriorlandscapecrew.info",
+        "sean.reynolds@exteriorlandscapecrew.info"
+      ],
+      "mailbox_ids": [
+        "82df878f-e97b-4476-a6d1-31db077abb44",
+        "060ae489-2d01-4442-9b47-60a888681ac7",
+        "ed9089f1-3946-4171-89ef-d4a5c0b1a59c"
+      ]
+    },
+    {
+      "domain": "exteriorlandscapepartners.info",
+      "provider": "Spaceship",
+      "row_number": 608,
+      "nameservers_set": true,
+      "zapmail_domain_id": "103576e4-b5f4-4b26-9bef-677c53d369da",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@exteriorlandscapepartners.info",
+        "sean.r@exteriorlandscapepartners.info",
+        "sean.reynolds@exteriorlandscapepartners.info"
+      ],
+      "mailbox_ids": [
+        "24204b5e-02c2-4db3-b2a1-985055f18a8b",
+        "4365605a-9f58-4af5-930e-ecf45bc18d36",
+        "86f2e7a6-93bb-461f-90e7-2838367ae5a9"
+      ]
+    },
+    {
+      "domain": "exteriorlandscapespecialists.info",
+      "provider": "Spaceship",
+      "row_number": 609,
+      "nameservers_set": true,
+      "zapmail_domain_id": "8e743279-6ac6-4937-b0e0-8eaad475a918",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@exteriorlandscapespecialists.info",
+        "sean.r@exteriorlandscapespecialists.info",
+        "sean.reynolds@exteriorlandscapespecialists.info"
+      ],
+      "mailbox_ids": [
+        "af7195ce-0a77-45d8-87dc-e98e90360e33",
+        "67d42734-23fb-4dbc-af12-07463269e2df",
+        "99a6fb49-87eb-4121-80df-6eb285c56d65"
+      ]
+    },
+    {
+      "domain": "groundscarecontractors.info",
+      "provider": "Spaceship",
+      "row_number": 610,
+      "nameservers_set": true,
+      "zapmail_domain_id": "6ab7318c-597d-4e15-b1b6-8db286920c79",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundscarecontractors.info",
+        "sean.r@groundscarecontractors.info",
+        "sean.reynolds@groundscarecontractors.info"
+      ],
+      "mailbox_ids": [
+        "4841b74a-59e2-4e49-a9de-b76ad3d3ea7e",
+        "876d14eb-f540-42f5-9f31-ee1299982686",
+        "6d5ca397-9cca-4a7e-85ac-da3c19c4e0a3"
+      ]
+    },
+    {
+      "domain": "groundscarespecialists.info",
+      "provider": "Spaceship",
+      "row_number": 611,
+      "nameservers_set": true,
+      "zapmail_domain_id": "65d4e2f3-6cc4-4051-b262-63c5c316638c",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundscarespecialists.info",
+        "sean.r@groundscarespecialists.info",
+        "sean.reynolds@groundscarespecialists.info"
+      ],
+      "mailbox_ids": [
+        "c54212b6-802b-43fd-8421-9fc878456df4",
+        "1dd13769-c033-4fc0-bbaf-bf0fe21a0ef4",
+        "fbebbf69-f2dc-44fd-8c73-eecd9e59df94"
+      ]
+    },
+    {
+      "domain": "groundscareteam.info",
+      "provider": "Spaceship",
+      "row_number": 612,
+      "nameservers_set": true,
+      "zapmail_domain_id": "6cd57908-e9b9-4646-a8d6-6da9fea44696",
+      "zapmail_connected": true,
+      "inboxes": [
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "s.reynolds"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.r"
+        },
+        {
+          "firstName": "Sean",
+          "lastName": "Reynolds",
+          "mailboxUsername": "sean.reynolds"
+        }
+      ],
+      "inbox_emails": [
+        "s.reynolds@groundscareteam.info",
+        "sean.r@groundscareteam.info",
+        "sean.reynolds@groundscareteam.info"
+      ],
+      "mailbox_ids": [
+        "83a228a3-e041-4626-91cd-0d039a241b0a",
+        "5ac489a8-7730-418d-9c46-9d088e5fbbc5",
+        "cf4a2ec9-ad16-4f1a-8699-23cb28cb0c74"
+      ]
+    }
+  ],
+  "smartlead_export_result": {
+    "exported_domains": [
+      "exteriorlandscapecrew.info",
+      "exteriorlandscapepartners.info",
+      "exteriorlandscapespecialists.info",
+      "groundscarecontractors.info",
+      "groundscarespecialists.info",
+      "groundscareteam.info"
+    ],
+    "initial_count": 18
+  },
+  "smartlead_accounts": [
+    "sean.r@exteriorlandscapepartners.info",
+    "sean.r@groundscarespecialists.info",
+    "sean.reynolds@groundscarecontractors.info",
+    "sean.reynolds@exteriorlandscapecrew.info",
+    "s.reynolds@exteriorlandscapepartners.info",
+    "sean.r@groundscarecontractors.info",
+    "sean.reynolds@groundscarespecialists.info",
+    "sean.r@exteriorlandscapecrew.info",
+    "s.reynolds@exteriorlandscapecrew.info",
+    "sean.reynolds@groundscareteam.info",
+    "sean.reynolds@exteriorlandscapespecialists.info",
+    "s.reynolds@exteriorlandscapespecialists.info",
+    "sean.r@exteriorlandscapespecialists.info",
+    "s.reynolds@groundscarecontractors.info",
+    "sean.reynolds@exteriorlandscapepartners.info",
+    "s.reynolds@groundscareteam.info",
+    "sean.r@groundscareteam.info",
+    "s.reynolds@groundscarespecialists.info"
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/lightning_lawn_care_20260409.csv"
+}
