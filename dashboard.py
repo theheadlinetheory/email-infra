@@ -458,6 +458,13 @@ def api_overview():
             if (a.get("warmup_details") or {}).get("status") not in ("ACTIVE", None)
         )
 
+        # Idle inboxes: warmup complete (14+ days) but not in any campaign
+        warmup_complete = days_left is not None and days_left <= 0
+        cl_idle = sum(
+            1 for a in cl_accounts
+            if warmup_complete and a.get("campaign_count", 0) == 0
+        ) if warmup_complete else 0
+
         # Aggregate health metrics for this client
         cl_sent = 0
         cl_bounced = 0
@@ -538,6 +545,7 @@ def api_overview():
             "needs_attention": flagged_pct >= 15,
             "warmup_progress": warmup_progress,
             "warmup_days_done": warmup_days_done,
+            "idle_inboxes": cl_idle,
         })
 
     client_summaries.sort(
@@ -552,6 +560,10 @@ def api_overview():
 
     # Global "warming up" = sum of accounts across clients still in 14-day warmup period
     total_warming = sum(c["warming"] for c in client_summaries)
+
+    # Global idle inboxes: warmed but not in any campaign
+    total_idle = sum(c["idle_inboxes"] for c in client_summaries)
+    idle_clients = sum(1 for c in client_summaries if c["idle_inboxes"] > 0)
 
     # Load paused clients list
     try:
@@ -593,6 +605,8 @@ def api_overview():
         "clients": client_summaries,
         "attention_count": attention_count,
         "paused_clients": paused_clients,
+        "idle_inboxes": total_idle,
+        "idle_clients": idle_clients,
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -642,6 +656,15 @@ def api_client_accounts(client_id):
         except Exception:
             pass
 
+    # Compute warmup days from start date
+    warmup_days_elapsed = None
+    if ws_date:
+        try:
+            ws = datetime.strptime(ws_date, "%Y-%m-%d")
+            warmup_days_elapsed = (datetime.now() - ws).days
+        except Exception:
+            pass
+
     result = []
     for a in accounts:
         wd = a.get("warmup_details") or {}
@@ -668,6 +691,7 @@ def api_client_accounts(client_id):
             "health_replied": h.get("replied", 0),
             "health_score": hs["score"],
             "health_flags": hs["flags"],
+            "warmup_days": warmup_days_elapsed,
         })
 
     # Domain-level rollup
@@ -1317,6 +1341,142 @@ def api_generic_groups():
     }
 
 
+# --- Reply Rate Trends ---
+
+def api_client_trends(client_id, days):
+    """Get day-wise reply rate trend for a client's infrastructure across all campaigns."""
+    # Find client name
+    clients = get_clients()
+    client_name = ""
+    for c in clients:
+        if c["id"] == int(client_id):
+            client_name = c["name"]
+            break
+    if not client_name:
+        return {"error": "Client not found", "data": [], "summary": {}}
+
+    # Get all campaigns and match by client name
+    try:
+        camp_resp = requests.get(
+            f"{SMARTLEAD_INTERNAL_API}/analytics/campaign-list",
+            headers=sl_internal_headers(),
+            params={"timezone": "America/New_York"},
+            timeout=30,
+        )
+        all_campaigns = []
+        if camp_resp.status_code == 200:
+            camp_data = camp_resp.json()
+            if isinstance(camp_data, dict):
+                all_campaigns = camp_data.get("data", {}).get("campaign_list", [])
+            elif isinstance(camp_data, list):
+                all_campaigns = camp_data
+    except Exception:
+        all_campaigns = []
+
+    # Fuzzy match: campaign name contains client name, exclude acquisition
+    client_lower = client_name.lower().strip()
+    matched_ids = []
+    earliest_date = None
+    for camp in all_campaigns:
+        camp_name = (camp.get("name") or "").lower()
+        if client_lower in camp_name and "acquisition" not in camp_name:
+            matched_ids.append(str(camp["id"]))
+            created = camp.get("created_at", "")[:10]
+            if created and (earliest_date is None or created < earliest_date):
+                earliest_date = created
+
+    if not matched_ids:
+        return {"client_name": client_name, "days": days, "data": [], "summary": {
+            "total_sent": 0, "total_replied": 0, "avg_reply_rate": 0,
+            "recent_7d_rate": 0, "prior_7d_rate": 0, "trend": "flat",
+        }}
+
+    # Determine date range
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    if days == 0:
+        start_date = earliest_date or (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    else:
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # Fetch day-wise stats from SmartLead
+    try:
+        stats_resp = requests.get(
+            f"{SMARTLEAD_INTERNAL_API}/analytics/day-wise-overall-stats",
+            headers=sl_internal_headers(),
+            params={
+                "campaignIds": ",".join(matched_ids),
+                "startDate": start_date,
+                "endDate": end_date,
+                "timezone": "America/New_York",
+            },
+            timeout=30,
+        )
+        stats_data = stats_resp.json() if stats_resp.status_code == 200 else {}
+    except Exception:
+        stats_data = {}
+
+    day_stats = []
+    if isinstance(stats_data, dict):
+        day_stats = stats_data.get("data", {}).get("day_wise_stats", [])
+
+    # Build data points
+    data_points = []
+    total_sent = 0
+    total_replied = 0
+    for day in day_stats:
+        metrics = day.get("email_engagement_metrics", {})
+        sent = metrics.get("sent", 0)
+        replied = metrics.get("replied", 0)
+        date_str = day.get("date", "")
+        reply_rate = round(replied / sent * 100, 2) if sent > 0 else None
+        data_points.append({
+            "date": date_str,
+            "sent": sent,
+            "replied": replied,
+            "reply_rate": reply_rate,
+        })
+        total_sent += sent
+        total_replied += replied
+
+    # Compute summary
+    avg_reply_rate = round(total_replied / total_sent * 100, 2) if total_sent > 0 else 0
+
+    # Trend: last 7 days vs prior 7 days
+    sending_days = [d for d in data_points if d["sent"] > 0]
+    recent_7 = sending_days[-7:] if len(sending_days) >= 7 else sending_days
+    prior_7 = sending_days[-14:-7] if len(sending_days) >= 14 else []
+
+    recent_sent = sum(d["sent"] for d in recent_7)
+    recent_replied = sum(d["replied"] for d in recent_7)
+    recent_rate = round(recent_replied / recent_sent * 100, 2) if recent_sent > 0 else 0
+
+    prior_sent = sum(d["sent"] for d in prior_7)
+    prior_replied = sum(d["replied"] for d in prior_7)
+    prior_rate = round(prior_replied / prior_sent * 100, 2) if prior_sent > 0 else 0
+
+    if prior_rate == 0:
+        trend = "flat"
+    elif recent_rate >= prior_rate:
+        trend = "up"
+    else:
+        trend = "down"
+
+    return {
+        "client_name": client_name,
+        "days": days,
+        "campaigns_matched": len(matched_ids),
+        "data": data_points,
+        "summary": {
+            "total_sent": total_sent,
+            "total_replied": total_replied,
+            "avg_reply_rate": avg_reply_rate,
+            "recent_7d_rate": recent_rate,
+            "prior_7d_rate": prior_rate,
+            "trend": trend,
+        },
+    }
+
+
 # --- Delete Client Infrastructure ---
 
 def delete_client_infra_sse(client_id, client_name):
@@ -1857,6 +2017,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif path.startswith("/api/client/") and path.endswith("/accounts"):
                     client_id = path.split("/")[3]
                     self._json_response(api_client_accounts(client_id))
+                elif path.startswith("/api/client/") and path.endswith("/trends"):
+                    client_id = path.split("/")[3]
+                    params = parse_qs(parsed.query)
+                    days = int(params.get("days", [30])[0])
+                    self._json_response(api_client_trends(client_id, days))
                 elif path == "/api/unassigned":
                     self._json_response(api_unassigned())
                 elif path == "/api/zapmail":

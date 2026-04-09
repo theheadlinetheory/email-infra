@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THT Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%234ecdc4'/><text x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='14' fill='%231a1a2e'>THT</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
@@ -392,8 +393,11 @@ function renderOverview() {
     // Alert banner
     const alertEl = document.getElementById('alert-banner');
     const attentionClients = d.clients.filter(c => c.needs_attention);
-    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0) {
+    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0) {
         let html = '<div class="alert-banner"><h3>Alerts</h3>';
+        if (d.idle_inboxes > 0) {
+            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:#ffd93d;">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
+        }
         if (attentionClients.length > 0) {
             html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;">' + attentionClients.length + ' client(s) have infrastructure that needs attention</div>';
             attentionClients.forEach(c => {
@@ -506,22 +510,30 @@ function renderOverview() {
     select.value = currentVal;
 }
 
+let trendChart = null;
+let currentTrendClientId = null;
+
 async function openDetail(clientId, clientName) {
     document.getElementById('detail-overlay').style.display = 'block';
     document.getElementById('detail-panel').style.display = 'block';
     document.getElementById('detail-title').textContent = clientName;
     document.getElementById('detail-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading accounts...</div>';
+    currentTrendClientId = clientId;
 
     try {
-        const resp = await fetch('/api/client/' + clientId + '/accounts');
-        const data = await resp.json();
-        renderDetailTable(data);
+        const [accountsResp, trendsResp] = await Promise.all([
+            fetch('/api/client/' + clientId + '/accounts'),
+            fetch('/api/client/' + clientId + '/trends?days=30'),
+        ]);
+        const data = await accountsResp.json();
+        const trends = await trendsResp.json();
+        renderDetailTable(data, trends);
     } catch (err) {
         document.getElementById('detail-content').innerHTML = 'Error: ' + err.message;
     }
 }
 
-function renderDetailTable(data) {
+function renderDetailTable(data, trends) {
     const accounts = data.accounts;
 
     // Replacement recommendation
@@ -537,7 +549,45 @@ function renderDetailTable(data) {
         </div>`;
     }
 
-    let html = recHtml;
+    // Reply rate trend chart
+    let chartHtml = '';
+    if (trends && !trends.error) {
+        const s = trends.summary || {};
+        const trendIcon = s.trend === 'up' ? '&#9650;' : s.trend === 'down' ? '&#9660;' : '&#9654;';
+        const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
+        chartHtml = `<div style="background:#0a1628;border:1px solid #0f3460;border-radius:8px;padding:16px;margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div style="font-size:14px;font-weight:600;">Reply Rate Trend</div>
+                <div style="display:flex;gap:4px;" id="trend-zoom-btns">
+                    <button onclick="loadTrends(7)" class="trend-zoom" data-days="7" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">7D</button>
+                    <button onclick="loadTrends(14)" class="trend-zoom" data-days="14" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">14D</button>
+                    <button onclick="loadTrends(30)" class="trend-zoom" data-days="30" style="background:#16213e;color:#4ecdc4;border:1px solid #4ecdc4;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">30D</button>
+                    <button onclick="loadTrends(90)" class="trend-zoom" data-days="90" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">90D</button>
+                    <button onclick="loadTrends(0)" class="trend-zoom" data-days="0" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">All</button>
+                </div>
+            </div>
+            <div style="height:200px;position:relative;"><canvas id="trend-chart"></canvas></div>
+            <div style="display:flex;gap:24px;margin-top:12px;font-size:12px;">
+                <div><span style="color:#888;">Avg Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+                <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
+                <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
+                <div><span style="color:#888;">Total Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
+                <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
+            </div>
+        </div>`;
+    }
+
+    // Idle inbox alert
+    let idleHtml = '';
+    const idleInboxes = accounts.filter(a => a.warmup_status !== 'ACTIVE' && a.campaign_count === 0 && a.warmup_days !== null && a.warmup_days >= 14);
+    if (idleInboxes.length > 0) {
+        idleHtml = `<div style="background:#4a3a1a;border:1px solid #8b7a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+            <div style="font-size:14px;color:#ffd93d;font-weight:600;margin-bottom:6px;">${idleInboxes.length} warmed inbox(es) not in any campaign</div>
+            <div style="font-size:13px;color:#ffd9aa;">${idleInboxes.map(a => a.email).join(', ')}</div>
+        </div>`;
+    }
+
+    let html = recHtml + chartHtml + idleHtml;
     html += '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
     html += '<thead><tr><th>Email</th><th>Health</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
 
@@ -589,11 +639,103 @@ function renderDetailTable(data) {
     </div>`;
 
     document.getElementById('detail-content').innerHTML = html;
+
+    // Render chart after DOM update
+    if (trends && !trends.error && trends.data && trends.data.length > 0) {
+        renderTrendChart(trends);
+    }
+}
+
+function renderTrendChart(trends) {
+    const canvas = document.getElementById('trend-chart');
+    if (!canvas) return;
+
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+    const points = trends.data.filter(d => d.reply_rate !== null);
+    if (points.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+    trendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: points.map(d => d.date),
+            datasets: [{
+                label: 'Reply Rate %',
+                data: points.map(d => d.reply_rate),
+                borderColor: '#4ecdc4',
+                backgroundColor: 'rgba(78, 205, 196, 0.1)',
+                borderWidth: 2,
+                pointRadius: 3,
+                pointBackgroundColor: '#4ecdc4',
+                pointHoverRadius: 6,
+                fill: true,
+                tension: 0.3,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#16213e',
+                    borderColor: '#0f3460',
+                    borderWidth: 1,
+                    titleColor: '#eee',
+                    bodyColor: '#eee',
+                    callbacks: {
+                        label: function(ctx) {
+                            const pt = points[ctx.dataIndex];
+                            return [
+                                'Reply Rate: ' + pt.reply_rate + '%',
+                                'Sent: ' + pt.sent.toLocaleString(),
+                                'Replies: ' + pt.replied,
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#666', font: { size: 10 }, maxTicksLimit: 12 },
+                    grid: { color: '#1a2744' },
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#666', font: { size: 10 }, callback: v => v + '%' },
+                    grid: { color: '#1a2744' },
+                }
+            }
+        }
+    });
+}
+
+async function loadTrends(days) {
+    if (!currentTrendClientId) return;
+    // Update zoom button styles
+    document.querySelectorAll('.trend-zoom').forEach(btn => {
+        const isActive = parseInt(btn.dataset.days) === days;
+        btn.style.color = isActive ? '#4ecdc4' : '#888';
+        btn.style.borderColor = isActive ? '#4ecdc4' : '#0f3460';
+    });
+    try {
+        const resp = await fetch('/api/client/' + currentTrendClientId + '/trends?days=' + days);
+        const trends = await resp.json();
+        if (trends && !trends.error) {
+            // Update summary
+            const s = trends.summary || {};
+            const trendIcon = s.trend === 'up' ? '\u25B2' : s.trend === 'down' ? '\u25BC' : '\u25B6';
+            renderTrendChart(trends);
+        }
+    } catch(e) { console.error('Trend load error:', e); }
 }
 
 function closeDetail() {
     document.getElementById('detail-overlay').style.display = 'none';
     document.getElementById('detail-panel').style.display = 'none';
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    currentTrendClientId = null;
 }
 
 async function loadUnassigned() {
