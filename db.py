@@ -205,3 +205,29 @@ def set_state(key: str, data: dict) -> None:
     }
     _request("POST", "/state", json_body=row,
              headers={"Prefer": "resolution=merge-duplicates"})
+
+
+# ---------------------------------------------------------------------------
+# SmartLead Cache (for fast dashboard loads)
+# ---------------------------------------------------------------------------
+
+def cache_set(key: str, data) -> None:
+    """Write a cache entry (uses the state table with 'cache:' prefix)."""
+    prefixed = f"cache:{key}"
+    row = {
+        "key": prefixed,
+        "data": json.dumps(data, default=str),
+        "updated_at": datetime.now().isoformat(),
+    }
+    _request("POST", "/state", json_body=row,
+             headers={"Prefer": "resolution=merge-duplicates"})
+
+
+def cache_get(key: str):
+    """Read a cache entry. Returns (data, updated_at) or (None, None)."""
+    prefixed = f"cache:{key}"
+    rows = _request("GET", "/state",
+                    params={"select": "data,updated_at", "key": f"eq.{prefixed}"})
+    if rows:
+        return json.loads(rows[0]["data"]), rows[0]["updated_at"]
+    return None, None

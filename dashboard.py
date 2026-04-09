@@ -38,6 +38,7 @@ from setup import (
     SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API,
     sl_internal_headers as setup_sl_internal_headers,
 )
+import db as store
 
 SCRIPT_DIR = Path(__file__).parent
 ENV_PATH = SCRIPT_DIR / ".env"
@@ -53,8 +54,6 @@ def load_env():
 
 
 load_env()
-
-import db as store
 
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
@@ -404,10 +403,15 @@ def group_accounts_by_domain(accounts_with_scores):
     return by_domain
 
 
-# --- API endpoint logic ---
+# --- Background SmartLead → Supabase sync ---
 
-def api_overview():
-    gc.collect()  # Free memory before heavy operation
+_SYNC_INTERVAL = 120  # seconds between sync cycles
+_sync_running = False  # prevent overlapping syncs
+
+
+def _compute_overview():
+    """Compute the full overview payload from live SmartLead data."""
+    gc.collect()
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_clients = ex.submit(get_clients)
         f_accounts = ex.submit(get_all_accounts)
@@ -633,6 +637,146 @@ def api_overview():
     }
 
 
+def _compute_client_accounts(client_id):
+    """Compute client accounts payload from live SmartLead data."""
+    cid = int(client_id)
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_accounts = ex.submit(get_accounts_by_client, cid)
+        f_health = ex.submit(get_health_metrics)
+        f_campaigns = ex.submit(get_campaign_counts_for_client, cid)
+        f_clients = ex.submit(get_clients)
+        f_warmup = ex.submit(get_warmup_start_dates)
+    accounts = f_accounts.result()
+    health = f_health.result()
+    campaign_counts = f_campaigns.result()
+    clients = f_clients.result()
+    client_name = ""
+    for c in clients:
+        if c["id"] == cid:
+            client_name = c["name"]
+            break
+    warmup_dates = f_warmup.result()
+    ws_date = warmup_dates.get(client_name.lower(), "")
+    in_warmup = False
+    if ws_date:
+        try:
+            ready = datetime.strptime(ws_date, "%Y-%m-%d") + timedelta(days=14)
+            in_warmup = ready > datetime.now()
+        except Exception:
+            pass
+    warmup_days_elapsed = None
+    if ws_date:
+        try:
+            ws = datetime.strptime(ws_date, "%Y-%m-%d")
+            warmup_days_elapsed = (datetime.now() - ws).days
+        except Exception:
+            pass
+    result = []
+    for a in accounts:
+        wd = a.get("warmup_details") or {}
+        email = a.get("from_email", "")
+        h = health.get(email, {})
+        hs = calculate_health_score(a, health, in_warmup_period=in_warmup)
+        result.append({
+            "id": a["id"],
+            "email": email,
+            "domain": email.split("@")[-1],
+            "warmup_status": wd.get("status", "UNKNOWN"),
+            "warmup_sent": wd.get("total_sent_count", 0),
+            "warmup_spam": wd.get("total_spam_count", 0),
+            "warmup_reputation": wd.get("warmup_reputation", "?"),
+            "blocked_reason": wd.get("blocked_reason"),
+            "campaign_count": campaign_counts.get(email, 0),
+            "daily_sent": a.get("daily_sent_count", 0),
+            "smtp_ok": a.get("is_smtp_success", False),
+            "imap_ok": a.get("is_imap_success", False),
+            "bounce_rate": h.get("bounce_rate"),
+            "reply_rate": h.get("reply_rate"),
+            "health_sent": h.get("sent", 0),
+            "health_bounced": h.get("bounced", 0),
+            "health_replied": h.get("replied", 0),
+            "health_score": hs["score"],
+            "health_flags": hs["flags"],
+            "warmup_days": warmup_days_elapsed,
+        })
+    by_domain = group_accounts_by_domain(result)
+    flagged_domains = [d for d, accs in by_domain.items() if any(a["health_flags"] for a in accs)]
+    flagged_inbox_count = sum(len(by_domain[d]) for d in flagged_domains)
+    return {
+        "client_id": int(client_id),
+        "client_name": client_name,
+        "accounts": result,
+        "flagged_domains": flagged_domains,
+        "flagged_inbox_count": flagged_inbox_count,
+        "replacement_domains_needed": len(flagged_domains),
+        "replacement_inboxes": len(flagged_domains) * 3,
+    }
+
+
+def _sync_smartlead_data():
+    """Fetch all SmartLead data and write to Supabase cache."""
+    global _sync_running
+    if _sync_running:
+        return
+    _sync_running = True
+    try:
+        print(f"[sync] Starting SmartLead → Supabase sync at {datetime.now().strftime('%H:%M:%S')}")
+        overview = _compute_overview()
+        store.cache_set("overview", overview)
+
+        # Pre-cache client accounts for each client
+        for cl in overview.get("clients", []):
+            try:
+                cl_data = _compute_client_accounts(cl["id"])
+                store.cache_set(f"client_accounts_{cl['id']}", cl_data)
+            except Exception as e:
+                print(f"[sync] Error caching client {cl.get('name')}: {e}")
+
+        print(f"[sync] Sync complete at {datetime.now().strftime('%H:%M:%S')} — "
+              f"{len(overview.get('clients', []))} clients cached")
+    except Exception as e:
+        print(f"[sync] Sync error: {e}")
+    finally:
+        _sync_running = False
+
+
+def _sync_loop():
+    """Background loop that syncs SmartLead data every _SYNC_INTERVAL seconds."""
+    while True:
+        try:
+            _sync_smartlead_data()
+        except Exception as e:
+            print(f"[sync] Loop error: {e}")
+        time.sleep(_SYNC_INTERVAL)
+
+
+def start_sync_thread():
+    """Start the background sync as a daemon thread."""
+    t = threading.Thread(target=_sync_loop, daemon=True, name="smartlead-sync")
+    t.start()
+    return t
+
+
+def invalidate_cache():
+    """Force an immediate re-sync (call after mutations like delete/add)."""
+    threading.Thread(target=_sync_smartlead_data, daemon=True, name="cache-invalidate").start()
+
+
+# --- API endpoint logic (cache-first) ---
+
+def api_overview():
+    """Return overview from Supabase cache, falling back to live computation."""
+    try:
+        cached, synced_at = store.cache_get("overview")
+        if cached:
+            cached["_cached"] = True
+            cached["_synced_at"] = synced_at
+            return cached
+    except Exception:
+        pass
+    return _compute_overview()
+
+
 _campaign_counts_cache = {}
 
 def get_campaign_counts_for_client(client_id):
@@ -664,86 +808,16 @@ def get_campaign_counts_for_client(client_id):
 
 
 def api_client_accounts(client_id):
-    cid = int(client_id)
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        f_accounts = ex.submit(get_accounts_by_client, cid)
-        f_health = ex.submit(get_health_metrics)
-        f_campaigns = ex.submit(get_campaign_counts_for_client, cid)
-        f_clients = ex.submit(get_clients)
-        f_warmup = ex.submit(get_warmup_start_dates)
-    accounts = f_accounts.result()
-    health = f_health.result()
-    campaign_counts = f_campaigns.result()
-
-    # Determine if this client is still in warmup period
-    clients = f_clients.result()
-    client_name = ""
-    for c in clients:
-        if c["id"] == cid:
-            client_name = c["name"]
-            break
-    warmup_dates = f_warmup.result()
-    ws_date = warmup_dates.get(client_name.lower(), "")
-    in_warmup = False
-    if ws_date:
-        try:
-            ready = datetime.strptime(ws_date, "%Y-%m-%d") + timedelta(days=14)
-            in_warmup = ready > datetime.now()
-        except Exception:
-            pass
-
-    # Compute warmup days from start date
-    warmup_days_elapsed = None
-    if ws_date:
-        try:
-            ws = datetime.strptime(ws_date, "%Y-%m-%d")
-            warmup_days_elapsed = (datetime.now() - ws).days
-        except Exception:
-            pass
-
-    result = []
-    for a in accounts:
-        wd = a.get("warmup_details") or {}
-        email = a.get("from_email", "")
-        h = health.get(email, {})
-        hs = calculate_health_score(a, health, in_warmup_period=in_warmup)
-        result.append({
-            "id": a["id"],
-            "email": email,
-            "domain": email.split("@")[-1],
-            "warmup_status": wd.get("status", "UNKNOWN"),
-            "warmup_sent": wd.get("total_sent_count", 0),
-            "warmup_spam": wd.get("total_spam_count", 0),
-            "warmup_reputation": wd.get("warmup_reputation", "?"),
-            "blocked_reason": wd.get("blocked_reason"),
-            "campaign_count": campaign_counts.get(email, 0),
-            "daily_sent": a.get("daily_sent_count", 0),
-            "smtp_ok": a.get("is_smtp_success", False),
-            "imap_ok": a.get("is_imap_success", False),
-            "bounce_rate": h.get("bounce_rate"),
-            "reply_rate": h.get("reply_rate"),
-            "health_sent": h.get("sent", 0),
-            "health_bounced": h.get("bounced", 0),
-            "health_replied": h.get("replied", 0),
-            "health_score": hs["score"],
-            "health_flags": hs["flags"],
-            "warmup_days": warmup_days_elapsed,
-        })
-
-    # Domain-level rollup
-    by_domain = group_accounts_by_domain(result)
-    flagged_domains = [d for d, accs in by_domain.items() if any(a["health_flags"] for a in accs)]
-    flagged_inbox_count = sum(len(by_domain[d]) for d in flagged_domains)
-
-    return {
-        "client_id": int(client_id),
-        "client_name": client_name,
-        "accounts": result,
-        "flagged_domains": flagged_domains,
-        "flagged_inbox_count": flagged_inbox_count,
-        "replacement_domains_needed": len(flagged_domains),
-        "replacement_inboxes": len(flagged_domains) * 3,
-    }
+    """Return client accounts from Supabase cache, falling back to live computation."""
+    try:
+        cached, synced_at = store.cache_get(f"client_accounts_{client_id}")
+        if cached:
+            cached["_cached"] = True
+            cached["_synced_at"] = synced_at
+            return cached
+    except Exception:
+        pass
+    return _compute_client_accounts(client_id)
 
 
 def api_unassigned():
@@ -1749,6 +1823,7 @@ def delete_client_infra_sse(client_id, client_name):
         yield event(5, "error", str(e))
         return
 
+    invalidate_cache()
     yield event(0, "complete")
 
 
@@ -1904,6 +1979,7 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
         yield event(6, "error", str(e))
         return
 
+    invalidate_cache()
     yield event(0, "complete")
 
 
@@ -2136,6 +2212,7 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         yield event(7, "error", str(e))
         return
 
+    invalidate_cache()
     yield event(0, "complete")
 
 
@@ -2373,9 +2450,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
         elif path == "/api/inbox/remove-from-campaign":
             result = api_remove_from_campaign(body)
+            invalidate_cache()
             self._json_response(result)
         elif path == "/api/inbox/remove-from-all-campaigns":
             result = api_remove_from_all_campaigns(body)
+            invalidate_cache()
             self._json_response(result)
         else:
             self._error(404, "Not found")
@@ -2449,6 +2528,10 @@ def main():
         print("Infrastructure monitor started (checking every 4 hours)")
     else:
         print("Infrastructure monitor DISABLED (Render free tier — set ENABLE_MONITOR=1 to override)")
+
+    # Start background SmartLead → Supabase sync (every 2 minutes)
+    start_sync_thread()
+    print("SmartLead background sync started (every 2 minutes)")
 
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
