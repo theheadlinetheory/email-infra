@@ -416,15 +416,22 @@ _sync_running = False  # prevent overlapping syncs
 def _compute_overview():
     """Compute the full overview payload from live SmartLead data."""
     gc.collect()
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         f_clients = ex.submit(get_clients)
         f_accounts = ex.submit(get_all_accounts)
         f_warmup = ex.submit(get_warmup_start_dates)
         f_health = ex.submit(get_health_metrics)
+        f_campaigns = ex.submit(get_global_campaign_counts)
     clients = f_clients.result()
     all_accounts = f_accounts.result()
     warmup_dates = f_warmup.result()
     health = f_health.result()
+    campaign_counts = f_campaigns.result()
+
+    # Enrich accounts with accurate campaign counts
+    for a in all_accounts:
+        email = a.get("from_email", "")
+        a["campaign_count"] = campaign_counts.get(email, 0)
 
     total = len(all_accounts)
     in_campaign = sum(1 for a in all_accounts if a.get("campaign_count", 0) > 0)
@@ -647,7 +654,7 @@ def _compute_client_accounts(client_id):
     with ThreadPoolExecutor(max_workers=5) as ex:
         f_accounts = ex.submit(get_accounts_by_client, cid)
         f_health = ex.submit(get_health_metrics)
-        f_campaigns = ex.submit(get_campaign_counts_for_client, cid)
+        f_campaigns = ex.submit(get_global_campaign_counts)
         f_clients = ex.submit(get_clients)
         f_warmup = ex.submit(get_warmup_start_dates)
     accounts = f_accounts.result()
@@ -788,34 +795,46 @@ def api_overview():
                 "blocked": [], "acquisition_groups": [], "generic_groups": []}
 
 
-_campaign_counts_cache = {}
+_global_campaign_counts = {"data": {}, "time": 0}
 
-def get_campaign_counts_for_client(client_id):
-    """Get per-email campaign count by checking actual campaigns (list API field is unreliable)."""
+def get_global_campaign_counts():
+    """Build a global email → campaign count mapping from ALL campaigns.
+
+    SmartLead campaigns often have client_id=null, so filtering by client
+    doesn't work. Instead, fetch all campaigns, get their email accounts,
+    and build the full mapping. Cached for 120 seconds.
+    """
     now = time.time()
-    cached = _campaign_counts_cache.get(client_id)
-    if cached and now - cached["time"] < 120:
-        return cached["data"]
+    if _global_campaign_counts["data"] and now - _global_campaign_counts["time"] < 120:
+        return _global_campaign_counts["data"]
     counts = {}
-    r = requests.get(
-        f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}&client_id={client_id}",
-        timeout=30,
-    )
-    campaigns = r.json() if r.status_code == 200 else []
-    for camp in campaigns:
-        if camp.get("status") not in ("ACTIVE", "PAUSED"):
-            continue
-        cr = requests.get(
-            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
-            timeout=30,
+    try:
+        r = requests.get(
+            f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
+            timeout=60,
         )
-        camp_accounts = cr.json() if cr.status_code == 200 else []
-        if isinstance(camp_accounts, list):
-            for ca in camp_accounts:
-                email = ca.get("from_email", "")
-                counts[email] = counts.get(email, 0) + 1
-    _campaign_counts_cache[client_id] = {"data": counts, "time": now}
-    return counts
+        campaigns = r.json() if r.status_code == 200 else []
+        for camp in campaigns:
+            if camp.get("status") not in ("ACTIVE", "PAUSED"):
+                continue
+            try:
+                cr = requests.get(
+                    f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+                    timeout=30,
+                )
+                camp_accounts = cr.json() if cr.status_code == 200 else []
+                if isinstance(camp_accounts, list):
+                    for ca in camp_accounts:
+                        email = ca.get("from_email", "")
+                        if email:
+                            counts[email] = counts.get(email, 0) + 1
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                continue
+        _global_campaign_counts["data"] = counts
+        _global_campaign_counts["time"] = now
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+        print(f"[campaigns] Timeout fetching campaign list: {e}")
+    return _global_campaign_counts["data"] or counts
 
 
 def api_client_accounts(client_id):
