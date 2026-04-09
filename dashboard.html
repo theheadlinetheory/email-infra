@@ -641,8 +641,17 @@ function renderDetailTable(data, trends) {
     document.getElementById('detail-content').innerHTML = html;
 
     // Render chart after DOM update
-    if (trends && !trends.error && trends.data && trends.data.length > 0) {
+    if (trends && !trends.error && trends.data && trends.data.some(d => d.reply_rate !== null)) {
         renderTrendChart(trends);
+    } else {
+        const canvas = document.getElementById('trend-chart');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#666';
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('No campaign data yet', canvas.width / 2, 100);
+        }
     }
 }
 
@@ -653,7 +662,14 @@ function renderTrendChart(trends) {
     if (trendChart) { trendChart.destroy(); trendChart = null; }
 
     const points = trends.data.filter(d => d.reply_rate !== null);
-    if (points.length === 0) return;
+    if (points.length === 0) {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#666';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No sending data in this period', canvas.width / 2, 100);
+        return;
+    }
 
     const ctx = canvas.getContext('2d');
     trendChart = new Chart(ctx, {

@@ -7,6 +7,7 @@ Works both locally (reads .env file) and hosted (reads environment variables).
 import gc
 import json
 import os
+import re
 import sys
 import time
 import requests
@@ -15,6 +16,7 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta
 from pathlib import Path
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # Limit concurrent heavy API calls to prevent OOM on 512MB Render
 _api_lock = threading.Lock()
@@ -198,9 +200,17 @@ def porkbun_set_auto_renew(domain, enabled):
 
 # --- SmartLead API helpers ---
 
+_clients_cache = {"data": None, "time": 0}
+
 def get_clients():
+    now = time.time()
+    if _clients_cache["data"] is not None and now - _clients_cache["time"] < 120:
+        return _clients_cache["data"]
     r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
-    return r.json() if r.status_code == 200 else []
+    result = r.json() if r.status_code == 200 else []
+    _clients_cache["data"] = result
+    _clients_cache["time"] = now
+    return result
 
 
 def get_accounts_by_client(client_id):
@@ -227,7 +237,7 @@ _accounts_cache = {"data": None, "time": 0}
 def get_all_accounts():
     """Fetch all accounts with 30-second cache to prevent duplicate fetches."""
     now = time.time()
-    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 30:
+    if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 120:
         return _accounts_cache["data"]
     accounts = []
     offset = 0
@@ -269,7 +279,7 @@ _health_cache = {"data": None, "time": 0}
 def get_health_metrics(days=7):
     """Get per-inbox health metrics with 30-second cache."""
     now = time.time()
-    if _health_cache["data"] is not None and now - _health_cache["time"] < 30:
+    if _health_cache["data"] is not None and now - _health_cache["time"] < 120:
         return _health_cache["data"]
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -289,8 +299,13 @@ def get_health_metrics(days=7):
     return result
 
 
+_warmup_dates_cache = {"data": None, "time": 0}
+
 def get_warmup_start_dates():
     """Read warmup start dates from client configs in Supabase."""
+    now = time.time()
+    if _warmup_dates_cache["data"] is not None and now - _warmup_dates_cache["time"] < 120:
+        return _warmup_dates_cache["data"]
     dates = {}
     try:
         for c in store.load_all_client_configs():
@@ -300,6 +315,8 @@ def get_warmup_start_dates():
                 dates[name.lower()] = ws
     except Exception as e:
         print(f"WARN: Could not load client configs: {e}")
+    _warmup_dates_cache["data"] = dates
+    _warmup_dates_cache["time"] = now
     return dates
 
 
@@ -391,10 +408,15 @@ def group_accounts_by_domain(accounts_with_scores):
 
 def api_overview():
     gc.collect()  # Free memory before heavy operation
-    clients = get_clients()
-    all_accounts = get_all_accounts()
-    warmup_dates = get_warmup_start_dates()
-    health = get_health_metrics()
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_clients = ex.submit(get_clients)
+        f_accounts = ex.submit(get_all_accounts)
+        f_warmup = ex.submit(get_warmup_start_dates)
+        f_health = ex.submit(get_health_metrics)
+    clients = f_clients.result()
+    all_accounts = f_accounts.result()
+    warmup_dates = f_warmup.result()
+    health = f_health.result()
 
     total = len(all_accounts)
     in_campaign = sum(1 for a in all_accounts if a.get("campaign_count", 0) > 0)
@@ -611,8 +633,14 @@ def api_overview():
     }
 
 
+_campaign_counts_cache = {}
+
 def get_campaign_counts_for_client(client_id):
     """Get per-email campaign count by checking actual campaigns (list API field is unreliable)."""
+    now = time.time()
+    cached = _campaign_counts_cache.get(client_id)
+    if cached and now - cached["time"] < 120:
+        return cached["data"]
     counts = {}
     r = requests.get(
         f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}&client_id={client_id}",
@@ -631,22 +659,30 @@ def get_campaign_counts_for_client(client_id):
             for ca in camp_accounts:
                 email = ca.get("from_email", "")
                 counts[email] = counts.get(email, 0) + 1
+    _campaign_counts_cache[client_id] = {"data": counts, "time": now}
     return counts
 
 
 def api_client_accounts(client_id):
-    accounts = get_accounts_by_client(int(client_id))
-    health = get_health_metrics()
-    campaign_counts = get_campaign_counts_for_client(int(client_id))
+    cid = int(client_id)
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_accounts = ex.submit(get_accounts_by_client, cid)
+        f_health = ex.submit(get_health_metrics)
+        f_campaigns = ex.submit(get_campaign_counts_for_client, cid)
+        f_clients = ex.submit(get_clients)
+        f_warmup = ex.submit(get_warmup_start_dates)
+    accounts = f_accounts.result()
+    health = f_health.result()
+    campaign_counts = f_campaigns.result()
 
     # Determine if this client is still in warmup period
-    clients = get_clients()
+    clients = f_clients.result()
     client_name = ""
     for c in clients:
-        if c["id"] == int(client_id):
+        if c["id"] == cid:
             client_name = c["name"]
             break
-    warmup_dates = get_warmup_start_dates()
+    warmup_dates = f_warmup.result()
     ws_date = warmup_dates.get(client_name.lower(), "")
     in_warmup = False
     if ws_date:
@@ -1373,13 +1409,26 @@ def api_client_trends(client_id, days):
     except Exception:
         all_campaigns = []
 
-    # Fuzzy match: campaign name contains client name, exclude acquisition
+    # Fuzzy match: campaign name contains client name (or shortened variants), exclude acquisition
+    # Build match candidates: full name, name without suffixes, and progressively shorter prefixes
     client_lower = client_name.lower().strip()
+    core_name = re.sub(r'\b(inc\.?|llc\.?|co\.?|ltd\.?|corp\.?|services?)\b', '', client_lower).strip().rstrip('.')
+    core_name = re.sub(r'\s+', ' ', core_name).strip()
+    # Also try just the first word(s) — e.g. "Timesavers" from "Timesavers Landscaping Inc."
+    # Use first word only if it's 4+ chars to avoid overly broad matches
+    first_word = core_name.split()[0] if core_name.split() else ""
+    match_candidates = [client_lower, core_name]
+    if len(first_word) >= 4 and first_word != core_name:
+        match_candidates.append(first_word)
+
     matched_ids = []
     earliest_date = None
     for camp in all_campaigns:
         camp_name = (camp.get("name") or "").lower()
-        if client_lower in camp_name and "acquisition" not in camp_name:
+        if "acquisition" in camp_name:
+            continue
+        # Match if any candidate appears in campaign name
+        if any(candidate in camp_name for candidate in match_candidates):
             matched_ids.append(str(camp["id"]))
             created = camp.get("created_at", "")[:10]
             if created and (earliest_date is None or created < earliest_date):
