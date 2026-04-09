@@ -1406,7 +1406,10 @@ def api_client_trends(client_id, days):
                 all_campaigns = camp_data.get("data", {}).get("campaign_list", [])
             elif isinstance(camp_data, list):
                 all_campaigns = camp_data
-    except Exception:
+        else:
+            print(f"TRENDS: campaign-list returned {camp_resp.status_code}: {camp_resp.text[:200]}")
+    except Exception as e:
+        print(f"TRENDS: campaign-list exception: {e}")
         all_campaigns = []
 
     # Fuzzy match: campaign name contains client name (or shortened variants), exclude acquisition
@@ -1453,20 +1456,24 @@ def api_client_trends(client_id, days):
             f"{SMARTLEAD_INTERNAL_API}/analytics/day-wise-overall-stats",
             headers=sl_internal_headers(),
             params={
-                "campaignIds": ",".join(matched_ids),
-                "startDate": start_date,
-                "endDate": end_date,
+                "campaign_ids": ",".join(matched_ids),
+                "start_date": start_date,
+                "end_date": end_date,
                 "timezone": "America/New_York",
             },
             timeout=30,
         )
         stats_data = stats_resp.json() if stats_resp.status_code == 200 else {}
-    except Exception:
+        if stats_resp.status_code != 200:
+            print(f"TRENDS: day-wise-overall-stats returned {stats_resp.status_code}: {stats_resp.text[:200]}")
+    except Exception as e:
+        print(f"TRENDS: day-wise-overall-stats exception: {e}")
         stats_data = {}
 
     day_stats = []
     if isinstance(stats_data, dict):
         day_stats = stats_data.get("data", {}).get("day_wise_stats", [])
+    print(f"TRENDS: client={client_name}, campaigns={len(matched_ids)}, days_returned={len(day_stats)}")
 
     # Build data points
     data_points = []
