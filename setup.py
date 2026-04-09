@@ -102,6 +102,34 @@ def load_config(filepath):
     return json.loads(Path(filepath).read_text())
 
 
+def find_existing_config(client_name):
+    """Find any existing in-progress config for this client.
+
+    Scans clients/ directory for configs matching the client name that are
+    not yet complete. Returns (config, config_path) if found, else (None, None).
+    This prevents duplicate pipelines when re-running --auto for the same client.
+    """
+    clients_dir = SCRIPT_DIR / "clients"
+    if not clients_dir.exists():
+        return None, None
+    safe_name = client_name.lower().replace(" ", "_")
+    candidates = []
+    for f in sorted(clients_dir.glob(f"{safe_name}_*.json"), reverse=True):
+        try:
+            cfg = load_config(f)
+            candidates.append((cfg, f))
+        except Exception:
+            continue
+    # Prefer in-progress configs (resume them), then check for complete ones
+    for cfg, path in candidates:
+        if cfg.get("status") == "in_progress":
+            return cfg, path
+    for cfg, path in candidates:
+        if cfg.get("status") == "complete":
+            return cfg, path
+    return None, None
+
+
 # ─── INFRASTRUCTURE MATH ───
 
 def calculate_infra(daily_volume):
@@ -794,8 +822,8 @@ INBOX_SPECS = [
 
 ACQUISITION_INBOX_SPECS = [
     {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan"},
-    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan.hutchinson"},
-    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "a.hutchinson"},
+    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan.h"},
+    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidanhutch"},
 ]
 
 def generate_mailbox_specs(domain_name, count=3, offset=0, mode="client"):
@@ -957,9 +985,10 @@ def export_for_sheet(config, output_path=None):
 
 TOTAL_STEPS = 12
 
-# Profile photo URL for Sean Reynolds (publicly accessible)
-PROFILE_PHOTO_URL = "https://ui-avatars.com/api/?name=Sean+Reynolds&size=256&background=4A90D9&color=ffffff&bold=true"
-ACQUISITION_PHOTO_URL = "https://ui-avatars.com/api/?name=Aidan+Hutchinson&size=256&background=2ECC71&color=ffffff&bold=true"
+# Profile photo URLs (hosted on Supabase Storage — permanent, publicly accessible)
+SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
+PROFILE_PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
+ACQUISITION_PHOTO_URL = f"{SUPABASE_STORAGE}/aidan_hutchinson.png"
 
 # Google Calendar config for rotation reminders
 GCAL_CALENDAR_ID = "c_86c4f6b9ef436cb6e4570df1d4d445331d2453ccf357935df8503209023cd58a@group.calendar.google.com"
@@ -1626,66 +1655,81 @@ def run_pipeline(config, config_path):
         log("Waiting 3 minutes for export to process...")
         time.sleep(180)
 
-        # --- Verification: confirm at least some accounts appeared in SmartLead ---
+        # --- Verification: ALL accounts must appear in SmartLead before moving on ---
         expected_total = len(our_domain_set) * ACCOUNTS_PER_DOMAIN
         found_count = 0
-        max_polls = 6  # 6 * 5min = 30 minutes
-        sl_poll_interval = 300  # 5 minutes
+        max_export_attempts = 5  # re-export missing domains up to 5 times
+        polls_per_attempt = 10  # 10 polls × 30s = 5 minutes per attempt
+        sl_poll_interval = 30  # seconds
 
-        for poll in range(max_polls):
-            all_accounts = []
-            offset = 0
-            while True:
-                batch = sl_list_accounts(offset=offset, limit=100)
-                if isinstance(batch, list):
-                    all_accounts.extend(batch)
-                    if len(batch) < 100:
+        for attempt in range(max_export_attempts):
+            if attempt > 0:
+                # Re-export only the missing domains
+                found_domains_check = set()
+                offset = 0
+                while True:
+                    batch = sl_list_accounts(offset=offset, limit=100)
+                    if isinstance(batch, list):
+                        for acc in batch:
+                            email = acc.get("from_email", acc.get("email", ""))
+                            domain = email.split("@")[-1] if "@" in email else ""
+                            if domain in our_domain_set:
+                                found_domains_check.add(domain)
+                        if len(batch) < 100:
+                            break
+                        offset += 100
+                    else:
                         break
-                    offset += 100
-                else:
-                    break
+                missing_domains = our_domain_set - found_domains_check
+                if missing_domains:
+                    log(f"Re-export attempt {attempt}: {len(missing_domains)} domain(s) still missing...")
+                    # Try bulk re-export by mailbox IDs first
+                    missing_mb_ids = []
+                    for d in config["purchased_domains"]:
+                        if d["domain"] in missing_domains:
+                            missing_mb_ids.extend(d.get("mailbox_ids", []))
+                    if missing_mb_ids:
+                        zm_export_mailboxes(apps=["SMARTLEAD"], mailbox_ids=missing_mb_ids)
+                    # Also try per-domain as backup
+                    for domain_name in missing_domains:
+                        zm_export_mailboxes(apps=["SMARTLEAD"], contains=domain_name)
+                        time.sleep(2)
+                    log(f"  Waiting 2 minutes for re-export...")
+                    time.sleep(120)
 
-            found_count = sum(1 for acc in all_accounts
-                              if acc.get("from_email", "").split("@")[-1] in our_domain_set)
-            log(f"  SmartLead verification poll {poll+1}/{max_polls}: {found_count}/{expected_total} accounts found")
-            if found_count >= expected_total:
-                log(f"  All {expected_total} accounts confirmed in SmartLead!")
-                break
-            elif found_count > 0:
-                log(f"  {found_count} accounts found so far — continuing to wait for remaining...")
-            if poll < max_polls - 1:
-                log(f"  Next check in {sl_poll_interval // 60} minutes...")
+            # Poll until all accounts appear
+            for poll in range(polls_per_attempt):
+                all_accounts = []
+                offset = 0
+                while True:
+                    batch = sl_list_accounts(offset=offset, limit=100)
+                    if isinstance(batch, list):
+                        all_accounts.extend(batch)
+                        if len(batch) < 100:
+                            break
+                        offset += 100
+                    else:
+                        break
+
+                found_count = sum(1 for acc in all_accounts
+                                  if acc.get("from_email", "").split("@")[-1] in our_domain_set)
+                log(f"  Export poll [{attempt+1}/{max_export_attempts}][{poll+1}/{polls_per_attempt}]: {found_count}/{expected_total} accounts")
+                if found_count >= expected_total:
+                    log(f"  All {expected_total} accounts confirmed in SmartLead!")
+                    break
                 time.sleep(sl_poll_interval)
 
-        if found_count == 0:
-            log("No accounts appeared in SmartLead yet. Re-exporting...", "WARN")
-            for domain_name in our_domains:
-                result = zm_export_mailboxes(apps=["SMARTLEAD"], contains=domain_name)
-                log(f"  Re-export {domain_name}: {json.dumps(result)[:200]}")
-                time.sleep(2)
-            log("Waiting 5 minutes after re-export...")
-            time.sleep(300)
-            # Final check
-            all_accounts = []
-            offset = 0
-            while True:
-                batch = sl_list_accounts(offset=offset, limit=100)
-                if isinstance(batch, list):
-                    all_accounts.extend(batch)
-                    if len(batch) < 100:
-                        break
-                    offset += 100
-                else:
-                    break
-            found_count = sum(1 for acc in all_accounts
-                              if acc.get("from_email", "").split("@")[-1] in our_domain_set)
-            log(f"  After re-export: {found_count}/{expected_total} accounts in SmartLead")
-            if found_count == 0:
-                log("BLOCKED: Still zero accounts after re-export. Check Zapmail SmartLead integration and re-run.", "ERROR")
-                save_config(config, config_path)
-                return False
+            if found_count >= expected_total:
+                break
 
-        log(f"Export confirmed: {found_count} account(s) visible in SmartLead (full sync in Step 9)")
+        # Hard gate: ALL accounts must be present
+        if found_count < expected_total:
+            log(f"BLOCKED: Only {found_count}/{expected_total} accounts in SmartLead after {max_export_attempts} export attempts.", "ERROR")
+            log("Investigate missing accounts in Zapmail/SmartLead and re-run.", "ERROR")
+            save_config(config, config_path)
+            return False
+
+        log(f"Export confirmed: {found_count}/{expected_total} accounts in SmartLead")
         config["smartlead_export_result"]["initial_count"] = found_count
 
         completed.append("smartlead_export")
@@ -2161,6 +2205,34 @@ def interactive_acquisition(daily_volume=None, group_name=None):
         print("  Aborted.")
         return
 
+    # Check for existing config (prevents duplicate infrastructure)
+    existing_cfg, existing_path = find_existing_config(group_name)
+    if not existing_cfg:
+        # Also check acquisition-specific naming pattern
+        acq_prefix = f"acquisition_{group_name.split()[0].lower()}_"
+        clients_dir = SCRIPT_DIR / "clients"
+        if clients_dir.exists():
+            for f in sorted(clients_dir.glob(f"{acq_prefix}*.json"), reverse=True):
+                try:
+                    existing_cfg = load_config(f)
+                    existing_path = f
+                    break
+                except Exception:
+                    continue
+    if existing_cfg:
+        if existing_cfg.get("status") == "complete":
+            print(f"\n  ALREADY COMPLETE: {existing_path}")
+            print(f"  This group already has a completed pipeline. Not creating a duplicate.")
+            return
+        steps_done = existing_cfg.get("steps_completed", [])
+        domains_claimed = len(existing_cfg.get("purchased_domains", []))
+        print(f"\n  RESUMING existing pipeline: {existing_path}")
+        print(f"  Steps completed: {len(steps_done)}/{TOTAL_STEPS} — {steps_done}")
+        print(f"  Domains already claimed: {domains_claimed}")
+        print(f"  Resuming from where it left off...\n")
+        run_pipeline(existing_cfg, existing_path)
+        return
+
     config = {
         "mode": "acquisition",
         "client_name": group_name,
@@ -2232,7 +2304,27 @@ def interactive(client_name=None, daily_volume=None, forwarding_domain=None):
         except Exception:
             pass
 
-    # Build config
+    # Check for existing config (prevents duplicate infrastructure)
+    existing_cfg, existing_path = find_existing_config(client_name)
+    if existing_cfg:
+        if existing_cfg.get("status") == "complete":
+            print(f"\n  ALREADY COMPLETE: {existing_path}")
+            print(f"  Steps done: {existing_cfg.get('steps_completed', [])}")
+            print(f"  Domains: {len(existing_cfg.get('purchased_domains', []))}")
+            print(f"\n  This client already has a completed pipeline. Not creating a duplicate.")
+            print(f"  To force a new pipeline, delete or rename the existing config first.")
+            return
+        # Resume in-progress pipeline
+        steps_done = existing_cfg.get("steps_completed", [])
+        domains_claimed = len(existing_cfg.get("purchased_domains", []))
+        print(f"\n  RESUMING existing pipeline: {existing_path}")
+        print(f"  Steps completed: {len(steps_done)}/{TOTAL_STEPS} — {steps_done}")
+        print(f"  Domains already claimed: {domains_claimed}")
+        print(f"  Resuming from where it left off...\n")
+        run_pipeline(existing_cfg, existing_path)
+        return
+
+    # Build new config
     config = {
         "client_name": client_name,
         "created_date": datetime.now().strftime("%Y-%m-%d"),
