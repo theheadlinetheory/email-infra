@@ -557,7 +557,7 @@ function renderDetailTable(data, trends) {
         const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
         chartHtml = `<div style="background:#0a1628;border:1px solid #0f3460;border-radius:8px;padding:16px;margin-bottom:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <div style="font-size:14px;font-weight:600;">Reply Rate Trend</div>
+                <div style="font-size:14px;font-weight:600;">Campaign Performance <span style="font-size:11px;color:#666;font-weight:400;">(7-day rolling avg)</span></div>
                 <div style="display:flex;gap:4px;" id="trend-zoom-btns">
                     <button onclick="loadTrends(7)" class="trend-zoom" data-days="7" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">7D</button>
                     <button onclick="loadTrends(14)" class="trend-zoom" data-days="14" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">14D</button>
@@ -567,11 +567,13 @@ function renderDetailTable(data, trends) {
                 </div>
             </div>
             <div style="height:200px;position:relative;"><canvas id="trend-chart"></canvas></div>
-            <div style="display:flex;gap:24px;margin-top:12px;font-size:12px;">
-                <div><span style="color:#888;">Avg Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+            <div id="trend-summary" style="display:flex;gap:16px;margin-top:12px;font-size:12px;flex-wrap:wrap;">
+                <div><span style="color:#4ecdc4;">&#9679;</span> <span style="color:#888;">Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+                <div><span style="color:#ff6b6b;">&#9679;</span> <span style="color:#888;">Bounce Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
                 <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
                 <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
-                <div><span style="color:#888;">Total Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
+                <div><span style="color:#888;">Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
+                <div><span style="color:#888;">Bounced:</span> <span style="color:#eee;">${(s.total_bounced || 0).toLocaleString()}</span></div>
                 <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
             </div>
         </div>`;
@@ -671,20 +673,48 @@ function renderTrendChart(trends) {
         return;
     }
 
+    // Update summary stats
+    const s = trends.summary || {};
+    const trendIcon = s.trend === 'up' ? '\u25B2' : s.trend === 'down' ? '\u25BC' : '\u25B6';
+    const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
+    const summaryEl = document.getElementById('trend-summary');
+    if (summaryEl) {
+        summaryEl.innerHTML = `
+            <div><span style="color:#4ecdc4;">\u25CF</span> <span style="color:#888;">Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+            <div><span style="color:#ff6b6b;">\u25CF</span> <span style="color:#888;">Bounce Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
+            <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
+            <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
+            <div><span style="color:#888;">Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
+            <div><span style="color:#888;">Bounced:</span> <span style="color:#eee;">${(s.total_bounced || 0).toLocaleString()}</span></div>
+            <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
+        `;
+    }
+
     const ctx = canvas.getContext('2d');
     trendChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: points.map(d => d.date),
             datasets: [{
-                label: 'Reply Rate %',
+                label: 'Reply Rate',
                 data: points.map(d => d.reply_rate),
                 borderColor: '#4ecdc4',
-                backgroundColor: 'rgba(78, 205, 196, 0.1)',
+                backgroundColor: 'rgba(78, 205, 196, 0.08)',
                 borderWidth: 2,
                 pointRadius: 3,
                 pointBackgroundColor: '#4ecdc4',
                 pointHoverRadius: 6,
+                fill: true,
+                tension: 0.3,
+            }, {
+                label: 'Bounce Rate',
+                data: points.map(d => d.bounce_rate),
+                borderColor: '#ff6b6b',
+                backgroundColor: 'rgba(255, 107, 107, 0.05)',
+                borderWidth: 2,
+                pointRadius: 2,
+                pointBackgroundColor: '#ff6b6b',
+                pointHoverRadius: 5,
                 fill: true,
                 tension: 0.3,
             }]
@@ -693,7 +723,12 @@ function renderTrendChart(trends) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { display: false },
+                legend: {
+                    display: true,
+                    position: 'top',
+                    align: 'end',
+                    labels: { color: '#888', boxWidth: 12, padding: 12, font: { size: 11 } }
+                },
                 tooltip: {
                     backgroundColor: '#16213e',
                     borderColor: '#0f3460',
@@ -701,13 +736,12 @@ function renderTrendChart(trends) {
                     titleColor: '#eee',
                     bodyColor: '#eee',
                     callbacks: {
-                        label: function(ctx) {
-                            const pt = points[ctx.dataIndex];
-                            return [
-                                'Reply Rate: ' + pt.reply_rate + '%',
-                                'Sent: ' + pt.sent.toLocaleString(),
-                                'Replies: ' + pt.replied,
-                            ];
+                        label: function(context) {
+                            const pt = points[context.dataIndex];
+                            if (context.datasetIndex === 0) {
+                                return 'Reply Rate: ' + pt.reply_rate + '% (' + pt.replied + '/' + pt.sent.toLocaleString() + ' sent)';
+                            }
+                            return 'Bounce Rate: ' + pt.bounce_rate + '% (' + pt.bounced + '/' + pt.sent.toLocaleString() + ' sent)';
                         }
                     }
                 }

@@ -1558,29 +1558,55 @@ def api_client_trends(client_id, days):
         day_stats = stats_data.get("data", {}).get("day_wise_stats", [])
     print(f"TRENDS: client={client_name}, campaigns={len(matched_ids)}, days_returned={len(day_stats)}")
 
-    # Build data points
-    data_points = []
+    # Build raw daily data
+    raw_days = []
     total_sent = 0
     total_replied = 0
+    total_bounced = 0
     for day in day_stats:
         metrics = day.get("email_engagement_metrics", {})
         sent = metrics.get("sent", 0)
         replied = metrics.get("replied", 0)
-        date_str = day.get("date", "")
-        reply_rate = round(replied / sent * 100, 2) if sent > 0 else None
-        data_points.append({
-            "date": date_str,
+        bounced = metrics.get("bounced", 0)
+        raw_days.append({
+            "date": day.get("date", ""),
             "sent": sent,
             "replied": replied,
-            "reply_rate": reply_rate,
+            "bounced": bounced,
         })
         total_sent += sent
         total_replied += replied
+        total_bounced += bounced
+
+    # Compute rolling 7-day rates (sum of last 7 sending days / sum of sends)
+    # This prevents spikes from low-send days getting inflated by delayed replies
+    data_points = []
+    for i, day in enumerate(raw_days):
+        if day["sent"] == 0:
+            data_points.append({**day, "reply_rate": None, "bounce_rate": None})
+            continue
+        # Look back up to 7 sending days (including current)
+        window_sent = 0
+        window_replied = 0
+        window_bounced = 0
+        sending_count = 0
+        for j in range(i, -1, -1):
+            if raw_days[j]["sent"] > 0:
+                window_sent += raw_days[j]["sent"]
+                window_replied += raw_days[j]["replied"]
+                window_bounced += raw_days[j]["bounced"]
+                sending_count += 1
+                if sending_count >= 7:
+                    break
+        reply_rate = round(window_replied / window_sent * 100, 2) if window_sent > 0 else None
+        bounce_rate = round(window_bounced / window_sent * 100, 2) if window_sent > 0 else None
+        data_points.append({**day, "reply_rate": reply_rate, "bounce_rate": bounce_rate})
 
     # Compute summary
     avg_reply_rate = round(total_replied / total_sent * 100, 2) if total_sent > 0 else 0
+    avg_bounce_rate = round(total_bounced / total_sent * 100, 2) if total_sent > 0 else 0
 
-    # Trend: last 7 days vs prior 7 days
+    # Trend: last 7 sending days vs prior 7 sending days
     sending_days = [d for d in data_points if d["sent"] > 0]
     recent_7 = sending_days[-7:] if len(sending_days) >= 7 else sending_days
     prior_7 = sending_days[-14:-7] if len(sending_days) >= 14 else []
@@ -1608,7 +1634,9 @@ def api_client_trends(client_id, days):
         "summary": {
             "total_sent": total_sent,
             "total_replied": total_replied,
+            "total_bounced": total_bounced,
             "avg_reply_rate": avg_reply_rate,
+            "avg_bounce_rate": avg_bounce_rate,
             "recent_7d_rate": recent_rate,
             "prior_7d_rate": prior_rate,
             "trend": trend,
