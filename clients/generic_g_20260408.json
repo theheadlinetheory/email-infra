@@ -1,5 +1,6 @@
 {
-  "client_name": "Lightning Lawn Care",
+  "client_name": "Generic G",
+  "original_client": "Lightning Lawn Care",
   "created_date": "2026-04-08",
   "infrastructure": {
     "daily_volume_target": 270,
@@ -11,7 +12,7 @@
     "estimated_launch_date": "2026-04-22"
   },
   "forwarding_domain": "lightninglawncare.net",
-  "status": "in_progress",
+  "status": "complete",
   "steps_completed": [
     "validate_apis",
     "claim_domains",
@@ -20,7 +21,11 @@
     "zapmail_inboxes",
     "zapmail_config",
     "profile_photos",
-    "smartlead_export"
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv",
+    "gcal_rotation"
   ],
   "zapmail_workspaces": {
     "status": 200,
