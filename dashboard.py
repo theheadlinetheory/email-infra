@@ -276,26 +276,30 @@ def assign_accounts_to_client(account_ids, client_id):
 _health_cache = {"data": None, "time": 0}
 
 def get_health_metrics(days=7):
-    """Get per-inbox health metrics with 30-second cache."""
+    """Get per-inbox health metrics with 120-second cache."""
     now = time.time()
     if _health_cache["data"] is not None and now - _health_cache["time"] < 120:
         return _health_cache["data"]
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    r = requests.get(
-        f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
-        headers=sl_internal_headers(),
-        params={"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
-        timeout=30,
-    )
-    if r.status_code != 200:
+    try:
+        r = requests.get(
+            f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
+            headers=sl_internal_headers(),
+            params={"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
+            timeout=60,
+        )
+        if r.status_code != 200:
+            return _health_cache["data"] or {}
+        data = r.json()
+        metrics = data.get("data", {}).get("email_health_metrics", [])
+        result = {m["from_email"]: m for m in metrics}
+        _health_cache["data"] = result
+        _health_cache["time"] = now
+        return result
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+        print(f"[health] Timeout/connection error fetching health metrics: {e}")
         return _health_cache["data"] or {}
-    data = r.json()
-    metrics = data.get("data", {}).get("email_health_metrics", [])
-    result = {m["from_email"]: m for m in metrics}
-    _health_cache["data"] = result
-    _health_cache["time"] = now
-    return result
 
 
 _warmup_dates_cache = {"data": None, "time": 0}
@@ -774,7 +778,14 @@ def api_overview():
             return cached
     except Exception:
         pass
-    return _compute_overview()
+    try:
+        return _compute_overview()
+    except Exception as e:
+        print(f"[api_overview] Live computation failed: {e}")
+        return {"error": "Data is still loading. The background sync will populate the cache shortly — please refresh in ~30 seconds.",
+                "clients": [], "total_accounts": 0, "in_campaign": 0,
+                "smtp_failures": 0, "imap_failures": 0, "unassigned": 0,
+                "blocked": [], "acquisition_groups": [], "generic_groups": []}
 
 
 _campaign_counts_cache = {}
@@ -817,7 +828,14 @@ def api_client_accounts(client_id):
             return cached
     except Exception:
         pass
-    return _compute_client_accounts(client_id)
+    try:
+        return _compute_client_accounts(client_id)
+    except Exception as e:
+        print(f"[api_client_accounts] Live computation failed for {client_id}: {e}")
+        return {"error": "Data is still loading — please refresh in ~30 seconds.",
+                "client_id": int(client_id), "client_name": "", "accounts": [],
+                "flagged_domains": [], "flagged_inbox_count": 0,
+                "replacement_domains_needed": 0, "replacement_inboxes": 0}
 
 
 def api_unassigned():
