@@ -1379,6 +1379,94 @@ def api_generic_groups():
 
 # --- Reply Rate Trends ---
 
+def debug_client_trends(client_id):
+    """Debug endpoint: show raw API responses for trends troubleshooting."""
+    clients = get_clients()
+    client_name = ""
+    for c in clients:
+        if c["id"] == int(client_id):
+            client_name = c["name"]
+            break
+
+    # Raw campaign list
+    try:
+        camp_resp = requests.get(
+            f"{SMARTLEAD_INTERNAL_API}/analytics/campaign-list",
+            headers=sl_internal_headers(),
+            params={"timezone": "America/New_York"},
+            timeout=30,
+        )
+        camp_status = camp_resp.status_code
+        camp_raw = camp_resp.text[:500]
+    except Exception as e:
+        camp_status = -1
+        camp_raw = str(e)
+
+    # Match campaigns
+    client_lower = client_name.lower().strip()
+    core_name = re.sub(r'\b(inc\.?|llc\.?|co\.?|ltd\.?|corp\.?|services?)\b', '', client_lower).strip().rstrip('.')
+    core_name = re.sub(r'\s+', ' ', core_name).strip()
+    first_word = core_name.split()[0] if core_name.split() else ""
+    match_candidates = [client_lower, core_name]
+    if len(first_word) >= 4 and first_word != core_name:
+        match_candidates.append(first_word)
+
+    matched = []
+    if camp_status == 200:
+        try:
+            camp_data = json.loads(camp_raw if len(camp_raw) < 500 else requests.get(
+                f"{SMARTLEAD_INTERNAL_API}/analytics/campaign-list",
+                headers=sl_internal_headers(),
+                params={"timezone": "America/New_York"},
+                timeout=30,
+            ).text)
+            all_campaigns = camp_data.get("data", {}).get("campaign_list", []) if isinstance(camp_data, dict) else camp_data
+            for camp in all_campaigns:
+                camp_name = (camp.get("name") or "").lower()
+                if "acquisition" not in camp_name and any(c in camp_name for c in match_candidates):
+                    matched.append({"id": camp["id"], "name": camp.get("name")})
+        except Exception as e:
+            matched = [{"error": str(e)}]
+
+    # Raw day-wise stats
+    matched_ids = [str(m["id"]) for m in matched if "id" in m]
+    start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    try:
+        stats_resp = requests.get(
+            f"{SMARTLEAD_INTERNAL_API}/analytics/day-wise-overall-stats",
+            headers=sl_internal_headers(),
+            params={
+                "campaign_ids": ",".join(matched_ids[:3]),
+                "start_date": start_date,
+                "end_date": end_date,
+                "timezone": "America/New_York",
+            },
+            timeout=30,
+        )
+        stats_status = stats_resp.status_code
+        stats_raw = stats_resp.text[:1000]
+    except Exception as e:
+        stats_status = -1
+        stats_raw = str(e)
+
+    return {
+        "client_id": client_id,
+        "client_name": client_name,
+        "match_candidates": match_candidates,
+        "campaign_list_status": camp_status,
+        "campaign_list_raw": camp_raw,
+        "matched_campaigns": matched[:10],
+        "stats_params": {
+            "campaign_ids": ",".join(matched_ids[:3]),
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+        "stats_status": stats_status,
+        "stats_raw": stats_raw,
+    }
+
+
 def api_client_trends(client_id, days):
     """Get day-wise reply rate trend for a client's infrastructure across all campaigns."""
     # Find client name
@@ -2073,6 +2161,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif path.startswith("/api/client/") and path.endswith("/accounts"):
                     client_id = path.split("/")[3]
                     self._json_response(api_client_accounts(client_id))
+                elif path.startswith("/api/client/") and path.endswith("/trends-debug"):
+                    client_id = path.split("/")[3]
+                    self._json_response(debug_client_trends(client_id))
                 elif path.startswith("/api/client/") and path.endswith("/trends"):
                     client_id = path.split("/")[3]
                     params = parse_qs(parsed.query)
