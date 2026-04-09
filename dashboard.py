@@ -1379,6 +1379,25 @@ def api_generic_groups():
 
 # --- Reply Rate Trends ---
 
+_campaigns_cache = {"data": None, "time": 0}
+
+def _get_all_campaigns():
+    """Fetch all campaigns with 120s cache."""
+    now = time.time()
+    if _campaigns_cache["data"] is not None and now - _campaigns_cache["time"] < 120:
+        return _campaigns_cache["data"]
+    try:
+        r = requests.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
+        campaigns = r.json() if r.status_code == 200 else []
+        if not isinstance(campaigns, list):
+            campaigns = []
+    except Exception as e:
+        print(f"TRENDS: campaigns fetch exception: {e}")
+        campaigns = []
+    _campaigns_cache["data"] = campaigns
+    _campaigns_cache["time"] = now
+    return campaigns
+
 def debug_client_trends(client_id):
     """Debug endpoint: show raw API responses for trends troubleshooting."""
     clients = get_clients()
@@ -1388,12 +1407,10 @@ def debug_client_trends(client_id):
             client_name = c["name"]
             break
 
-    # Raw campaign list
+    # Raw campaign list via public API
     try:
         camp_resp = requests.get(
-            f"{SMARTLEAD_INTERNAL_API}/analytics/campaign-list",
-            headers=sl_internal_headers(),
-            params={"timezone": "America/New_York"},
+            f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=30,
         )
         camp_status = camp_resp.status_code
@@ -1414,13 +1431,9 @@ def debug_client_trends(client_id):
     matched = []
     if camp_status == 200:
         try:
-            camp_data = json.loads(camp_raw if len(camp_raw) < 500 else requests.get(
-                f"{SMARTLEAD_INTERNAL_API}/analytics/campaign-list",
-                headers=sl_internal_headers(),
-                params={"timezone": "America/New_York"},
-                timeout=30,
-            ).text)
-            all_campaigns = camp_data.get("data", {}).get("campaign_list", []) if isinstance(camp_data, dict) else camp_data
+            all_campaigns = json.loads(camp_resp.text)
+            if not isinstance(all_campaigns, list):
+                all_campaigns = []
             for camp in all_campaigns:
                 camp_name = (camp.get("name") or "").lower()
                 if "acquisition" not in camp_name and any(c in camp_name for c in match_candidates):
@@ -1479,26 +1492,8 @@ def api_client_trends(client_id, days):
     if not client_name:
         return {"error": "Client not found", "data": [], "summary": {}}
 
-    # Get all campaigns and match by client name
-    try:
-        camp_resp = requests.get(
-            f"{SMARTLEAD_INTERNAL_API}/analytics/campaign-list",
-            headers=sl_internal_headers(),
-            params={"timezone": "America/New_York"},
-            timeout=30,
-        )
-        all_campaigns = []
-        if camp_resp.status_code == 200:
-            camp_data = camp_resp.json()
-            if isinstance(camp_data, dict):
-                all_campaigns = camp_data.get("data", {}).get("campaign_list", [])
-            elif isinstance(camp_data, list):
-                all_campaigns = camp_data
-        else:
-            print(f"TRENDS: campaign-list returned {camp_resp.status_code}: {camp_resp.text[:200]}")
-    except Exception as e:
-        print(f"TRENDS: campaign-list exception: {e}")
-        all_campaigns = []
+    # Get all campaigns via public API (cached)
+    all_campaigns = _get_all_campaigns()
 
     # Fuzzy match: campaign name contains client name (or shortened variants), exclude acquisition
     # Build match candidates: full name, name without suffixes, and progressively shorter prefixes
