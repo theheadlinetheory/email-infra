@@ -564,7 +564,7 @@ async function openDetail(clientId, clientName) {
 }
 
 function renderDetailTable(data, trends) {
-    const accounts = data.accounts;
+    const accounts = data.accounts || [];
 
     // Replacement recommendation
     let recHtml = '';
