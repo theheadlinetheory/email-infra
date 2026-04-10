@@ -2186,7 +2186,7 @@ def dns_only(csv_path):
 
 # ─── ACQUISITION MODE ───
 
-def interactive_acquisition(daily_volume=None, group_name=None):
+def interactive_acquisition(daily_volume=None, group_name=None, sender=None):
     """Interactive mode for acquisition infrastructure setup."""
     print("\n" + "="*60)
     print("  THT ACQUISITION INFRASTRUCTURE SETUP")
@@ -2223,12 +2223,15 @@ def interactive_acquisition(daily_volume=None, group_name=None):
         group_name = f"{next_letter} Group ({daily_volume}/day)"
         print(f"\n  Next group: {group_name}")
 
+    sender = sender or "aidan_hutchinson"
+    sender_label = ACQUISITION_SENDERS.get(sender, {}).get("label", "Aidan Hutchinson")
+
     print(f"\n  --- ACQUISITION INFRASTRUCTURE ---")
     print(f"  Group:                 {group_name}")
     print(f"  Daily volume target:   {infra['daily_volume_target']}")
     print(f"  Accounts needed:       {infra['accounts_needed']}")
     print(f"  Domains needed:        {infra['domains_needed']}")
-    print(f"  Sender:                Aidan Hutchinson")
+    print(f"  Sender:                {sender_label}")
     print(f"  Forwarding:            https://theheadlinetheory.com/")
 
     confirm = input(f"\n  Proceed? (y/n): ").strip().lower()
@@ -2268,6 +2271,7 @@ def interactive_acquisition(daily_volume=None, group_name=None):
         "mode": "acquisition",
         "client_name": group_name,
         "group_name": group_name,
+        "sender": sender,
         "created_date": datetime.now().strftime("%Y-%m-%d"),
         "infrastructure": infra,
         "forwarding_domain": "https://theheadlinetheory.com/",
@@ -2410,7 +2414,8 @@ if __name__ == "__main__":
         elif sys.argv[1] == "--acquisition":
             vol = int(sys.argv[2]) if len(sys.argv) >= 3 else None
             grp = sys.argv[3] if len(sys.argv) >= 4 else None
-            interactive_acquisition(daily_volume=vol, group_name=grp)
+            sndr = sys.argv[4] if len(sys.argv) >= 5 else None
+            interactive_acquisition(daily_volume=vol, group_name=grp, sender=sndr)
         else:
             print("Usage:")
             print("  python3 setup.py                                              # Interactive — full pipeline")
