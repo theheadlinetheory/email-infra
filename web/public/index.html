@@ -572,7 +572,33 @@ async function openDetail(clientId, clientName) {
         const [accountsResult, trends] = await Promise.all([
             sb.from('state').select('data,updated_at').eq('key', 'cache:client_accounts_' + clientId).single().then(({data: row}) => {
                 if (row) { const d = JSON.parse(row.data); d._cached = true; d._synced_at = row.updated_at; return d; }
-                return edgeFetch('/smartlead-proxy?action=all-accounts');
+                // No cache — build from all-accounts filtered by client
+                return edgeFetch('/smartlead-proxy?action=all-accounts').then(allAccounts => {
+                    const arr = Array.isArray(allAccounts) ? allAccounts : [];
+                    const clAccounts = arr.filter(a => a.client_id == clientId);
+                    return {
+                        client_id: clientId,
+                        client_name: clientName,
+                        accounts: clAccounts.map(a => {
+                            const wd = a.warmup_details || {};
+                            const email = a.from_email || '';
+                            return {
+                                id: a.id, email, domain: email.split('@').pop() || '',
+                                warmup_status: wd.status || 'UNKNOWN',
+                                warmup_sent: wd.total_sent_count || 0,
+                                warmup_spam: wd.total_spam_count || 0,
+                                warmup_reputation: wd.warmup_reputation ?? '?',
+                                campaign_count: a.campaign_count || 0,
+                                smtp_ok: a.is_smtp_success || false,
+                                imap_ok: a.is_imap_success || false,
+                                health_score: 100, health_flags: [],
+                                warmup_days: null,
+                            };
+                        }),
+                        flagged_domains: [],
+                        flagged_inbox_count: 0,
+                    };
+                });
             }),
             edgeFetch('/smartlead-proxy?action=trends&client_id=' + clientId + '&days=30'),
         ]);
