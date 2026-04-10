@@ -1016,14 +1016,7 @@ function renderAcquisitionGroups(groups) {
                 <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ff6b6b' : g.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4'}">${g.avg_bounce_rate}%</span></div>
                 <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#4ecdc4' : g.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b'}">${g.avg_reply_rate}%</span></div>
             </div>
-            <div style="margin-top:10px;">
-                <div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;">
-                    <span>Warmup Progress</span><span>${progressPct}%</span>
-                </div>
-                <div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;">
-                    <div style="background:${isReady ? '#4ecdc4' : '#7c4dff'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
-                </div>
-            </div>
+            ${!isReady ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + progressPct + '%</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + progressPct + '%;border-radius:4px;transition:width 0.3s;"></div></div></div>' : ''}
         </div>`;
     }).join('');
 }
