@@ -87,8 +87,201 @@ Deno.serve(async (req) => {
       return jsonResponse({ accounts: unassigned, count: unassigned.length });
     }
 
+    if (action === "generic-groups") {
+      const [clients, accounts] = await Promise.all([
+        slGetClients() as Promise<Array<Record<string, unknown>>>,
+        slGetAllAccounts() as Promise<Array<Record<string, unknown>>>,
+      ]);
+
+      // Fetch health metrics
+      const now = new Date();
+      const end = now.toISOString().slice(0, 10);
+      const start = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+      let healthData: Record<string, Record<string, unknown>> = {};
+      try {
+        const hResp = (await slInternalGet(
+          `/analytics/mailbox/name-wise-health-metrics?start_date=${start}&end_date=${end}&timezone=America/New_York&full_data=true`,
+        )) as Record<string, unknown>;
+        const metrics = ((hResp?.data as Record<string, unknown>)?.email_health_metrics as Array<Record<string, unknown>>) || [];
+        for (const m of metrics) healthData[m.from_email as string] = m;
+      } catch { /* no health data */ }
+
+      const genericClients = clients
+        .filter((c) => ((c.name as string) || "").toLowerCase().startsWith("generic"))
+        .sort((a, b) => ((a.name as string) || "").localeCompare((b.name as string) || ""));
+
+      // Load pipelines from Supabase for pipeline IDs
+      let allPipelines: Array<Record<string, unknown>> = [];
+      try {
+        const pResp = await fetch(
+          `${Deno.env.get("SUPABASE_URL")}/rest/v1/pipelines?select=data`,
+          {
+            headers: {
+              apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+              Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""}`,
+            },
+          },
+        );
+        const rows = (await pResp.json()) as Array<Record<string, unknown>>;
+        allPipelines = rows.map((r) => typeof r.data === "string" ? JSON.parse(r.data) : r.data);
+      } catch { /* no pipelines */ }
+
+      const groups: Array<Record<string, unknown>> = [];
+      let totalAccounts = 0;
+      let totalCapacity = 0;
+
+      for (const cl of genericClients) {
+        const clAccounts = accounts.filter((a) => a.client_id === cl.id);
+        if (!clAccounts.length) continue;
+
+        totalAccounts += clAccounts.length;
+        const domains = new Set<string>();
+        let smtpFail = 0;
+        let dailyCap = 0;
+        const warmupDates: string[] = [];
+        const healthScores: number[] = [];
+
+        for (const acc of clAccounts) {
+          const email = (acc.from_email as string) || "";
+          const domain = email.split("@").pop() || "";
+          if (domain) domains.add(domain);
+          dailyCap += (acc.message_per_day as number) || 0;
+          if (!acc.is_smtp_success) smtpFail++;
+
+          // Warmup start date from warmup_details
+          const wd = (acc.warmup_details as Record<string, unknown>) || {};
+          const warmupCreated = (wd.warmup_created_at as string) || "";
+          if (warmupCreated) warmupDates.push(warmupCreated.slice(0, 10));
+
+          // Health score
+          const repRaw = wd.warmup_reputation;
+          let repScore = 100;
+          if (repRaw !== undefined && repRaw !== "?") {
+            const rep = typeof repRaw === "number" ? repRaw : parseFloat(String(repRaw));
+            if (!isNaN(rep)) {
+              if (rep >= 99) repScore = 100;
+              else if (rep <= 95) repScore = 0;
+              else repScore = ((rep - 95) / 4) * 100;
+            }
+          }
+          healthScores.push(Math.round(repScore));
+        }
+
+        totalCapacity += dailyCap;
+        const avgHealth = healthScores.length ? Math.round(healthScores.reduce((a, b) => a + b, 0) / healthScores.length) : 100;
+
+        // Calculate warmup progress
+        const earliestWarmup = warmupDates.length ? warmupDates.sort()[0] : null;
+        let daysWarming = 0;
+        let daysLeft = 0;
+        let readyDateStr = "";
+        let warmupStartStr = "";
+        let status = "warming";
+
+        if (earliestWarmup) {
+          const ws = new Date(earliestWarmup);
+          warmupStartStr = `${ws.getMonth() + 1}/${ws.getDate()}`;
+          daysWarming = Math.floor((now.getTime() - ws.getTime()) / 86400000);
+          const ready = new Date(ws.getTime() + 14 * 86400000);
+          readyDateStr = `${ready.getMonth() + 1}/${ready.getDate()}`;
+          daysLeft = Math.max(0, Math.ceil((ready.getTime() - now.getTime()) / 86400000));
+          if (daysLeft <= 0) status = "ready";
+        }
+
+        // Find matching pipeline
+        let pipelineId = "";
+        const clNameLower = ((cl.name as string) || "").toLowerCase().trim();
+        for (const p of allPipelines) {
+          if (((p.client_name as string) || "").toLowerCase().trim() === clNameLower) {
+            pipelineId = (p.id as string) || "";
+            break;
+          }
+        }
+
+        groups.push({
+          name: cl.name,
+          client_id: cl.id,
+          pipeline_id: pipelineId,
+          accounts: clAccounts.length,
+          domains: domains.size,
+          daily_capacity: dailyCap,
+          smtp_failures: smtpFail,
+          health_score: avgHealth,
+          warmup_start: warmupStartStr,
+          ready_date: readyDateStr,
+          days_warming: daysWarming,
+          days_left: daysLeft,
+          status,
+        });
+      }
+
+      return jsonResponse({
+        groups,
+        total_accounts: totalAccounts,
+        total_daily_capacity: totalCapacity,
+        generated_at: now.toISOString(),
+      });
+    }
+
+    if (action === "acquisition") {
+      const [clients, accounts] = await Promise.all([
+        slGetClients() as Promise<Array<Record<string, unknown>>>,
+        slGetAllAccounts() as Promise<Array<Record<string, unknown>>>,
+      ]);
+
+      // Find acquisition group clients (e.g. "A Group (250/day)")
+      const groupClients = clients
+        .filter((c) => {
+          const name = (c.name as string) || "";
+          const nl = name.toLowerCase();
+          return nl.includes("group") && (name.includes("/") || nl.includes("day"));
+        })
+        .sort((a, b) => ((a.name as string) || "").localeCompare((b.name as string) || ""));
+
+      const groups: Array<Record<string, unknown>> = [];
+      let totalAccounts = 0;
+
+      for (const cl of groupClients) {
+        const clAccounts = accounts.filter((a) => a.client_id === cl.id);
+        if (!clAccounts.length) continue;
+
+        totalAccounts += clAccounts.length;
+        let warming = 0;
+        let inCampaign = 0;
+        let smtpFail = 0;
+        const allDomains = new Set<string>();
+
+        for (const acc of clAccounts) {
+          const email = (acc.from_email as string) || "";
+          const domain = email.split("@").pop() || "";
+          if (domain) allDomains.add(domain);
+          const wd = (acc.warmup_details as Record<string, unknown>) || {};
+          if (wd.status === "ACTIVE") warming++;
+          if ((acc.campaign_count as number) > 0) inCampaign++;
+          if (!acc.is_smtp_success) smtpFail++;
+        }
+
+        groups.push({
+          id: cl.id,
+          name: cl.name,
+          accounts: clAccounts.length,
+          warming,
+          in_campaign: inCampaign,
+          smtp_failures: smtpFail,
+          total_domains: allDomains.size,
+        });
+      }
+
+      return jsonResponse({
+        groups,
+        total_accounts: totalAccounts,
+        total_groups: groups.length,
+        generated_at: new Date().toISOString(),
+      });
+    }
+
     return errorResponse(
-      "Unknown action. Valid: clients, clients-list, all-accounts, tags, inbox-campaigns, trends, health-metrics, unassigned",
+      "Unknown action. Valid: clients, clients-list, all-accounts, tags, inbox-campaigns, trends, health-metrics, unassigned, generic-groups, acquisition",
       400,
     );
   } catch (e) {
