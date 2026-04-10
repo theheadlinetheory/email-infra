@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     if (action === "inbox-campaigns") {
       const email = url.searchParams.get("email");
       if (!email) return errorResponse("email required");
-      const campaigns = (await slGet("/campaigns/")) as Array<Record<string, unknown>>;
+      const campaigns = (await slGet("/campaigns")) as Array<Record<string, unknown>>;
       const results: Array<Record<string, unknown>> = [];
       for (const camp of campaigns) {
         if (!["ACTIVE", "PAUSED"].includes(camp.status as string)) continue;
@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
       const clientId = url.searchParams.get("client_id");
       const days = parseInt(url.searchParams.get("days") || "30");
       if (!clientId) return errorResponse("client_id required");
-      const campaigns = (await slGet("/campaigns/", { client_id: clientId })) as Array<Record<string, unknown>>;
+      const campaigns = (await slGet("/campaigns", { client_id: clientId })) as Array<Record<string, unknown>>;
       const trends: Array<Record<string, unknown>> = [];
       for (const camp of campaigns) {
         try {

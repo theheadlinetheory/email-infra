@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
     if (action === "remove-from-all-campaigns") {
       const { email_account_id, from_email } = body;
       if (!email_account_id && !from_email) return errorResponse("email_account_id or from_email required");
-      const campaigns = (await slGet("/campaigns/")) as Array<Record<string, unknown>>;
+      const campaigns = (await slGet("/campaigns")) as Array<Record<string, unknown>>;
       const removed: string[] = [];
       for (const camp of campaigns) {
         if (!["ACTIVE", "PAUSED"].includes(camp.status as string)) continue;

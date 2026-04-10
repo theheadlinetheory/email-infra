@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
         const clients = (await slGetClients()) as Array<Record<string, unknown>>;
         let client = clients.find((c) => (c.name as string)?.toLowerCase() === client_name.toLowerCase());
         if (!client) {
-          const created = await slPost("/clients/", { name: client_name });
+          const created = await slPost("/client", { name: client_name });
           client = created as Record<string, unknown>;
           await writeEvent(sb, jobId, 1, "done", `Created new SmartLead client: ${client_name}`);
         } else {

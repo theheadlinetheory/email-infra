@@ -13,7 +13,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === "wallet") {
-      return jsonResponse(await zmGet("/v2/wallet"));
+      return jsonResponse(await zmGet("/v2/wallet/balance"));
     }
 
     if (action === "subscriptions") {
@@ -21,11 +21,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === "placement-tests") {
-      const [eligible, credits] = await Promise.all([
-        zmGet("/v2/placement/eligible-mailboxes"),
-        zmGet("/v2/placement/credits"),
+      const [eligible, credits, orders] = await Promise.all([
+        zmGet("/v2/placement-test/mailboxes/eligible"),
+        zmGet("/v2/placement-test/credits/available"),
+        zmGet("/v2/placement-test/orders"),
       ]);
-      return jsonResponse({ eligible, credits });
+      return jsonResponse({ eligible, credits, orders });
     }
 
     if (action === "cancel") {

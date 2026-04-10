@@ -124,7 +124,7 @@ Deno.serve(async (_req) => {
     // Fetch campaign counts
     const campaignCounts: Record<string, number> = {};
     try {
-      const campaigns = (await slGet("/campaigns/")) as Array<Record<string, unknown>>;
+      const campaigns = (await slGet("/campaigns")) as Array<Record<string, unknown>>;
       for (const camp of campaigns) {
         if (!["ACTIVE", "PAUSED"].includes(camp.status as string)) continue;
         try {

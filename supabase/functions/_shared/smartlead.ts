@@ -63,7 +63,7 @@ export async function slGetAllAccounts(): Promise<unknown[]> {
 }
 
 export async function slGetClients(): Promise<unknown[]> {
-  const data = await slGet("/clients/");
+  const data = await slGet("/client");
   return Array.isArray(data) ? data : [];
 }
 
