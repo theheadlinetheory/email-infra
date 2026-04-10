@@ -1,0 +1,2093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>THT Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%234ecdc4'/><text x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='14' fill='%231a1a2e'>THT</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+
+.topbar { background: #16213e; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460; }
+.topbar h1 { font-size: 20px; font-weight: 600; }
+.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: #888; }
+.topbar-right button { background: #0f3460; color: #eee; border: 1px solid #1a5276; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.topbar-right button:hover { background: #1a5276; }
+
+.container { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+
+.alert-banner { background: #5c1a1a; border: 1px solid #8b3a3a; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
+.alert-banner h3 { color: #ff6b6b; font-size: 14px; margin-bottom: 8px; }
+.alert-banner .alert-item { font-size: 13px; color: #ffaaaa; padding: 2px 0; }
+
+.summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; text-align: center; }
+.stat-card .value { font-size: 28px; font-weight: 700; }
+.stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
+.stat-card.alert .value { color: #ff6b6b; }
+.stat-card.good .value { color: #4ecdc4; }
+.stat-card.warn .value { color: #ffd93d; }
+
+h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 0 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+.clients-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.client-card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 16px; cursor: pointer; transition: border-color 0.2s, transform 0.1s; }
+.client-card:hover { border-color: #1a5276; transform: translateY(-1px); }
+.client-card.has-alert { border-left: 3px solid #ff6b6b; }
+.client-card .cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.client-card .cc-name { font-size: 16px; font-weight: 600; }
+.client-card .cc-count { font-size: 13px; color: #888; }
+.client-card .cc-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 13px; }
+.client-card .cc-stat { display: flex; justify-content: space-between; padding: 3px 0; }
+.client-card .cc-stat .label { color: #888; }
+.client-card .cc-dates { margin-top: 10px; padding-top: 10px; border-top: 1px solid #0f3460; font-size: 12px; color: #888; }
+.client-card .cc-dates .date-row { display: flex; justify-content: space-between; padding: 2px 0; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-green { background: #1a4a3a; color: #4ecdc4; }
+.badge-yellow { background: #4a3a1a; color: #ffd93d; }
+.badge-red { background: #4a1a1a; color: #ff6b6b; }
+
+.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; }
+.detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 900px; max-width: 95vw; background: #16213e; z-index: 101; overflow-y: auto; padding: 24px; border-left: 1px solid #0f3460; }
+.detail-panel .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; }
+.detail-panel h2 { font-size: 20px; margin-bottom: 16px; }
+.detail-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.detail-panel th { text-align: left; padding: 8px; color: #888; border-bottom: 1px solid #0f3460; font-weight: 500; }
+.detail-panel td { padding: 8px; border-bottom: 1px solid #0a1628; }
+.detail-panel tr:hover td { background: #1a2744; }
+
+.unassigned-section { margin-top: 32px; }
+.assign-controls { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+.assign-controls select { background: #0a1628; color: #eee; border: 1px solid #0f3460; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.assign-controls button { background: #0f3460; color: #eee; border: 1px solid #1a5276; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.assign-controls button:hover { background: #1a5276; }
+.assign-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.unassigned-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.unassigned-table th { text-align: left; padding: 8px; color: #888; border-bottom: 1px solid #0f3460; }
+.unassigned-table td { padding: 8px; border-bottom: 1px solid #0a1628; }
+.unassigned-table tr:hover td { background: #1a2744; }
+.unassigned-table input[type="checkbox"] { accent-color: #4ecdc4; }
+
+.loading { text-align: center; padding: 60px; color: #888; font-size: 16px; }
+.loading .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid #333; border-top-color: #4ecdc4; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 12px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid #0f3460; }
+.tab { padding: 10px 24px; cursor: pointer; color: #888; font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; transition: color 0.2s, border-color 0.2s; }
+.tab:hover { color: #ccc; }
+.tab.active { color: #4ecdc4; border-bottom-color: #4ecdc4; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+.zm-client-card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+.zm-client-card.has-renewal { border-left: 3px solid #ff6b6b; }
+.zm-client-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: pointer; }
+.zm-client-header h3 { font-size: 16px; font-weight: 600; }
+.zm-client-header .zm-meta { font-size: 13px; color: #888; }
+.zm-domain-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.zm-domain-table th { text-align: left; padding: 6px 8px; color: #888; border-bottom: 1px solid #0f3460; }
+.zm-domain-table td { padding: 6px 8px; border-bottom: 1px solid #0a1628; }
+.zm-domain-table tr:hover td { background: #1a2744; }
+.zm-domain-table input[type="checkbox"] { accent-color: #ff6b6b; }
+
+.cancel-controls { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+.cancel-btn { background: #5c1a1a; color: #ff6b6b; border: 1px solid #8b3a3a; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.cancel-btn:hover { background: #8b3a3a; }
+.cancel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sync-section { margin-top: 24px; }
+.sync-item { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; font-size: 13px; }
+.sync-item .mismatch { color: #ffd93d; }
+.sync-item .domain { color: #4ecdc4; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <h1>THT Dashboard</h1>
+    <div class="topbar-right">
+        <span id="wallet-balance" style="color:#4ecdc4;font-weight:600;"></span>
+        <span id="pipeline-badge" style="display:none;background:#7c4dff;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;"></span>
+        <span id="last-updated"></span>
+        <button onclick="loadOverview()">Refresh</button>
+    </div>
+</div>
+
+<div class="container">
+    <div id="loading" class="loading">
+        <span class="spinner"></span> Loading infrastructure data...
+    </div>
+
+    <div id="content" style="display:none;">
+        <div id="alert-banner"></div>
+
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('smartlead')">SmartLead</div>
+            <div class="tab" onclick="switchTab('zapmail')">ZapMail</div>
+            <div class="tab" onclick="switchTab('domains')">Domains</div>
+            <div class="tab" onclick="switchTab('pipelines')">Pipelines</div>
+            <div class="tab" onclick="switchTab('sync')">Sync Check</div>
+        </div>
+
+        <!-- SmartLead Tab -->
+        <div id="tab-smartlead" class="tab-content active">
+            <div style="display:flex;gap:12px;margin-bottom:16px;">
+                <button onclick="showNewClientForm()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;">+ New Client Setup</button>
+                <span id="inventory-alert" style="display:none;color:#ffd93d;font-size:13px;padding:10px 0;"></span>
+            </div>
+            <div class="summary-row" id="summary-row"></div>
+
+            <h2 class="section-title">Clients</h2>
+            <div class="clients-grid" id="clients-grid"></div>
+
+            <div id="generic-section" style="display:none;margin-top:24px;">
+                <h2 class="section-title">Generic Groups</h2>
+                <div class="summary-row" id="generic-stats"></div>
+                <div class="clients-grid" id="generic-grid"></div>
+            </div>
+
+            <div id="acquisition-section" style="display:none;margin-top:24px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <h2 class="section-title" style="margin:0;">Acquisition Groups</h2>
+                    <button onclick="showNewAcquisitionForm()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">+ New Acquisition Group</button>
+                </div>
+                <div class="summary-row" id="acquisition-stats"></div>
+                <div class="clients-grid" id="acquisition-grid"></div>
+            </div>
+
+            <div class="unassigned-section" id="unassigned-section" style="display:none;">
+                <h2 class="section-title">Unassigned Accounts</h2>
+                <div class="assign-controls">
+                    <select id="assign-client-select">
+                        <option value="">-- Assign to client --</option>
+                    </select>
+                    <button id="assign-btn" onclick="assignSelected()" disabled>Assign Selected</button>
+                    <span id="assign-status"></span>
+                </div>
+                <table class="unassigned-table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all" onchange="toggleSelectAll()"></th>
+                            <th>Email</th>
+                            <th>Domain</th>
+                            <th>Warmup</th>
+                            <th>Reputation</th>
+                            <th>SMTP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="unassigned-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ZapMail Tab -->
+        <div id="tab-zapmail" class="tab-content">
+            <div class="summary-row" id="zm-summary-row"></div>
+            <div id="zm-clients"></div>
+        </div>
+
+        <!-- Domains Tab -->
+        <div id="tab-domains" class="tab-content">
+            <div class="summary-row" id="dom-summary-row"></div>
+            <div id="dom-alerts"></div>
+            <div id="dom-content"></div>
+        </div>
+
+        <!-- Pipelines Tab -->
+        <div id="tab-pipelines" class="tab-content">
+            <div id="pipelines-loading" class="loading" style="display:none;">
+                <span class="spinner"></span> Loading pipelines...
+            </div>
+            <div id="pipelines-content"></div>
+        </div>
+
+        <!-- Sync Tab -->
+        <div id="tab-sync" class="tab-content">
+            <div id="sync-loading" class="loading" style="display:none;">
+                <span class="spinner"></span> Checking sync between ZapMail and SmartLead...
+            </div>
+            <div id="sync-content"></div>
+        </div>
+    </div>
+</div>
+
+<div id="new-client-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeNewClientForm()"></div>
+<div id="new-client-form" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:500px;max-width:90vw;">
+    <h2 style="margin-bottom:20px;">New Client Setup</h2>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Client Name</label>
+        <input id="nc-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Number of Domains</label>
+        <input id="nc-domain-count" type="number" min="1" max="50" value="5" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div id="nc-forwarding-section" style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding URL</label>
+        <input id="nc-forwarding" type="text" placeholder="https://..." style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#888;cursor:pointer;">
+            <input id="nc-generic" type="checkbox" onchange="toggleGenericMode()" style="accent-color:#4ecdc4;">
+            Generic (no forwarding URL — set later when client signs)
+        </label>
+    </div>
+    <div id="nc-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
+    <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="closeNewClientForm()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+        <button id="nc-start-btn" onclick="startNewClientPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
+    </div>
+    <div id="nc-status" style="margin-top:12px;font-size:13px;"></div>
+</div>
+
+<div id="new-acq-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeNewAcquisitionForm()"></div>
+<div id="new-acq-form" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:500px;max-width:90vw;">
+    <h2 style="margin-bottom:20px;">New Acquisition Group</h2>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Group Name</label>
+        <input id="acq-group-name" type="text" placeholder='e.g. "H Group (250/day)"' style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Daily Sending Volume</label>
+        <input id="acq-daily-volume" type="number" min="15" max="5000" value="250" onchange="updateAcqMath()" oninput="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Sender</label>
+        <select id="acq-sender" onchange="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+            <option value="aidan_hutchinson">Aidan Hutchinson (aidan / aidan.h / aidanhutch)</option>
+            <option value="lars_matthys">Lars Matthys (lars / lars.m / larsmatthys)</option>
+        </select>
+    </div>
+    <div id="acq-math" style="font-size:13px;color:#888;margin-bottom:12px;padding:10px;background:#0a1628;border-radius:6px;"></div>
+    <div id="acq-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
+    <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="closeNewAcquisitionForm()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+        <button id="acq-start-btn" onclick="startNewAcquisitionPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
+    </div>
+    <div id="acq-status" style="margin-top:12px;font-size:13px;"></div>
+</div>
+
+<div id="assign-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeAssignModal()"></div>
+<div id="assign-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+    <div id="assign-form">
+        <h2 style="margin-bottom:20px;">Assign to Client</h2>
+        <input type="hidden" id="ac-pipeline-id">
+        <div style="margin-bottom:4px;font-size:13px;color:#888;" id="ac-group-label"></div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Client</label>
+            <select id="ac-client-select" onchange="onClientSelectChange()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+                <option value="">Select a client...</option>
+            </select>
+        </div>
+        <div id="ac-new-client-row" style="display:none;margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client Name</label>
+            <input id="ac-new-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkAssignReady()">
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding Domain</label>
+            <input id="ac-forwarding" type="text" placeholder="clientwebsite.com" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkAssignReady()">
+        </div>
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <button onclick="closeAssignModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+            <button id="ac-assign-btn" onclick="startAssignment()" disabled style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Assign</button>
+        </div>
+    </div>
+    <div id="assign-progress" style="display:none;">
+        <h2 style="margin-bottom:20px;">Assigning to <span id="ac-progress-client"></span></h2>
+        <div id="ac-steps"></div>
+        <div id="ac-result" style="margin-top:16px;display:none;"></div>
+    </div>
+</div>
+
+<div id="delete-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeDeleteModal()"></div>
+<div id="delete-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+    <div id="delete-confirm">
+        <h2 style="margin-bottom:16px;color:#ff6b6b;">Delete Infrastructure</h2>
+        <input type="hidden" id="del-client-id">
+        <input type="hidden" id="del-client-name">
+        <div id="del-step1" style="margin-bottom:16px;">
+            <p style="font-size:14px;margin-bottom:12px;">This will permanently delete all infrastructure for <strong id="del-client-label"></strong>:</p>
+            <ul style="font-size:13px;color:#ffaaaa;margin-left:20px;line-height:1.8;">
+                <li>Remove all accounts from active campaigns</li>
+                <li>Delete all SmartLead email accounts</li>
+                <li>Cancel all Zapmail domains</li>
+                <li>Mark domains as cancelled in Google Sheet</li>
+                <li>Delete the SmartLead client</li>
+            </ul>
+            <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
+                <button onclick="closeDeleteModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+                <button onclick="showDeleteStep2()" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;">Yes, Delete Everything</button>
+            </div>
+        </div>
+        <div id="del-step2" style="display:none;">
+            <div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:16px;margin-bottom:16px;">
+                <p style="font-size:14px;color:#ff6b6b;font-weight:600;margin-bottom:8px;">Are you absolutely sure?</p>
+                <p style="font-size:13px;color:#ffaaaa;">Type the client name to confirm: <strong id="del-confirm-name"></strong></p>
+                <input id="del-confirm-input" type="text" style="width:100%;margin-top:8px;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #8b3a3a;border-radius:6px;font-size:14px;" oninput="checkDeleteConfirm()">
+            </div>
+            <div style="display:flex;gap:12px;justify-content:flex-end;">
+                <button onclick="closeDeleteModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+                <button id="del-final-btn" onclick="startDeletion()" disabled style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Permanently Delete</button>
+            </div>
+        </div>
+    </div>
+    <div id="delete-progress" style="display:none;">
+        <h2 style="margin-bottom:20px;color:#ff6b6b;">Deleting <span id="del-progress-client"></span></h2>
+        <div id="del-steps"></div>
+        <div id="del-result" style="margin-top:16px;display:none;"></div>
+    </div>
+</div>
+
+<div id="transition-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeTransitionModal()"></div>
+<div id="transition-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+    <div id="transition-form">
+        <h2 style="margin-bottom:20px;">Transition Infrastructure</h2>
+        <input type="hidden" id="tr-client-id">
+        <input type="hidden" id="tr-client-name">
+        <div style="margin-bottom:4px;font-size:13px;color:#888;" id="tr-source-label"></div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client</label>
+            <select id="tr-client-select" onchange="onTransitionClientChange()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+                <option value="">Select a client...</option>
+            </select>
+        </div>
+        <div id="tr-new-client-row" style="display:none;margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client Name</label>
+            <input id="tr-new-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkTransitionReady()">
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding Domain</label>
+            <input id="tr-forwarding" type="text" placeholder="clientwebsite.com" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkTransitionReady()">
+        </div>
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+            <button onclick="closeTransitionModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+            <button id="tr-start-btn" onclick="startTransition()" disabled style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Transition</button>
+        </div>
+    </div>
+    <div id="transition-progress" style="display:none;">
+        <h2 style="margin-bottom:20px;">Transitioning to <span id="tr-progress-client"></span></h2>
+        <div id="tr-steps"></div>
+        <div id="tr-result" style="margin-top:16px;display:none;"></div>
+    </div>
+</div>
+
+<div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
+<div class="detail-panel" id="detail-panel" style="display:none;">
+    <button class="close-btn" onclick="closeDetail()">&times;</button>
+    <h2 id="detail-title"></h2>
+    <div id="detail-content"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = 'https://ghjmqpnqljgwykpjkvzy.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdoam1xcG5xbGpnd3lrcGprdnp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDg5NTQsImV4cCI6MjA5MTE4NDk1NH0.VHSaoQzLxYD-1X7dx5Nfts2skCw-0-4NQlY_CVen5H8';
+  const EDGE_BASE = SUPABASE_URL + '/functions/v1';
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // Helper for Edge Function calls
+  async function edgeFetch(path, options = {}) {
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      ...(options.headers || {}),
+    };
+    const resp = await fetch(EDGE_BASE + path, { ...options, headers });
+    return resp.json();
+  }
+</script>
+<script>
+let overviewData = null;
+let clientsList = [];
+
+async function loadOverview() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('content').style.display = 'none';
+
+    try {
+        const { data: row, error } = await sb.from('state').select('data,updated_at').eq('key', 'cache:overview').single();
+        if (error || !row) {
+            document.getElementById('loading').innerHTML = 'Cache not ready — the background sync will populate data shortly. Refresh in ~30 seconds.';
+            return;
+        }
+        overviewData = JSON.parse(row.data);
+        overviewData._cached = true;
+        overviewData._synced_at = row.updated_at;
+        if (overviewData.error) {
+            document.getElementById('loading').innerHTML = '<div style="text-align:left;max-width:800px;margin:0 auto;"><h3 style="color:#ff6b6b;">API Error</h3><pre style="white-space:pre-wrap;color:#ffaaaa;font-size:12px;">' + overviewData.traceback + '</pre></div>';
+            return;
+        }
+        renderOverview();
+        loadUnassigned();
+        loadGenericGroups();
+        loadAcquisition();
+    } catch (err) {
+        document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
+    }
+}
+
+function renderOverview() {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+
+    const d = overviewData;
+    const time = new Date(d.generated_at).toLocaleTimeString();
+    document.getElementById('last-updated').textContent = 'Updated: ' + time;
+
+    // Alert banner
+    const alertEl = document.getElementById('alert-banner');
+    const attentionClients = d.clients.filter(c => c.needs_attention);
+    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0) {
+        let html = '<div class="alert-banner"><h3>Alerts</h3>';
+        if (d.idle_inboxes > 0) {
+            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:#ffd93d;">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
+        }
+        if (attentionClients.length > 0) {
+            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;">' + attentionClients.length + ' client(s) have infrastructure that needs attention</div>';
+            attentionClients.forEach(c => {
+                html += '<div class="alert-item" style="padding-left:16px;">' + c.name + ' — ' + c.flagged_domains + '/' + c.total_domains + ' domains flagged (health score: ' + c.health_score + ')</div>';
+            });
+        }
+        if (d.smtp_failures > 0) html += '<div class="alert-item">' + d.smtp_failures + ' accounts with SMTP failures</div>';
+        if (d.imap_failures > 0) html += '<div class="alert-item">' + d.imap_failures + ' accounts with IMAP failures</div>';
+        const grouped = {};
+        d.blocked_accounts.forEach(b => {
+            const short = b.reason.split(':')[0] || 'Unknown';
+            if (!grouped[short]) grouped[short] = [];
+            grouped[short].push(b.email.split('@')[1]);
+        });
+        for (const [reason, domains] of Object.entries(grouped)) {
+            const unique = [...new Set(domains)];
+            html += '<div class="alert-item">' + unique.length + ' domain(s) blocked — ' + reason + ': ' + unique.join(', ') + '</div>';
+        }
+        html += '</div>';
+        alertEl.innerHTML = html;
+    } else {
+        alertEl.innerHTML = '';
+    }
+
+    // Summary stats
+    const summaryEl = document.getElementById('summary-row');
+    // Compute overall avg bounce/reply from all clients
+    const allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
+    const allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
+    const overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
+    const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
+    const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
+    const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
+
+    summaryEl.innerHTML = `
+        <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
+        <div class="stat-card ${d.warming > 0 ? 'warn' : 'good'}"><div class="value">${d.warming}</div><div class="label">In Warmup (14d)</div></div>
+        <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
+        <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
+        <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
+        <div class="stat-card ${d.smtp_failures > 0 ? 'alert' : 'good'}"><div class="value">${d.smtp_failures}</div><div class="label">SMTP Failures</div></div>
+    `;
+
+    // Client cards
+    const pausedClients = d.paused_clients || [];
+    const gridEl = document.getElementById('clients-grid');
+    clientsList = d.clients;
+    gridEl.innerHTML = d.clients.map(cl => {
+        const isPaused = pausedClients.includes(cl.name);
+        const hasAlert = cl.smtp_failures > 0 || cl.blocked > 0;
+        const readyBadge = cl.days_until_ready !== null
+            ? (cl.days_until_ready <= 0
+                ? '<span class="badge badge-green">Ready</span>'
+                : '<span class="badge badge-yellow">' + cl.days_until_ready + 'd left</span>')
+            : '';
+        const rotBadge = cl.days_until_rotation !== null && cl.days_until_rotation <= 7
+            ? '<span class="badge badge-red">Rotate soon</span>'
+            : '';
+
+        const healthColor = cl.health_score >= 85 ? '#4ecdc4' : cl.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthBg = cl.health_score >= 85 ? '#1a4a3a' : cl.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+
+        return `
+        <div class="client-card ${hasAlert || cl.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${cl.id}, '${cl.name.replace(/'/g, "\\'")}')">
+            <div class="cc-header">
+                <span class="cc-name">${cl.name}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${cl.health_score}</span>
+                    <span class="cc-count">${cl.accounts} accounts</span>
+                </div>
+            </div>
+            ${cl.needs_attention ? '<div style="background:#4a1a1a;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ff6b6b;">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">Healthy</span><span style="color:#4ecdc4">${cl.healthy_inboxes}</span></div>
+                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.blocked}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ff6b6b' : cl.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4') : '#888'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? '#4ecdc4' : cl.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b') : '#888'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
+            </div>
+            <div style="margin-top:8px;padding:8px 10px;background:#0a1628;border-radius:6px;font-size:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:#888;">Target Volume</span>
+                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
+                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:#16213e;color:#eee;border:1px solid #0f3460;border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
+                        <span style="color:#888;">/day</span>
+                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
+                    </div>
+                </div>
+                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? '#4ecdc4' : '#ff6b6b') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
+            ${cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : ''}
+            <div class="cc-dates">
+                ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
+                ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
+                ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #0f3460;text-align:right;">
+                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? '#4a3a1a' : '#0a1628'};color:${isPaused ? '#ffd93d' : '#888'};border:1px solid ${isPaused ? '#8b7a3a' : '#0f3460'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Populate assign dropdown
+    const select = document.getElementById('assign-client-select');
+    const currentVal = select.value;
+    select.innerHTML = '<option value="">-- Assign to client --</option>';
+    d.clients.forEach(cl => {
+        select.innerHTML += `<option value="${cl.id}">${cl.name}</option>`;
+    });
+    select.value = currentVal;
+}
+
+let trendChart = null;
+let currentTrendClientId = null;
+
+async function openDetail(clientId, clientName) {
+    document.getElementById('detail-overlay').style.display = 'block';
+    document.getElementById('detail-panel').style.display = 'block';
+    document.getElementById('detail-title').textContent = clientName;
+    document.getElementById('detail-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading accounts...</div>';
+    currentTrendClientId = clientId;
+
+    try {
+        const [accountsResult, trends] = await Promise.all([
+            sb.from('state').select('data,updated_at').eq('key', 'cache:client_accounts_' + clientId).single().then(({data: row}) => {
+                if (row) { const d = JSON.parse(row.data); d._cached = true; d._synced_at = row.updated_at; return d; }
+                return edgeFetch('/smartlead-proxy?action=all-accounts');
+            }),
+            edgeFetch('/smartlead-proxy?action=trends&client_id=' + clientId + '&days=30'),
+        ]);
+        renderDetailTable(accountsResult, trends);
+    } catch (err) {
+        document.getElementById('detail-content').innerHTML = 'Error: ' + err.message;
+    }
+}
+
+function renderDetailTable(data, trends) {
+    const accounts = data.accounts;
+
+    // Replacement recommendation
+    let recHtml = '';
+    if (data.flagged_domains && data.flagged_domains.length > 0) {
+        recHtml = `<div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+            <div style="font-size:14px;color:#ff6b6b;font-weight:600;margin-bottom:6px;">Infrastructure Replacement Needed</div>
+            <div style="font-size:13px;color:#ffaaaa;">${data.flagged_inbox_count} inbox(es) across ${data.flagged_domains.length} domain(s) are unhealthy.</div>
+            <div style="font-size:13px;color:#ffaaaa;margin-bottom:10px;">Recommended: Set up ${data.replacement_domains_needed} new domain(s) (${data.replacement_inboxes} inboxes).</div>
+            <div style="font-size:12px;color:#888;margin-bottom:10px;">Flagged domains: ${data.flagged_domains.join(', ')}</div>
+            <button onclick="triggerReplacement('${data.client_id}', ${JSON.stringify(data.flagged_domains).replace(/'/g, "\\'")})" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Start Replacement</button>
+            <span id="replacement-status-${data.client_id}" style="margin-left:12px;font-size:13px;"></span>
+        </div>`;
+    }
+
+    // Reply rate trend chart
+    let chartHtml = '';
+    if (trends && !trends.error) {
+        const s = trends.summary || {};
+        const trendIcon = s.trend === 'up' ? '&#9650;' : s.trend === 'down' ? '&#9660;' : '&#9654;';
+        const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
+        chartHtml = `<div style="background:#0a1628;border:1px solid #0f3460;border-radius:8px;padding:16px;margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div style="font-size:14px;font-weight:600;">Campaign Performance <span style="font-size:11px;color:#666;font-weight:400;">(7-day rolling avg)</span></div>
+                <div style="display:flex;gap:4px;" id="trend-zoom-btns">
+                    <button onclick="loadTrends(7)" class="trend-zoom" data-days="7" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">7D</button>
+                    <button onclick="loadTrends(14)" class="trend-zoom" data-days="14" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">14D</button>
+                    <button onclick="loadTrends(30)" class="trend-zoom" data-days="30" style="background:#16213e;color:#4ecdc4;border:1px solid #4ecdc4;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">30D</button>
+                    <button onclick="loadTrends(90)" class="trend-zoom" data-days="90" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">90D</button>
+                    <button onclick="loadTrends(0)" class="trend-zoom" data-days="0" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">All</button>
+                </div>
+            </div>
+            <div style="height:200px;position:relative;"><canvas id="trend-chart"></canvas></div>
+            <div id="trend-summary" style="display:flex;gap:16px;margin-top:12px;font-size:12px;flex-wrap:wrap;">
+                <div><span style="color:#4ecdc4;">&#9679;</span> <span style="color:#888;">Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+                <div><span style="color:#ff6b6b;">&#9679;</span> <span style="color:#888;">Bounce Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
+                <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
+                <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
+                <div><span style="color:#888;">Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
+                <div><span style="color:#888;">Bounced:</span> <span style="color:#eee;">${(s.total_bounced || 0).toLocaleString()}</span></div>
+                <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
+            </div>
+        </div>`;
+    }
+
+    // Idle inbox alert
+    let idleHtml = '';
+    const idleInboxes = accounts.filter(a => a.warmup_status !== 'ACTIVE' && a.campaign_count === 0 && a.warmup_days !== null && a.warmup_days >= 14);
+    if (idleInboxes.length > 0) {
+        idleHtml = `<div style="background:#4a3a1a;border:1px solid #8b7a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+            <div style="font-size:14px;color:#ffd93d;font-weight:600;margin-bottom:6px;">${idleInboxes.length} warmed inbox(es) not in any campaign</div>
+            <div style="font-size:13px;color:#ffd9aa;">${idleInboxes.map(a => a.email).join(', ')}</div>
+        </div>`;
+    }
+
+    let html = recHtml + chartHtml + idleHtml;
+    html += '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
+    html += '<thead><tr><th>Email</th><th>Health</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
+
+    accounts.forEach(a => {
+        const statusColor = a.warmup_status === 'ACTIVE' ? '#4ecdc4' : (a.blocked_reason ? '#ff6b6b' : '#ffd93d');
+        const br = a.bounce_rate !== null ? parseFloat(a.bounce_rate) : null;
+        const rr = a.reply_rate !== null ? parseFloat(a.reply_rate) : null;
+        const brColor = br !== null ? (br > 3 ? '#ff6b6b' : br > 1 ? '#ffd93d' : '#4ecdc4') : '#888';
+        const rrColor = rr !== null ? (rr > 5 ? '#4ecdc4' : rr > 2 ? '#ffd93d' : '#ff6b6b') : '#888';
+
+        const healthColor = a.health_score >= 85 ? '#4ecdc4' : a.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthBg = a.health_score >= 85 ? '#1a4a3a' : a.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+        const rowBg = a.domain_flagged ? 'background:#2a1a1a;' : '';
+
+        // Flag icons
+        const flagIcons = (a.health_flags || []).map(f => {
+            const icons = {bounce:'B',reply:'R',reputation:'REP',placement:'P',smtp:'SMTP',blocked:'BLK',warmup_off:'WU'};
+            return '<span style="background:#4a1a1a;color:#ff6b6b;padding:1px 4px;border-radius:3px;font-size:10px;margin-left:2px;" title="' + f + '">' + (icons[f]||f) + '</span>';
+        }).join('');
+
+        // Warmup cell with progress bar for new accounts
+        let warmupCell = `<span style="color:${statusColor}">${a.warmup_status}</span>`;
+        if (a.warmup_status === 'ACTIVE' && a.warmup_days !== null && a.warmup_days < 14) {
+            const pct = Math.min(100, Math.round(a.warmup_days / 14 * 100));
+            warmupCell += `<div style="margin-top:4px;background:#0a1628;border-radius:3px;height:4px;width:80px;"><div style="background:#7c4dff;height:100%;width:${pct}%;border-radius:3px;"></div></div><div style="font-size:10px;color:#888;margin-top:2px;">${a.warmup_days}d / 14d</div>`;
+        }
+        if (a.blocked_reason) {
+            warmupCell += `<br><small style="color:#ff6b6b">${a.blocked_reason}</small>`;
+        }
+
+        html += `<tr style="${rowBg}">
+            <td>${a.email}</td>
+            <td><span style="background:${healthBg};color:${healthColor};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600;">${a.health_score}</span>${flagIcons}</td>
+            <td>${warmupCell}</td>
+            <td>${a.warmup_reputation}</td>
+            <td style="color:${brColor}">${br !== null ? br.toFixed(1) + '%' : '—'}</td>
+            <td style="color:${rrColor}">${rr !== null ? rr.toFixed(1) + '%' : '—'}</td>
+            <td>${a.health_sent || a.warmup_sent}</td>
+            <td>${a.campaign_count}</td>
+            <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+
+    // Delete + Transition buttons
+    html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #0f3460;display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="openTransitionModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Transition to Another Client</button>
+        <button onclick="openDeleteModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Delete All Infrastructure</button>
+    </div>`;
+
+    document.getElementById('detail-content').innerHTML = html;
+
+    // Render chart after DOM update
+    if (trends && !trends.error && trends.data && trends.data.some(d => d.reply_rate !== null)) {
+        renderTrendChart(trends);
+    } else {
+        const canvas = document.getElementById('trend-chart');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#666';
+            ctx.font = '14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('No campaign data yet', canvas.width / 2, 100);
+        }
+    }
+}
+
+function renderTrendChart(trends) {
+    const canvas = document.getElementById('trend-chart');
+    if (!canvas) return;
+
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+    const points = trends.data.filter(d => d.reply_rate !== null);
+    if (points.length === 0) {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#666';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No sending data in this period', canvas.width / 2, 100);
+        return;
+    }
+
+    // Update summary stats
+    const s = trends.summary || {};
+    const trendIcon = s.trend === 'up' ? '\u25B2' : s.trend === 'down' ? '\u25BC' : '\u25B6';
+    const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
+    const summaryEl = document.getElementById('trend-summary');
+    if (summaryEl) {
+        summaryEl.innerHTML = `
+            <div><span style="color:#4ecdc4;">\u25CF</span> <span style="color:#888;">Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+            <div><span style="color:#ff6b6b;">\u25CF</span> <span style="color:#888;">Bounce Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
+            <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
+            <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
+            <div><span style="color:#888;">Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
+            <div><span style="color:#888;">Bounced:</span> <span style="color:#eee;">${(s.total_bounced || 0).toLocaleString()}</span></div>
+            <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
+        `;
+    }
+
+    const ctx = canvas.getContext('2d');
+    trendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: points.map(d => d.date),
+            datasets: [{
+                label: 'Reply Rate',
+                data: points.map(d => d.reply_rate),
+                borderColor: '#4ecdc4',
+                backgroundColor: 'rgba(78, 205, 196, 0.08)',
+                borderWidth: 2,
+                pointRadius: 3,
+                pointBackgroundColor: '#4ecdc4',
+                pointHoverRadius: 6,
+                fill: true,
+                tension: 0.3,
+            }, {
+                label: 'Bounce Rate',
+                data: points.map(d => d.bounce_rate),
+                borderColor: '#ff6b6b',
+                backgroundColor: 'rgba(255, 107, 107, 0.05)',
+                borderWidth: 2,
+                pointRadius: 2,
+                pointBackgroundColor: '#ff6b6b',
+                pointHoverRadius: 5,
+                fill: true,
+                tension: 0.3,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    align: 'end',
+                    labels: { color: '#888', boxWidth: 12, padding: 12, font: { size: 11 } }
+                },
+                tooltip: {
+                    backgroundColor: '#16213e',
+                    borderColor: '#0f3460',
+                    borderWidth: 1,
+                    titleColor: '#eee',
+                    bodyColor: '#eee',
+                    callbacks: {
+                        label: function(context) {
+                            const pt = points[context.dataIndex];
+                            if (context.datasetIndex === 0) {
+                                return 'Reply Rate: ' + pt.reply_rate + '% (' + pt.replied + '/' + pt.sent.toLocaleString() + ' sent)';
+                            }
+                            return 'Bounce Rate: ' + pt.bounce_rate + '% (' + pt.bounced + '/' + pt.sent.toLocaleString() + ' sent)';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#666', font: { size: 10 }, maxTicksLimit: 12 },
+                    grid: { color: '#1a2744' },
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#666', font: { size: 10 }, callback: v => v + '%' },
+                    grid: { color: '#1a2744' },
+                }
+            }
+        }
+    });
+}
+
+async function loadTrends(days) {
+    if (!currentTrendClientId) return;
+    // Update zoom button styles
+    document.querySelectorAll('.trend-zoom').forEach(btn => {
+        const isActive = parseInt(btn.dataset.days) === days;
+        btn.style.color = isActive ? '#4ecdc4' : '#888';
+        btn.style.borderColor = isActive ? '#4ecdc4' : '#0f3460';
+    });
+    try {
+        const trends = await edgeFetch('/smartlead-proxy?action=trends&client_id=' + currentTrendClientId + '&days=' + days);
+        if (trends && !trends.error) {
+            // Update summary
+            const s = trends.summary || {};
+            const trendIcon = s.trend === 'up' ? '\u25B2' : s.trend === 'down' ? '\u25BC' : '\u25B6';
+            renderTrendChart(trends);
+        }
+    } catch(e) { console.error('Trend load error:', e); }
+}
+
+function closeDetail() {
+    document.getElementById('detail-overlay').style.display = 'none';
+    document.getElementById('detail-panel').style.display = 'none';
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    currentTrendClientId = null;
+}
+
+async function loadUnassigned() {
+    try {
+        const data = await edgeFetch('/smartlead-proxy?action=unassigned');
+        if (data.count > 0) {
+            document.getElementById('unassigned-section').style.display = 'block';
+            renderUnassigned(data.accounts);
+        } else {
+            document.getElementById('unassigned-section').style.display = 'none';
+        }
+    } catch (err) {
+        console.error('Error loading unassigned:', err);
+    }
+}
+
+function renderUnassigned(accounts) {
+    const tbody = document.getElementById('unassigned-body');
+    tbody.innerHTML = accounts.map(a => `
+        <tr>
+            <td><input type="checkbox" class="ua-check" value="${a.id}" onchange="updateAssignBtn()"></td>
+            <td>${a.email}</td>
+            <td>${a.domain}</td>
+            <td style="color:${a.warmup_status === 'ACTIVE' ? '#4ecdc4' : '#ffd93d'}">${a.warmup_status}</td>
+            <td>${a.warmup_reputation}</td>
+            <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+        </tr>
+    `).join('');
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('select-all').checked;
+    document.querySelectorAll('.ua-check').forEach(cb => cb.checked = checked);
+    updateAssignBtn();
+}
+
+function updateAssignBtn() {
+    const selected = document.querySelectorAll('.ua-check:checked').length;
+    const clientSelected = document.getElementById('assign-client-select').value;
+    document.getElementById('assign-btn').disabled = !(selected > 0 && clientSelected);
+}
+
+document.getElementById('assign-client-select').addEventListener('change', updateAssignBtn);
+
+async function assignSelected() {
+    const accountIds = Array.from(document.querySelectorAll('.ua-check:checked')).map(cb => parseInt(cb.value));
+    const clientId = parseInt(document.getElementById('assign-client-select').value);
+    if (!accountIds.length || !clientId) return;
+
+    document.getElementById('assign-btn').disabled = true;
+    document.getElementById('assign-status').textContent = 'Assigning ' + accountIds.length + ' accounts...';
+
+    try {
+        const result = await edgeFetch('/mutations?action=assign', {
+            method: 'POST',
+            body: JSON.stringify({account_ids: accountIds, client_id: clientId})
+        });
+        document.getElementById('assign-status').textContent =
+            'Done! ' + result.success + ' assigned, ' + result.fail + ' failed.';
+        setTimeout(() => loadOverview(), 2000);
+    } catch (err) {
+        document.getElementById('assign-status').textContent = 'Error: ' + err.message;
+    }
+}
+
+async function loadGenericGroups() {
+    try {
+        const data = await edgeFetch('/smartlead-proxy?action=generic-groups');
+        if (data.groups && data.groups.length > 0) {
+            document.getElementById('generic-section').style.display = 'block';
+            const ready = data.groups.filter(g => g.status === 'ready').length;
+            const warming = data.groups.filter(g => g.status === 'warming').length;
+            document.getElementById('generic-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Generic Inboxes</div></div>
+                <div class="stat-card good"><div class="value">${ready}</div><div class="label">Ready for Clients</div></div>
+                ${warming > 0 ? '<div class="stat-card warn"><div class="value">' + warming + '</div><div class="label">Still Warming</div></div>' : ''}
+                <div class="stat-card"><div class="value">${data.total_daily_capacity}/day</div><div class="label">Total Capacity</div></div>
+            `;
+            renderGenericGroups(data.groups);
+        } else {
+            document.getElementById('generic-section').style.display = 'none';
+        }
+    } catch (e) {
+        console.error('Failed to load generic groups:', e);
+    }
+}
+
+function renderGenericGroups(groups) {
+    const grid = document.getElementById('generic-grid');
+    grid.innerHTML = groups.map(g => {
+        const isReady = g.status === 'ready';
+        const statusColor = isReady ? '#4ecdc4' : '#7c4dff';
+        const statusBg = isReady ? '#1a4a3a' : '#2a1a4a';
+        const statusLabel = isReady ? 'Ready' : g.days_left + 'd left';
+        const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
+
+        let html = `
+        <div class="client-card" style="position:relative;">
+            <div class="cc-header">
+                <span class="cc-name">${g.name}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${statusBg};color:${statusColor};font-size:13px;padding:3px 10px;">${statusLabel}</span>
+                    <span class="cc-count">${g.accounts} accounts</span>
+                </div>
+            </div>
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">Domains</span><span>${g.domains}</span></div>
+                <div class="cc-stat"><span class="label">Capacity</span><span>${g.daily_capacity}/day</span></div>
+                <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
+                <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
+                <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b'}">${g.health_score}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;">
+                    <span>Warmup Progress</span><span>${progressPct}%</span>
+                </div>
+                <div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="background:${isReady ? '#4ecdc4' : '#7c4dff'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
+                </div>
+            </div>`;
+
+        if (isReady) {
+            html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                <button onclick="event.stopPropagation();openAssignModal('${g.pipeline_id || ''}','${g.name.replace(/'/g, "\\'")}')" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
+            </div>`;
+        }
+
+        html += '</div>';
+        return html;
+    }).join('');
+}
+
+async function loadAcquisition() {
+    try {
+        const data = await edgeFetch('/smartlead-proxy?action=acquisition');
+        if (data.total_groups > 0) {
+            document.getElementById('acquisition-section').style.display = 'block';
+            document.getElementById('acquisition-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
+                <div class="stat-card"><div class="value">${data.total_groups}</div><div class="label">Active Groups</div></div>
+            `;
+            renderAcquisitionGroups(data.groups);
+        } else {
+            document.getElementById('acquisition-section').style.display = 'none';
+        }
+    } catch (e) {
+        console.error('Failed to load acquisition data:', e);
+    }
+}
+
+function renderAcquisitionGroups(groups) {
+    const grid = document.getElementById('acquisition-grid');
+    grid.innerHTML = groups.map(g => {
+        const healthColor = g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthBg = g.health_score >= 85 ? '#1a4a3a' : g.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+        return `
+        <div class="client-card ${g.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${g.id}, '${g.name.replace(/'/g, "\\'")}')">
+            <div class="cc-header">
+                <span class="cc-name">${g.name}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${g.health_score}</span>
+                    <span class="cc-count">${g.accounts} accounts</span>
+                </div>
+            </div>
+            ${g.needs_attention ? '<div style="background:#4a1a1a;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ff6b6b;">' + g.flagged_domains + '/' + g.total_domains + ' domains flagged (' + g.flagged_pct + '%)</div>' : ''}
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">In Campaign</span><span>${g.in_campaign}</span></div>
+                <div class="cc-stat"><span class="label">Warming</span><span>${g.warming}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Domains</span><span>${g.total_domains}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ff6b6b' : g.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4'}">${g.avg_bounce_rate}%</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#4ecdc4' : g.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b'}">${g.avg_reply_rate}%</span></div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// --- Tab switching ---
+function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+
+    if (tab === 'zapmail' && !zmData) loadZapmail();
+    if (tab === 'domains' && !domData) loadDomains();
+    if (tab === 'pipelines') loadPipelines();
+    if (tab === 'sync' && !syncData) loadSync();
+}
+
+// --- ZapMail ---
+let zmData = null;
+
+async function loadZapmail() {
+    document.getElementById('zm-clients').innerHTML = '<div class="loading"><span class="spinner"></span> Loading ZapMail data...</div>';
+    try {
+        zmData = await edgeFetch('/zapmail-proxy?action=domains');
+        renderZapmail();
+    } catch (err) {
+        document.getElementById('zm-clients').innerHTML = 'Error: ' + err.message;
+    }
+}
+
+function renderZapmail() {
+    const d = zmData;
+
+    // Summary
+    const renewingSoon = d.clients.reduce((n, c) => n + c.renewing_soon, 0);
+    document.getElementById('zm-summary-row').innerHTML = `
+        <div class="stat-card good"><div class="value">${d.total_domains}</div><div class="label">Total Domains</div></div>
+        <div class="stat-card good"><div class="value">${d.total_mailboxes}</div><div class="label">Total Mailboxes</div></div>
+        <div class="stat-card good"><div class="value">${d.clients.length}</div><div class="label">Client Tags</div></div>
+        <div class="stat-card ${renewingSoon > 0 ? 'alert' : 'good'}"><div class="value">${renewingSoon}</div><div class="label">Renewing in 3 days</div></div>
+    `;
+
+    // Client cards with domain tables
+    document.getElementById('zm-clients').innerHTML = d.clients.map(cl => {
+        const cardId = 'zm-' + cl.name.replace(/[^a-zA-Z0-9]/g, '_');
+        return `
+        <div class="zm-client-card ${cl.renewing_soon > 0 ? 'has-renewal' : ''}">
+            <div class="zm-client-header" onclick="document.getElementById('${cardId}').style.display = document.getElementById('${cardId}').style.display === 'none' ? 'block' : 'none'">
+                <h3>${cl.name}</h3>
+                <span class="zm-meta">${cl.domains} domains, ${cl.mailboxes} mailboxes ${cl.renewing_soon > 0 ? '<span class="badge badge-red">' + cl.renewing_soon + ' renewing soon</span>' : ''}</span>
+            </div>
+            <div id="${cardId}" style="display:none;">
+                <div class="cancel-controls">
+                    <button class="cancel-btn" onclick="cancelSelectedDomains('${cardId}')" id="cancel-btn-${cardId}" disabled>Cancel Selected Domains</button>
+                    <span id="cancel-status-${cardId}"></span>
+                </div>
+                <table class="zm-domain-table">
+                    <thead><tr>
+                        <th><input type="checkbox" onchange="toggleZmSelectAll('${cardId}', this.checked)"></th>
+                        <th>Domain</th>
+                        <th>Mailboxes</th>
+                        <th>Created</th>
+                        <th>Next Renewal</th>
+                        <th>Status</th>
+                    </tr></thead>
+                    <tbody>
+                    ${cl.domain_list.map(dm => {
+                        const renewBadge = dm.days_until_renewal !== null && dm.days_until_renewal <= 3
+                            ? '<span class="badge badge-red">' + dm.days_until_renewal + 'd</span>'
+                            : (dm.days_until_renewal !== null ? dm.days_until_renewal + 'd' : '');
+                        return `<tr>
+                            <td><input type="checkbox" class="zm-check-${cardId}" value="${dm.id}" onchange="updateZmCancelBtn('${cardId}')"></td>
+                            <td>${dm.domain}</td>
+                            <td>${dm.mailbox_count}</td>
+                            <td>${dm.created}</td>
+                            <td>${dm.next_renewal || '?'} ${renewBadge}</td>
+                            <td style="color:${dm.status === 'ACTIVE' ? '#4ecdc4' : '#ff6b6b'}">${dm.status}</td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function toggleZmSelectAll(cardId, checked) {
+    document.querySelectorAll('.zm-check-' + cardId).forEach(cb => cb.checked = checked);
+    updateZmCancelBtn(cardId);
+}
+
+function updateZmCancelBtn(cardId) {
+    const selected = document.querySelectorAll('.zm-check-' + cardId + ':checked').length;
+    const btn = document.getElementById('cancel-btn-' + cardId);
+    if (btn) btn.disabled = selected === 0;
+}
+
+async function cancelSelectedDomains(cardId) {
+    const domainIds = Array.from(document.querySelectorAll('.zm-check-' + cardId + ':checked')).map(cb => cb.value);
+    if (!domainIds.length) return;
+
+    if (!confirm('Cancel ' + domainIds.length + ' domain(s) from ZapMail? This stops billing but domains stay on Spaceship.')) return;
+
+    const btn = document.getElementById('cancel-btn-' + cardId);
+    const status = document.getElementById('cancel-status-' + cardId);
+    btn.disabled = true;
+    status.textContent = 'Cancelling...';
+
+    try {
+        const result = await edgeFetch('/zapmail-proxy?action=cancel', {
+            method: 'POST',
+            body: JSON.stringify({domain_ids: domainIds})
+        });
+        if (result.error) {
+            status.textContent = 'Error: ' + result.error.substring(0, 100);
+        } else {
+            status.textContent = 'Cancelled! Refreshing...';
+            zmData = null;
+            setTimeout(loadZapmail, 1500);
+        }
+    } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+    }
+}
+
+// --- Domains (Registrars) ---
+let domData = null;
+
+async function loadDomains() {
+    document.getElementById('dom-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading domain registrar data...</div>';
+    try {
+        domData = await edgeFetch('/domain-proxy?action=list');
+        renderDomains();
+    } catch (err) {
+        document.getElementById('dom-content').innerHTML = 'Error: ' + err.message;
+    }
+}
+
+function renderDomains() {
+    const d = domData;
+
+    document.getElementById('dom-summary-row').innerHTML = `
+        <div class="stat-card good"><div class="value">${d.total_domains}</div><div class="label">Total Domains</div></div>
+        <div class="stat-card ${d.expiring_soon > 0 ? 'alert' : 'good'}"><div class="value">${d.expiring_soon}</div><div class="label">Expiring in 14 days</div></div>
+        <div class="stat-card ${d.no_auto_renew_30d > 0 ? 'warn' : 'good'}"><div class="value">${d.no_auto_renew_30d}</div><div class="label">No Auto-Renew (30d)</div></div>
+    `;
+
+    // Alerts
+    if (d.alerts.length > 0) {
+        let alertHtml = '<div class="alert-banner"><h3>Domain Expiry Alerts</h3>';
+        d.alerts.forEach(a => {
+            alertHtml += `<div class="alert-item">${a.domain} (${a.registrar}) — expires ${a.expires}, ${a.days_until_expiry} days left, auto-renew OFF</div>`;
+        });
+        alertHtml += '</div>';
+        document.getElementById('dom-alerts').innerHTML = alertHtml;
+    } else {
+        document.getElementById('dom-alerts').innerHTML = '';
+    }
+
+    // Domain tables by registrar
+    let html = '';
+    for (const [registrar, domains] of Object.entries(d.by_registrar)) {
+        html += `<h2 class="section-title">${registrar} (${domains.length} domains)</h2>`;
+        html += '<table class="zm-domain-table"><thead><tr><th>Domain</th><th>Status</th><th>Expires</th><th>Days Left</th><th>Auto-Renew</th></tr></thead><tbody>';
+        domains.forEach(dm => {
+            const daysLeft = dm.days_until_expiry;
+            const daysColor = daysLeft === null ? '#888' : (daysLeft <= 7 ? '#ff6b6b' : (daysLeft <= 30 ? '#ffd93d' : '#4ecdc4'));
+            const renewColor = dm.auto_renew ? '#4ecdc4' : '#ffd93d';
+            const canToggle = dm.registrar === 'porkbun';
+            const toggleBtn = canToggle
+                ? `<button onclick="toggleAutoRenew('${dm.domain}','${dm.registrar}',${!dm.auto_renew},this)" style="background:none;border:1px solid ${renewColor};color:${renewColor};padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;">${dm.auto_renew ? 'ON' : 'OFF'}</button>`
+                : `<span style="color:${renewColor}" title="${dm.registrar} doesn't support API toggle">${dm.auto_renew ? 'ON' : 'OFF'}</span>`;
+            html += `<tr>
+                <td>${dm.domain}</td>
+                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#4ecdc4' : '#ffd93d'}">${dm.status}</td>
+                <td>${dm.expires || '?'}</td>
+                <td style="color:${daysColor}">${daysLeft !== null ? daysLeft + 'd' : '?'}</td>
+                <td>${toggleBtn}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+    }
+    document.getElementById('dom-content').innerHTML = html;
+}
+
+async function toggleAutoRenew(domain, registrar, enabled, btn) {
+    const action = enabled ? 'enable' : 'disable';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} auto-renew for ${domain}?`)) return;
+
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+        const result = await edgeFetch('/domain-proxy?action=auto-renew', {
+            method: 'POST',
+            body: JSON.stringify({domain, registrar, enabled})
+        });
+        if (result.success) {
+            btn.textContent = enabled ? 'ON' : 'OFF';
+            btn.style.color = enabled ? '#4ecdc4' : '#ffd93d';
+            btn.style.borderColor = enabled ? '#4ecdc4' : '#ffd93d';
+            btn.disabled = false;
+            btn.onclick = () => toggleAutoRenew(domain, registrar, !enabled, btn);
+        } else {
+            alert('Failed: ' + result.message);
+            btn.textContent = enabled ? 'OFF' : 'ON';
+            btn.disabled = false;
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+        btn.textContent = enabled ? 'OFF' : 'ON';
+        btn.disabled = false;
+    }
+}
+
+// --- Sync Check ---
+let syncData = null;
+
+async function loadSync() {
+    document.getElementById('sync-loading').style.display = 'block';
+    document.getElementById('sync-content').innerHTML = '';
+    try {
+        syncData = await edgeFetch('/zapmail-proxy?action=sync');
+        renderSync();
+    } catch (err) {
+        document.getElementById('sync-content').innerHTML = 'Error: ' + err.message;
+    }
+    document.getElementById('sync-loading').style.display = 'none';
+}
+
+function renderSync() {
+    const d = syncData;
+    let html = '<div class="summary-row">';
+    html += `<div class="stat-card good"><div class="value">${d.total_checked}</div><div class="label">Domains Checked</div></div>`;
+    html += `<div class="stat-card ${d.mismatches.length > 0 ? 'alert' : 'good'}"><div class="value">${d.mismatches.length}</div><div class="label">Tag Mismatches</div></div>`;
+    html += `<div class="stat-card ${d.zapmail_only_count > 0 ? 'warn' : 'good'}"><div class="value">${d.zapmail_only_count}</div><div class="label">ZapMail Only</div></div>`;
+    html += `<div class="stat-card ${d.smartlead_only_count > 0 ? 'warn' : 'good'}"><div class="value">${d.smartlead_only_count}</div><div class="label">SmartLead Only</div></div>`;
+    html += '</div>';
+
+    if (d.mismatches.length > 0) {
+        html += '<h2 class="section-title">Tag Mismatches</h2>';
+        d.mismatches.forEach(m => {
+            html += `<div class="sync-item"><span class="domain">${m.domain}</span> — ZapMail: <span class="mismatch">${m.zapmail_tag}</span> vs SmartLead: <span class="mismatch">${m.smartlead_client}</span></div>`;
+        });
+    }
+
+    if (d.zapmail_only_count > 0) {
+        html += `<h2 class="section-title">In ZapMail but not SmartLead (${d.zapmail_only_count})</h2>`;
+        d.zapmail_only.forEach(domain => {
+            html += `<div class="sync-item"><span class="domain">${domain}</span></div>`;
+        });
+        if (d.zapmail_only_count > 20) html += `<div class="sync-item" style="color:#888">...and ${d.zapmail_only_count - 20} more</div>`;
+    }
+
+    if (d.smartlead_only_count > 0) {
+        html += `<h2 class="section-title">In SmartLead but not ZapMail (${d.smartlead_only_count})</h2>`;
+        d.smartlead_only.forEach(domain => {
+            html += `<div class="sync-item"><span class="domain">${domain}</span></div>`;
+        });
+        if (d.smartlead_only_count > 20) html += `<div class="sync-item" style="color:#888">...and ${d.smartlead_only_count - 20} more</div>`;
+    }
+
+    if (d.mismatches.length === 0 && d.zapmail_only_count === 0 && d.smartlead_only_count === 0) {
+        html += '<div class="sync-item" style="color:#4ecdc4;">Everything in sync!</div>';
+    }
+
+    document.getElementById('sync-content').innerHTML = html;
+}
+
+// --- Wallet ---
+async function loadWallet() {
+    try {
+        const data = await edgeFetch('/zapmail-proxy?action=wallet');
+        const balance = data.data?.balance || data.balance || '?';
+        const el = document.getElementById('wallet-balance');
+        const num = parseFloat(balance);
+        el.textContent = '$' + (isNaN(num) ? '?' : num.toFixed(2));
+        el.style.color = num < 50 ? '#ff6b6b' : num < 150 ? '#ffd93d' : '#4ecdc4';
+    } catch(e) { console.error('Wallet error:', e); }
+}
+
+// --- New Client Form ---
+function showNewClientForm() {
+    document.getElementById('new-client-overlay').style.display = 'block';
+    document.getElementById('new-client-form').style.display = 'block';
+    document.getElementById('nc-status').textContent = '';
+    document.getElementById('nc-generic').checked = false;
+    document.getElementById('nc-forwarding-section').style.display = 'block';
+    loadInventoryPreview();
+}
+
+function closeNewClientForm() {
+    document.getElementById('new-client-overlay').style.display = 'none';
+    document.getElementById('new-client-form').style.display = 'none';
+}
+
+async function toggleMonitor(clientName, currentlyPaused) {
+    const newPaused = !currentlyPaused;
+    const btn = event.target;
+    btn.textContent = newPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
+    btn.style.background = newPaused ? '#4a3a1a' : '#0a1628';
+    btn.style.color = newPaused ? '#ffd93d' : '#888';
+    btn.style.borderColor = newPaused ? '#8b7a3a' : '#0f3460';
+    btn.disabled = true;
+    try {
+        const result = await edgeFetch('/mutations?action=pause-monitor', {
+            method: 'POST',
+            body: JSON.stringify({client_name: clientName, paused: newPaused})
+        });
+        if (result.error) {
+            btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
+            btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
+            btn.style.color = currentlyPaused ? '#ffd93d' : '#888';
+            btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
+        }
+    } catch(e) {
+        btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
+        btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
+        btn.style.color = currentlyPaused ? '#ffd93d' : '#888';
+        btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
+    }
+    btn.disabled = false;
+}
+
+async function setTargetVolume(clientName, value) {
+    const vol = parseInt(value) || 0;
+    try {
+        const result = await edgeFetch('/mutations?action=set-target-volume', {
+            method: 'POST',
+            body: JSON.stringify({client_name: clientName, target_volume: vol})
+        });
+        if (!result.error) {
+            loadOverview();
+        }
+    } catch(e) {}
+}
+
+function toggleGenericMode() {
+    const isGeneric = document.getElementById('nc-generic').checked;
+    document.getElementById('nc-forwarding-section').style.display = isGeneric ? 'none' : 'block';
+    if (isGeneric) document.getElementById('nc-forwarding').value = '';
+}
+
+async function loadInventoryPreview() {
+    const el = document.getElementById('nc-inventory');
+    try {
+        const data = await edgeFetch('/sheets-proxy?action=domain-inventory');
+        if (!data) { el.textContent = 'Could not load inventory'; el.style.color = '#ff6b6b'; return; }
+        const count = data.available_count ?? 0;
+        if (data.error) {
+            el.textContent = 'Could not load inventory: ' + data.error;
+            el.style.color = '#ff6b6b';
+            return;
+        }
+        el.textContent = count + ' domains available in inventory';
+        el.style.color = count < 5 ? '#ff6b6b' : '#4ecdc4';
+
+        const alertEl = document.getElementById('inventory-alert');
+        if (count < 5) {
+            alertEl.style.display = 'inline';
+            alertEl.textContent = 'Low inventory: only ' + count + ' domains available';
+        }
+    } catch(e) {
+        el.textContent = 'Could not load inventory';
+        el.style.color = '#ff6b6b';
+        console.error('Inventory error:', e);
+    }
+}
+
+async function startNewClientPipeline() {
+    const clientName = document.getElementById('nc-client-name').value.trim();
+    const domainCount = parseInt(document.getElementById('nc-domain-count').value);
+    const forwarding = document.getElementById('nc-forwarding').value.trim();
+
+    if (!clientName) { alert('Client name required'); return; }
+    if (!domainCount || domainCount < 1) { alert('Domain count required'); return; }
+
+    document.getElementById('nc-start-btn').disabled = true;
+    document.getElementById('nc-status').innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Starting pipeline...';
+
+    try {
+        const result = await edgeFetch('/pipeline-ops?action=new-client', {
+            method: 'POST',
+            body: JSON.stringify({client_name: clientName, domain_count: domainCount, forwarding_url: forwarding})
+        });
+        if (result.error) {
+            document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            document.getElementById('nc-start-btn').disabled = false;
+        } else {
+            document.getElementById('nc-status').innerHTML = '<span style="color:#4ecdc4;">Pipeline started! ID: ' + result.pipeline_id + '</span>';
+            setTimeout(() => {
+                closeNewClientForm();
+                switchTab('pipelines');
+                loadPipelines();
+            }, 1500);
+        }
+    } catch(err) {
+        document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        document.getElementById('nc-start-btn').disabled = false;
+    }
+}
+
+// --- New Acquisition Group ---
+function showNewAcquisitionForm() {
+    document.getElementById('new-acq-overlay').style.display = 'block';
+    document.getElementById('new-acq-form').style.display = 'block';
+    document.getElementById('acq-status').textContent = '';
+    document.getElementById('acq-group-name').value = '';
+    document.getElementById('acq-daily-volume').value = '250';
+    document.getElementById('acq-start-btn').disabled = false;
+    updateAcqMath();
+    loadAcqInventory();
+}
+
+function closeNewAcquisitionForm() {
+    document.getElementById('new-acq-overlay').style.display = 'none';
+    document.getElementById('new-acq-form').style.display = 'none';
+}
+
+function updateAcqMath() {
+    const vol = parseInt(document.getElementById('acq-daily-volume').value) || 0;
+    const senderKey = document.getElementById('acq-sender').value;
+    const senderLabels = {aidan_hutchinson: 'Aidan Hutchinson', lars_matthys: 'Lars Matthys'};
+    const accounts = Math.ceil(vol / 15);
+    const domains = Math.ceil(accounts / 3);
+    const actualAccounts = domains * 3;
+    const actualDaily = actualAccounts * 15;
+    document.getElementById('acq-math').innerHTML =
+        `<strong>${domains}</strong> domains &times; 3 inboxes = <strong>${actualAccounts}</strong> accounts<br>` +
+        `Actual capacity: <strong>${actualDaily}</strong> emails/day &bull; Sender: ${senderLabels[senderKey] || senderKey}`;
+}
+
+async function loadAcqInventory() {
+    const el = document.getElementById('acq-inventory');
+    try {
+        const data = await edgeFetch('/sheets-proxy?action=domain-inventory');
+        const count = data.available_count ?? 0;
+        el.textContent = count + ' domains available in inventory';
+        el.style.color = count < 5 ? '#ff6b6b' : '#4ecdc4';
+    } catch(e) {
+        el.textContent = 'Could not load inventory';
+        el.style.color = '#ff6b6b';
+    }
+}
+
+async function startNewAcquisitionPipeline() {
+    const groupName = document.getElementById('acq-group-name').value.trim();
+    const dailyVolume = parseInt(document.getElementById('acq-daily-volume').value);
+
+    if (!groupName) { alert('Group name required'); return; }
+    if (!dailyVolume || dailyVolume < 15) { alert('Daily volume must be at least 15'); return; }
+
+    document.getElementById('acq-start-btn').disabled = true;
+    document.getElementById('acq-status').innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Starting pipeline...';
+
+    try {
+        const result = await edgeFetch('/pipeline-ops?action=new-acquisition', {
+            method: 'POST',
+            body: JSON.stringify({group_name: groupName, daily_volume: dailyVolume, sender: document.getElementById('acq-sender').value})
+        });
+        if (result.error) {
+            document.getElementById('acq-status').innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            document.getElementById('acq-start-btn').disabled = false;
+        } else {
+            document.getElementById('acq-status').innerHTML = '<span style="color:#4ecdc4;">Pipeline started! ' + result.infra.domains_needed + ' domains, ' + result.infra.actual_accounts + ' inboxes</span>';
+            setTimeout(() => {
+                closeNewAcquisitionForm();
+                switchTab('pipelines');
+                loadPipelines();
+            }, 1500);
+        }
+    } catch(err) {
+        document.getElementById('acq-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        document.getElementById('acq-start-btn').disabled = false;
+    }
+}
+
+// --- Pipelines Tab ---
+let pipelineData = null;
+
+async function loadPipelines() {
+    document.getElementById('pipelines-loading').style.display = 'block';
+    document.getElementById('pipelines-content').innerHTML = '';
+    try {
+        pipelineData = await edgeFetch('/pipeline-ops?action=active');
+        renderPipelines();
+    } catch(err) {
+        document.getElementById('pipelines-content').innerHTML = 'Error: ' + err.message;
+    }
+    document.getElementById('pipelines-loading').style.display = 'none';
+}
+
+function renderPipelines() {
+    const pipelines = pipelineData.pipelines || [];
+
+    const active = pipelines.filter(p => p.status === 'running' || p.status === 'awaiting_removal');
+    const badge = document.getElementById('pipeline-badge');
+    if (active.length > 0) {
+        badge.style.display = 'inline';
+        badge.textContent = active.length + ' active';
+    } else {
+        badge.style.display = 'none';
+    }
+
+    if (pipelines.length === 0) {
+        document.getElementById('pipelines-content').innerHTML = '<div style="text-align:center;color:#888;padding:40px;">No pipelines yet. Start one from the SmartLead tab.</div>';
+        return;
+    }
+
+    const stepLabels = {
+        claim_domains: 'Claim Domains',
+        set_dns: 'Set DNS',
+        connect_zapmail: 'Connect ZapMail',
+        create_mailboxes: 'Create Mailboxes',
+        upload_photos: 'Upload Photos',
+        tag_and_configure: 'Tag & Configure',
+        export_to_smartlead: 'Export to SmartLead',
+        enable_warmup: 'Enable Warmup',
+        smartlead_tags: 'SmartLead Tags',
+        export_csv: 'Export CSV',
+        gcal_rotation: 'Schedule Rotation',
+        wait_for_warmup: 'Waiting for Warmup',
+        check_campaigns: 'Check Campaigns',
+        remove_old: 'Remove Old Inboxes',
+        cleanup: 'Cleanup',
+    };
+
+    let html = '';
+    pipelines.forEach(p => {
+        const statusColor = p.status === 'complete' ? '#4ecdc4' : p.status === 'error' ? '#ff6b6b' : p.status === 'awaiting_removal' ? '#ffd93d' : '#7c4dff';
+        const statusLabel = p.status === 'awaiting_removal' ? 'Awaiting Removal' : p.status.charAt(0).toUpperCase() + p.status.slice(1);
+
+        html += `<div style="background:#16213e;border:1px solid #0f3460;border-radius:10px;padding:16px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div>
+                    <span style="font-size:16px;font-weight:600;">${p.client_name}</span>
+                    <span style="font-size:13px;color:#888;margin-left:12px;">${p.type === 'new_setup' ? 'New Setup' : 'Replacement'}</span>
+                </div>
+                <span style="color:${statusColor};font-weight:500;">${statusLabel}</span>
+            </div>
+            <div style="font-size:13px;color:#888;margin-bottom:8px;">Domains: ${p.domains.join(', ')}</div>
+            <div style="font-size:12px;color:#888;">Started: ${new Date(p.created_at).toLocaleString()}</div>`;
+
+        if (p.status !== 'complete') {
+            const allSteps = p.type === 'new_setup'
+                ? ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','smartlead_tags','export_csv','gcal_rotation']
+                : ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','smartlead_tags','wait_for_warmup','check_campaigns','remove_old','cleanup','export_csv','gcal_rotation'];
+            const currentIdx = allSteps.indexOf(p.current_step);
+            html += '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">';
+            allSteps.forEach((s, i) => {
+                const color = i < currentIdx ? '#4ecdc4' : i === currentIdx ? '#7c4dff' : '#333';
+                const label = stepLabels[s] || s;
+                html += `<div style="background:${color};padding:4px 10px;border-radius:4px;font-size:11px;color:${i <= currentIdx ? '#fff' : '#666'};" title="${label}">${label}</div>`;
+            });
+            html += '</div>';
+        }
+
+        if (p.status === 'awaiting_removal' && p.pending_removals) {
+            html += '<div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:12px;margin-top:12px;">';
+            html += '<div style="color:#ff6b6b;font-weight:600;margin-bottom:8px;">Inboxes need removal from campaigns</div>';
+            for (const [email, camps] of Object.entries(p.pending_removals)) {
+                html += `<div style="margin-bottom:8px;">
+                    <div style="font-size:13px;color:#ffaaaa;">${email} is in ${camps.length} campaign(s):</div>`;
+                camps.forEach(c => {
+                    html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 4px 16px;font-size:12px;">
+                        <span style="color:#888;">${c.campaign_name}</span>
+                        <button onclick="removeFromCampaign('${email}',${c.campaign_id})" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Remove</button>
+                    </div>`;
+                });
+                html += `<button onclick="removeFromAllCampaigns('${email}')" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Remove from all campaigns</button>`;
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+
+        // Assign to Client button for generic pipelines
+        const isGeneric = p.client_name && p.client_name.toLowerCase().startsWith('generic');
+        if (isGeneric && (p.status === 'complete' || p.status === 'running')) {
+            html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                <button onclick="event.stopPropagation();openAssignModal('${p.id}','${p.client_name.replace(/'/g, "\\'")}')" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
+            </div>`;
+        }
+
+        if (p.errors && p.errors.length > 0) {
+            html += '<div style="margin-top:8px;font-size:12px;color:#ff6b6b;">';
+            p.errors.forEach(e => { html += '<div>' + e + '</div>'; });
+            html += '</div>';
+        }
+
+        html += '</div>';
+    });
+
+    document.getElementById('pipelines-content').innerHTML = html;
+}
+
+async function removeFromCampaign(email, campaignId) {
+    if (!confirm('Remove ' + email + ' from this campaign?')) return;
+    try {
+        await edgeFetch('/mutations?action=remove-from-campaign', {
+            method: 'POST',
+            body: JSON.stringify({email, campaign_id: campaignId})
+        });
+        loadPipelines();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function removeFromAllCampaigns(email) {
+    if (!confirm('Remove ' + email + ' from ALL active campaigns?')) return;
+    try {
+        await edgeFetch('/mutations?action=remove-from-all-campaigns', {
+            method: 'POST',
+            body: JSON.stringify({email})
+        });
+        loadPipelines();
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+// --- Assign to Client ---
+const ASSIGN_STEPS = [
+    {id: 1, label: 'Creating SmartLead client'},
+    {id: 2, label: 'Updating SmartLead tags'},
+    {id: 3, label: 'Verifying client assignment'},
+    {id: 4, label: 'Updating Zapmail domain tags'},
+    {id: 5, label: 'Setting forwarding domain'},
+    {id: 6, label: 'Updating Google Sheet'},
+    {id: 7, label: 'Updating pipeline record'},
+];
+
+async function openAssignModal(pipelineId, groupName) {
+    document.getElementById('ac-pipeline-id').value = pipelineId;
+    document.getElementById('ac-group-label').textContent = 'Reassigning: ' + groupName;
+    document.getElementById('assign-form').style.display = 'block';
+    document.getElementById('assign-progress').style.display = 'none';
+    document.getElementById('ac-new-client-row').style.display = 'none';
+    document.getElementById('ac-forwarding').value = '';
+    document.getElementById('ac-assign-btn').disabled = true;
+    document.getElementById('ac-assign-btn').style.opacity = '0.5';
+    document.getElementById('assign-overlay').style.display = 'block';
+    document.getElementById('assign-modal').style.display = 'block';
+
+    // Populate client dropdown
+    const select = document.getElementById('ac-client-select');
+    select.innerHTML = '<option value="">Loading...</option>';
+    try {
+        const data = await edgeFetch('/smartlead-proxy?action=clients-list');
+        let opts = '<option value="">Select a client...</option>';
+        (data.clients || []).forEach(c => {
+            opts += `<option value="${c}">${c}</option>`;
+        });
+        opts += '<option value="__new__">+ Add New Client</option>';
+        select.innerHTML = opts;
+    } catch(e) {
+        select.innerHTML = '<option value="">Error loading clients</option>';
+    }
+}
+
+function closeAssignModal() {
+    document.getElementById('assign-overlay').style.display = 'none';
+    document.getElementById('assign-modal').style.display = 'none';
+}
+
+function onClientSelectChange() {
+    const val = document.getElementById('ac-client-select').value;
+    document.getElementById('ac-new-client-row').style.display = val === '__new__' ? 'block' : 'none';
+    if (val !== '__new__') document.getElementById('ac-new-client-name').value = '';
+    checkAssignReady();
+}
+
+function checkAssignReady() {
+    const selectVal = document.getElementById('ac-client-select').value;
+    const newName = document.getElementById('ac-new-client-name').value.trim();
+    const fwd = document.getElementById('ac-forwarding').value.trim();
+    const hasClient = selectVal === '__new__' ? newName.length > 0 : selectVal.length > 0;
+    const ready = hasClient && fwd.length > 0;
+    document.getElementById('ac-assign-btn').disabled = !ready;
+    document.getElementById('ac-assign-btn').style.opacity = ready ? '1' : '0.5';
+}
+
+function startAssignment() {
+    const pipelineId = document.getElementById('ac-pipeline-id').value;
+    const selectVal = document.getElementById('ac-client-select').value;
+    const isNew = selectVal === '__new__';
+    const clientName = isNew ? document.getElementById('ac-new-client-name').value.trim() : selectVal;
+    const fwd = document.getElementById('ac-forwarding').value.trim();
+
+    // Switch to progress view
+    document.getElementById('assign-form').style.display = 'none';
+    document.getElementById('assign-progress').style.display = 'block';
+    document.getElementById('ac-progress-client').textContent = clientName;
+
+    // Render step list
+    let stepsHtml = '';
+    ASSIGN_STEPS.forEach(s => {
+        stepsHtml += `<div id="ac-step-${s.id}" style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
+            <span id="ac-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
+            <span id="ac-label-${s.id}" style="color:#888;">${s.label}</span>
+        </div>`;
+    });
+    document.getElementById('ac-steps').innerHTML = stepsHtml;
+    document.getElementById('ac-result').style.display = 'none';
+
+    // Start job via Edge Function, then poll for events
+    edgeFetch('/sse-ops?action=assign-client', {
+        method: 'POST',
+        body: JSON.stringify({pipeline_id: pipelineId, client_name: clientName, forwarding_domain: fwd, is_new_client: isNew})
+    }).then(result => {
+        if (!result.job_id) {
+            document.getElementById('ac-result').style.display = 'block';
+            document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">Failed to start job: ${result.error || 'unknown error'}</div>
+                <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+            return;
+        }
+        let lastStep = 0;
+        const poll = setInterval(async () => {
+            const { data: events } = await sb.from('sse_events').select('*').eq('job_id', result.job_id).order('step');
+            if (!events) return;
+            events.forEach(e => {
+                if (e.step > lastStep || e.status === 'complete' || e.status === 'error') {
+                    handleAssignEvent(e);
+                    if (e.step > lastStep) lastStep = e.step;
+                }
+                if (e.status === 'complete' || (e.status === 'error' && e.step === 0)) clearInterval(poll);
+            });
+        }, 2000);
+    }).catch(err => {
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
+            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+    });
+}
+
+function handleAssignEvent(evt) {
+    if (evt.status === 'complete') {
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Assignment complete!</div>
+            <button onclick="closeAssignModal();loadPipelines();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        return;
+    }
+    if (evt.step === 0 && evt.status === 'error') {
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
+            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        return;
+    }
+
+    const icon = document.getElementById('ac-icon-' + evt.step);
+    const label = document.getElementById('ac-label-' + evt.step);
+    if (!icon || !label) return;
+
+    if (evt.status === 'running') {
+        icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+        label.style.color = '#eee';
+    } else if (evt.status === 'done') {
+        icon.innerHTML = '✓';
+        icon.style.color = '#4ecdc4';
+        label.style.color = '#4ecdc4';
+    } else if (evt.status === 'error') {
+        icon.innerHTML = '✗';
+        icon.style.color = '#ff6b6b';
+        label.style.color = '#ff6b6b';
+        // Mark remaining steps as skipped
+        for (let i = evt.step + 1; i <= 7; i++) {
+            const si = document.getElementById('ac-icon-' + i);
+            const sl = document.getElementById('ac-label-' + i);
+            if (si) { si.innerHTML = '—'; si.style.color = '#444'; }
+            if (sl) sl.style.color = '#444';
+        }
+        document.getElementById('ac-result').style.display = 'block';
+        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+    }
+}
+
+// --- Delete Infrastructure ---
+const DELETE_STEPS = [
+    {id: 1, label: 'Removing from campaigns'},
+    {id: 2, label: 'Deleting SmartLead accounts'},
+    {id: 3, label: 'Cancelling Zapmail domains'},
+    {id: 4, label: 'Updating Google Sheet'},
+    {id: 5, label: 'Deleting SmartLead client'},
+];
+
+function openDeleteModal(clientId, clientName) {
+    document.getElementById('del-client-id').value = clientId;
+    document.getElementById('del-client-name').value = clientName;
+    document.getElementById('del-client-label').textContent = clientName;
+    document.getElementById('del-confirm-name').textContent = clientName;
+    document.getElementById('del-confirm-input').value = '';
+    document.getElementById('del-step1').style.display = 'block';
+    document.getElementById('del-step2').style.display = 'none';
+    document.getElementById('delete-confirm').style.display = 'block';
+    document.getElementById('delete-progress').style.display = 'none';
+    document.getElementById('del-final-btn').disabled = true;
+    document.getElementById('del-final-btn').style.opacity = '0.5';
+    document.getElementById('delete-overlay').style.display = 'block';
+    document.getElementById('delete-modal').style.display = 'block';
+}
+
+function closeDeleteModal() {
+    document.getElementById('delete-overlay').style.display = 'none';
+    document.getElementById('delete-modal').style.display = 'none';
+}
+
+function showDeleteStep2() {
+    document.getElementById('del-step1').style.display = 'none';
+    document.getElementById('del-step2').style.display = 'block';
+    document.getElementById('del-confirm-input').focus();
+}
+
+function checkDeleteConfirm() {
+    const input = document.getElementById('del-confirm-input').value.trim();
+    const expected = document.getElementById('del-client-name').value.trim();
+    const match = input.toLowerCase() === expected.toLowerCase();
+    document.getElementById('del-final-btn').disabled = !match;
+    document.getElementById('del-final-btn').style.opacity = match ? '1' : '0.5';
+}
+
+function startDeletion() {
+    const clientId = document.getElementById('del-client-id').value;
+    const clientName = document.getElementById('del-client-name').value;
+
+    document.getElementById('delete-confirm').style.display = 'none';
+    document.getElementById('delete-progress').style.display = 'block';
+    document.getElementById('del-progress-client').textContent = clientName;
+
+    let stepsHtml = '';
+    DELETE_STEPS.forEach(s => {
+        stepsHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
+            <span id="del-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
+            <span id="del-label-${s.id}" style="color:#888;">${s.label}</span>
+        </div>`;
+    });
+    document.getElementById('del-steps').innerHTML = stepsHtml;
+    document.getElementById('del-result').style.display = 'none';
+
+    edgeFetch('/sse-ops?action=delete-infra', {
+        method: 'POST',
+        body: JSON.stringify({client_id: clientId, client_name: clientName})
+    }).then(result => {
+        if (!result.job_id) {
+            document.getElementById('del-result').style.display = 'block';
+            document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">Failed to start job: ${result.error || 'unknown error'}</div>
+                <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+            return;
+        }
+        let lastStep = 0;
+        const poll = setInterval(async () => {
+            const { data: events } = await sb.from('sse_events').select('*').eq('job_id', result.job_id).order('step');
+            if (!events) return;
+            events.forEach(e => {
+                if (e.step > lastStep || e.status === 'complete' || e.status === 'error') {
+                    handleDeleteEvent(e);
+                    if (e.step > lastStep) lastStep = e.step;
+                }
+                if (e.status === 'complete' || (e.status === 'error' && e.step === 0)) clearInterval(poll);
+            });
+        }, 2000);
+    }).catch(err => {
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
+            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+    });
+}
+
+function handleDeleteEvent(evt) {
+    if (evt.status === 'complete') {
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Infrastructure deleted successfully.</div>
+            <button onclick="closeDeleteModal();closeDetail();loadOverview();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        return;
+    }
+    if (evt.step === 0 && evt.status === 'error') {
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
+            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        return;
+    }
+    const icon = document.getElementById('del-icon-' + evt.step);
+    const label = document.getElementById('del-label-' + evt.step);
+    if (!icon || !label) return;
+    if (evt.status === 'running') {
+        icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+        label.style.color = '#eee';
+    } else if (evt.status === 'done') {
+        icon.innerHTML = '✓'; icon.style.color = '#4ecdc4'; label.style.color = '#4ecdc4';
+        if (evt.message) label.textContent += ' — ' + evt.message;
+    } else if (evt.status === 'error') {
+        icon.innerHTML = '✗'; icon.style.color = '#ff6b6b'; label.style.color = '#ff6b6b';
+        for (let i = evt.step + 1; i <= 5; i++) {
+            const si = document.getElementById('del-icon-' + i);
+            const sl = document.getElementById('del-label-' + i);
+            if (si) { si.innerHTML = '—'; si.style.color = '#444'; }
+            if (sl) sl.style.color = '#444';
+        }
+        document.getElementById('del-result').style.display = 'block';
+        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+    }
+}
+
+// --- Transition Infrastructure ---
+const TRANSITION_STEPS = [
+    {id: 1, label: 'Setting up new SmartLead client'},
+    {id: 2, label: 'Updating SmartLead tags'},
+    {id: 3, label: 'Verifying client assignment'},
+    {id: 4, label: 'Updating Zapmail domain tags'},
+    {id: 5, label: 'Setting forwarding domain'},
+    {id: 6, label: 'Updating Google Sheet'},
+];
+
+async function openTransitionModal(clientId, clientName) {
+    document.getElementById('tr-client-id').value = clientId;
+    document.getElementById('tr-client-name').value = clientName;
+    document.getElementById('tr-source-label').textContent = 'Transitioning from: ' + clientName;
+    document.getElementById('tr-new-client-row').style.display = 'none';
+    document.getElementById('tr-forwarding').value = '';
+    document.getElementById('tr-start-btn').disabled = true;
+    document.getElementById('tr-start-btn').style.opacity = '0.5';
+    document.getElementById('transition-form').style.display = 'block';
+    document.getElementById('transition-progress').style.display = 'none';
+    document.getElementById('transition-overlay').style.display = 'block';
+    document.getElementById('transition-modal').style.display = 'block';
+
+    const select = document.getElementById('tr-client-select');
+    select.innerHTML = '<option value="">Loading...</option>';
+    try {
+        const data = await edgeFetch('/smartlead-proxy?action=clients-list');
+        let opts = '<option value="">Select a client...</option>';
+        (data.clients || []).filter(c => c !== clientName).forEach(c => {
+            opts += `<option value="${c}">${c}</option>`;
+        });
+        opts += '<option value="__new__">+ Add New Client</option>';
+        select.innerHTML = opts;
+    } catch(e) {
+        select.innerHTML = '<option value="">Error loading clients</option>';
+    }
+}
+
+function closeTransitionModal() {
+    document.getElementById('transition-overlay').style.display = 'none';
+    document.getElementById('transition-modal').style.display = 'none';
+}
+
+function onTransitionClientChange() {
+    const val = document.getElementById('tr-client-select').value;
+    document.getElementById('tr-new-client-row').style.display = val === '__new__' ? 'block' : 'none';
+    if (val !== '__new__') document.getElementById('tr-new-client-name').value = '';
+    checkTransitionReady();
+}
+
+function checkTransitionReady() {
+    const selectVal = document.getElementById('tr-client-select').value;
+    const newName = document.getElementById('tr-new-client-name').value.trim();
+    const fwd = document.getElementById('tr-forwarding').value.trim();
+    const hasClient = selectVal === '__new__' ? newName.length > 0 : selectVal.length > 0;
+    const ready = hasClient && fwd.length > 0;
+    document.getElementById('tr-start-btn').disabled = !ready;
+    document.getElementById('tr-start-btn').style.opacity = ready ? '1' : '0.5';
+}
+
+function startTransition() {
+    const clientId = document.getElementById('tr-client-id').value;
+    const clientName = document.getElementById('tr-client-name').value;
+    const selectVal = document.getElementById('tr-client-select').value;
+    const isNew = selectVal === '__new__';
+    const newClientName = isNew ? document.getElementById('tr-new-client-name').value.trim() : selectVal;
+    const fwd = document.getElementById('tr-forwarding').value.trim();
+
+    document.getElementById('transition-form').style.display = 'none';
+    document.getElementById('transition-progress').style.display = 'block';
+    document.getElementById('tr-progress-client').textContent = newClientName;
+
+    let stepsHtml = '';
+    TRANSITION_STEPS.forEach(s => {
+        stepsHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
+            <span id="tr-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
+            <span id="tr-label-${s.id}" style="color:#888;">${s.label}</span>
+        </div>`;
+    });
+    document.getElementById('tr-steps').innerHTML = stepsHtml;
+    document.getElementById('tr-result').style.display = 'none';
+
+    edgeFetch('/sse-ops?action=transition', {
+        method: 'POST',
+        body: JSON.stringify({client_id: clientId, client_name: clientName, new_client_name: newClientName, forwarding_domain: fwd, is_new_client: isNew})
+    }).then(result => {
+        if (!result.job_id) {
+            document.getElementById('tr-result').style.display = 'block';
+            document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">Failed to start job: ${result.error || 'unknown error'}</div>
+                <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+            return;
+        }
+        let lastStep = 0;
+        const poll = setInterval(async () => {
+            const { data: events } = await sb.from('sse_events').select('*').eq('job_id', result.job_id).order('step');
+            if (!events) return;
+            events.forEach(e => {
+                if (e.step > lastStep || e.status === 'complete' || e.status === 'error') {
+                    handleTransitionEvent(e);
+                    if (e.step > lastStep) lastStep = e.step;
+                }
+                if (e.status === 'complete' || (e.status === 'error' && e.step === 0)) clearInterval(poll);
+            });
+        }, 2000);
+    }).catch(err => {
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
+            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+    });
+}
+
+function handleTransitionEvent(evt) {
+    if (evt.status === 'complete') {
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Transition complete!</div>
+            <button onclick="closeTransitionModal();closeDetail();loadOverview();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        return;
+    }
+    if (evt.step === 0 && evt.status === 'error') {
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
+            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        return;
+    }
+    const icon = document.getElementById('tr-icon-' + evt.step);
+    const label = document.getElementById('tr-label-' + evt.step);
+    if (!icon || !label) return;
+    if (evt.status === 'running') {
+        icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+        label.style.color = '#eee';
+    } else if (evt.status === 'done') {
+        icon.innerHTML = '✓'; icon.style.color = '#4ecdc4'; label.style.color = '#4ecdc4';
+    } else if (evt.status === 'error') {
+        icon.innerHTML = '✗'; icon.style.color = '#ff6b6b'; label.style.color = '#ff6b6b';
+        for (let i = evt.step + 1; i <= 6; i++) {
+            const si = document.getElementById('tr-icon-' + i);
+            const sl = document.getElementById('tr-label-' + i);
+            if (si) { si.innerHTML = '—'; si.style.color = '#444'; }
+            if (sl) sl.style.color = '#444';
+        }
+        document.getElementById('tr-result').style.display = 'block';
+        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+    }
+}
+
+// --- Replacement Trigger ---
+async function triggerReplacement(clientId, flaggedDomains) {
+    const statusEl = document.getElementById('replacement-status-' + clientId);
+    statusEl.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Starting...';
+
+    const client = overviewData.clients.find(c => c.id === parseInt(clientId));
+    if (!client) { statusEl.textContent = 'Client not found'; return; }
+
+    try {
+        const result = await edgeFetch('/pipeline-ops?action=replacement', {
+            method: 'POST',
+            body: JSON.stringify({
+                client_name: client.name,
+                old_domain: flaggedDomains[0],
+                old_emails: [],
+                old_account_ids: [],
+            })
+        });
+        if (result.error) {
+            statusEl.innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+        } else {
+            statusEl.innerHTML = '<span style="color:#4ecdc4;">Pipeline started!</span>';
+        }
+    } catch(err) {
+        statusEl.innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+    }
+}
+
+// Initial load
+loadOverview();
+loadWallet();
+
+// Auto-refresh every 5 minutes
+setInterval(loadOverview, 5 * 60 * 1000);
+setInterval(loadWallet, 5 * 60 * 1000);
+</script>
+</body>
+</html>
