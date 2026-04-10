@@ -151,7 +151,10 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
             </div>
 
             <div id="acquisition-section" style="display:none;margin-top:24px;">
-                <h2 class="section-title">Acquisition Groups</h2>
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <h2 class="section-title" style="margin:0;">Acquisition Groups</h2>
+                    <button onclick="showNewAcquisitionForm()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">+ New Acquisition Group</button>
+                </div>
                 <div class="summary-row" id="acquisition-stats"></div>
                 <div class="clients-grid" id="acquisition-grid"></div>
             </div>
@@ -239,6 +242,26 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
         <button id="nc-start-btn" onclick="startNewClientPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
     </div>
     <div id="nc-status" style="margin-top:12px;font-size:13px;"></div>
+</div>
+
+<div id="new-acq-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeNewAcquisitionForm()"></div>
+<div id="new-acq-form" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:500px;max-width:90vw;">
+    <h2 style="margin-bottom:20px;">New Acquisition Group</h2>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Group Name</label>
+        <input id="acq-group-name" type="text" placeholder='e.g. "H Group (250/day)"' style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Daily Sending Volume</label>
+        <input id="acq-daily-volume" type="number" min="15" max="5000" value="250" onchange="updateAcqMath()" oninput="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+    </div>
+    <div id="acq-math" style="font-size:13px;color:#888;margin-bottom:12px;padding:10px;background:#0a1628;border-radius:6px;"></div>
+    <div id="acq-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
+    <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="closeNewAcquisitionForm()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
+        <button id="acq-start-btn" onclick="startNewAcquisitionPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
+    </div>
+    <div id="acq-status" style="margin-top:12px;font-size:13px;"></div>
 </div>
 
 <div id="assign-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeAssignModal()"></div>
@@ -1379,6 +1402,82 @@ async function startNewClientPipeline() {
     } catch(err) {
         document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
         document.getElementById('nc-start-btn').disabled = false;
+    }
+}
+
+// --- New Acquisition Group ---
+function showNewAcquisitionForm() {
+    document.getElementById('new-acq-overlay').style.display = 'block';
+    document.getElementById('new-acq-form').style.display = 'block';
+    document.getElementById('acq-status').textContent = '';
+    document.getElementById('acq-group-name').value = '';
+    document.getElementById('acq-daily-volume').value = '250';
+    document.getElementById('acq-start-btn').disabled = false;
+    updateAcqMath();
+    loadAcqInventory();
+}
+
+function closeNewAcquisitionForm() {
+    document.getElementById('new-acq-overlay').style.display = 'none';
+    document.getElementById('new-acq-form').style.display = 'none';
+}
+
+function updateAcqMath() {
+    const vol = parseInt(document.getElementById('acq-daily-volume').value) || 0;
+    const accounts = Math.ceil(vol / 15);
+    const domains = Math.ceil(accounts / 3);
+    const actualAccounts = domains * 3;
+    const actualDaily = actualAccounts * 15;
+    document.getElementById('acq-math').innerHTML =
+        `<strong>${domains}</strong> domains &times; 3 inboxes = <strong>${actualAccounts}</strong> accounts<br>` +
+        `Actual capacity: <strong>${actualDaily}</strong> emails/day &bull; Sender: Aidan Hutchinson`;
+}
+
+async function loadAcqInventory() {
+    const el = document.getElementById('acq-inventory');
+    try {
+        const resp = await fetch('/api/domain-inventory');
+        const data = await resp.json();
+        const count = data.available_count ?? 0;
+        el.textContent = count + ' domains available in inventory';
+        el.style.color = count < 5 ? '#ff6b6b' : '#4ecdc4';
+    } catch(e) {
+        el.textContent = 'Could not load inventory';
+        el.style.color = '#ff6b6b';
+    }
+}
+
+async function startNewAcquisitionPipeline() {
+    const groupName = document.getElementById('acq-group-name').value.trim();
+    const dailyVolume = parseInt(document.getElementById('acq-daily-volume').value);
+
+    if (!groupName) { alert('Group name required'); return; }
+    if (!dailyVolume || dailyVolume < 15) { alert('Daily volume must be at least 15'); return; }
+
+    document.getElementById('acq-start-btn').disabled = true;
+    document.getElementById('acq-status').innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Starting pipeline...';
+
+    try {
+        const resp = await fetch('/api/pipeline/new-acquisition', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({group_name: groupName, daily_volume: dailyVolume})
+        });
+        const result = await resp.json();
+        if (result.error) {
+            document.getElementById('acq-status').innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            document.getElementById('acq-start-btn').disabled = false;
+        } else {
+            document.getElementById('acq-status').innerHTML = '<span style="color:#4ecdc4;">Pipeline started! ' + result.infra.domains_needed + ' domains, ' + result.infra.actual_accounts + ' inboxes</span>';
+            setTimeout(() => {
+                closeNewAcquisitionForm();
+                switchTab('pipelines');
+                loadPipelines();
+            }, 1500);
+        }
+    } catch(err) {
+        document.getElementById('acq-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        document.getElementById('acq-start-btn').disabled = false;
     }
 }
 

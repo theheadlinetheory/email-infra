@@ -37,6 +37,7 @@ from setup import (
     zm_set_forwarding, zm_list_domains,
     SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API,
     sl_internal_headers as setup_sl_internal_headers,
+    calculate_infra, find_existing_config,
 )
 import db as store
 
@@ -1230,6 +1231,49 @@ def api_pipeline_replacement(body):
     return {"pipeline_id": pipeline["id"], "status": "started"}
 
 
+def api_pipeline_new_acquisition(body):
+    """Start a new acquisition group pipeline."""
+    group_name = body.get("group_name", "").strip()
+    daily_volume = body.get("daily_volume", 250)
+
+    if not group_name:
+        return {"error": "group_name required"}
+    if not daily_volume or daily_volume < 1:
+        return {"error": "daily_volume must be a positive number"}
+
+    # Check for existing config with this name
+    existing_cfg, existing_path = find_existing_config(group_name)
+    if existing_cfg:
+        if existing_cfg.get("status") == "complete":
+            return {"error": f"'{group_name}' already has a completed pipeline. Rename or delete the existing config first."}
+        return {"error": f"'{group_name}' already has an in-progress pipeline."}
+
+    infra = calculate_infra(int(daily_volume))
+
+    available = get_available_domains()
+    if not available:
+        return {"error": "No domains available in inventory"}
+
+    available.sort(key=lambda d: d.get("purchase_date", "9999"))
+    chosen = available[:infra["domains_needed"]]
+
+    if len(chosen) < infra["domains_needed"]:
+        return {"error": f"Only {len(chosen)} domains available, need {infra['domains_needed']}"}
+
+    pipeline = create_pipeline("acquisition", group_name, chosen, "https://theheadlinetheory.com/")
+    pipeline["mode"] = "acquisition"
+    save_pipeline(pipeline)
+    threading.Thread(target=run_pipeline_steps, args=(pipeline,), daemon=True).start()
+
+    return {
+        "pipeline_id": pipeline["id"],
+        "status": "started",
+        "group_name": group_name,
+        "domains": list(pipeline["domains"].keys()),
+        "infra": infra,
+    }
+
+
 def api_pipeline_active():
     """List all active pipelines."""
     try:
@@ -2388,6 +2432,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/pipeline/replacement":
             result = api_pipeline_replacement(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/pipeline/new-acquisition":
+            result = api_pipeline_new_acquisition(body)
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/client/pause-monitor":
             client_name = body.get("client_name", "")
