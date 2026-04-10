@@ -820,15 +820,36 @@ INBOX_SPECS = [
     {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.reynolds"},
 ]
 
-ACQUISITION_INBOX_SPECS = [
-    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan"},
-    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan.h"},
-    {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidanhutch"},
-]
+ACQUISITION_SENDERS = {
+    "aidan_hutchinson": {
+        "specs": [
+            {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan"},
+            {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan.h"},
+            {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidanhutch"},
+        ],
+        "label": "Aidan Hutchinson",
+    },
+    "lars_matthys": {
+        "specs": [
+            {"firstName": "Lars", "lastName": "Matthys", "mailboxUsername": "lars"},
+            {"firstName": "Lars", "lastName": "Matthys", "mailboxUsername": "lars.m"},
+            {"firstName": "Lars", "lastName": "Matthys", "mailboxUsername": "larsmatthys"},
+        ],
+        "label": "Lars Matthys",
+    },
+}
 
-def generate_mailbox_specs(domain_name, count=3, offset=0, mode="client"):
+# Default acquisition specs (backwards compatible)
+ACQUISITION_INBOX_SPECS = ACQUISITION_SENDERS["aidan_hutchinson"]["specs"]
+
+def generate_mailbox_specs(domain_name, count=3, offset=0, mode="client", sender=None):
     """Return the standard 3 inbox specs for a domain."""
-    specs = ACQUISITION_INBOX_SPECS if mode == "acquisition" else INBOX_SPECS
+    if mode == "acquisition" and sender and sender in ACQUISITION_SENDERS:
+        specs = ACQUISITION_SENDERS[sender]["specs"]
+    elif mode == "acquisition":
+        specs = ACQUISITION_INBOX_SPECS
+    else:
+        specs = INBOX_SPECS
     return specs[:count]
 
 
@@ -989,6 +1010,10 @@ TOTAL_STEPS = 12
 SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
 PROFILE_PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
 ACQUISITION_PHOTO_URL = f"{SUPABASE_STORAGE}/aidan_hutchinson.png"
+ACQUISITION_PHOTO_URLS = {
+    "aidan_hutchinson": f"{SUPABASE_STORAGE}/aidan_hutchinson.png",
+    "lars_matthys": f"{SUPABASE_STORAGE}/lars_matthys.png",
+}
 
 # Google Calendar config for rotation reminders
 GCAL_CALENDAR_ID = "c_86c4f6b9ef436cb6e4570df1d4d445331d2453ccf357935df8503209023cd58a@group.calendar.google.com"
@@ -1350,7 +1375,7 @@ def run_pipeline(config, config_path):
                 continue
 
             log(f"  {domain_name} is ACTIVE — creating {ACCOUNTS_PER_DOMAIN} inboxes...")
-            specs = generate_mailbox_specs(domain_name, ACCOUNTS_PER_DOMAIN, mode=config.get("mode", "client"))
+            specs = generate_mailbox_specs(domain_name, ACCOUNTS_PER_DOMAIN, mode=config.get("mode", "client"), sender=config.get("sender"))
 
             max_retries = 5
             retry_delay = 15  # seconds
@@ -1470,8 +1495,14 @@ def run_pipeline(config, config_path):
     if "profile_photos" not in completed:
         log_step(7, TOTAL_STEPS, "UPLOAD PROFILE PHOTOS")
 
-        is_acquisition = config.get("type") == "acquisition"
-        photo_url = ACQUISITION_PHOTO_URL if is_acquisition else PROFILE_PHOTO_URL
+        is_acquisition = config.get("mode") == "acquisition"
+        sender = config.get("sender")
+        if is_acquisition and sender and sender in ACQUISITION_PHOTO_URLS:
+            photo_url = ACQUISITION_PHOTO_URLS[sender]
+        elif is_acquisition:
+            photo_url = ACQUISITION_PHOTO_URL
+        else:
+            photo_url = PROFILE_PHOTO_URL
 
         # Collect all mailbox IDs
         all_mb_ids = []

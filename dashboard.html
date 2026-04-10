@@ -255,6 +255,13 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
         <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Daily Sending Volume</label>
         <input id="acq-daily-volume" type="number" min="15" max="5000" value="250" onchange="updateAcqMath()" oninput="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
     </div>
+    <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Sender</label>
+        <select id="acq-sender" onchange="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+            <option value="aidan_hutchinson">Aidan Hutchinson (aidan / aidan.h / aidanhutch)</option>
+            <option value="lars_matthys">Lars Matthys (lars / lars.m / larsmatthys)</option>
+        </select>
+    </div>
     <div id="acq-math" style="font-size:13px;color:#888;margin-bottom:12px;padding:10px;background:#0a1628;border-radius:6px;"></div>
     <div id="acq-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
     <div style="display:flex;gap:12px;justify-content:flex-end;">
@@ -1424,13 +1431,15 @@ function closeNewAcquisitionForm() {
 
 function updateAcqMath() {
     const vol = parseInt(document.getElementById('acq-daily-volume').value) || 0;
+    const senderKey = document.getElementById('acq-sender').value;
+    const senderLabels = {aidan_hutchinson: 'Aidan Hutchinson', lars_matthys: 'Lars Matthys'};
     const accounts = Math.ceil(vol / 15);
     const domains = Math.ceil(accounts / 3);
     const actualAccounts = domains * 3;
     const actualDaily = actualAccounts * 15;
     document.getElementById('acq-math').innerHTML =
         `<strong>${domains}</strong> domains &times; 3 inboxes = <strong>${actualAccounts}</strong> accounts<br>` +
-        `Actual capacity: <strong>${actualDaily}</strong> emails/day &bull; Sender: Aidan Hutchinson`;
+        `Actual capacity: <strong>${actualDaily}</strong> emails/day &bull; Sender: ${senderLabels[senderKey] || senderKey}`;
 }
 
 async function loadAcqInventory() {
@@ -1461,7 +1470,7 @@ async function startNewAcquisitionPipeline() {
         const resp = await fetch('/api/pipeline/new-acquisition', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({group_name: groupName, daily_volume: dailyVolume})
+            body: JSON.stringify({group_name: groupName, daily_volume: dailyVolume, sender: document.getElementById('acq-sender').value})
         });
         const result = await resp.json();
         if (result.error) {

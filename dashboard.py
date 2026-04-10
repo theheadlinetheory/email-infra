@@ -1235,6 +1235,7 @@ def api_pipeline_new_acquisition(body):
     """Start a new acquisition group pipeline."""
     group_name = body.get("group_name", "").strip()
     daily_volume = body.get("daily_volume", 250)
+    sender = body.get("sender", "aidan_hutchinson")
 
     if not group_name:
         return {"error": "group_name required"}
@@ -1262,6 +1263,7 @@ def api_pipeline_new_acquisition(body):
 
     pipeline = create_pipeline("acquisition", group_name, chosen, "https://theheadlinetheory.com/")
     pipeline["mode"] = "acquisition"
+    pipeline["sender"] = sender
     save_pipeline(pipeline)
     threading.Thread(target=run_pipeline_steps, args=(pipeline,), daemon=True).start()
 
