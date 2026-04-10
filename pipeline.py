@@ -72,10 +72,10 @@ MAILBOXES_PER_DOMAIN = 3
 ZAPMAIL_ACTIVATION_TIMEOUT_S = 30 * 60
 EXPORT_TIMEOUT_S = 15 * 60
 
-# Headshot URL — served from the dashboard itself.
-# When deployed to Render, use the Render URL. Locally, use localhost.
-_DASHBOARD_HOST = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8099")
-HEADSHOT_URL = f"{_DASHBOARD_HOST}/headshots/sean_reynolds.png"
+# Profile photo URLs (hosted on Supabase Storage — permanent, publicly accessible)
+_SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
+HEADSHOT_URL = f"{_SUPABASE_STORAGE}/sean_reynolds.png"
+ACQUISITION_HEADSHOT_URL = f"{_SUPABASE_STORAGE}/aidan_hutchinson.png"
 
 # Pipeline step definitions (order matters)
 SETUP_STEPS = [

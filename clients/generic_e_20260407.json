@@ -11,14 +11,18 @@
     "estimated_launch_date": "2026-04-21"
   },
   "forwarding_domain": "",
-  "status": "in_progress",
+  "status": "complete",
   "steps_completed": [
     "validate_apis",
     "claim_domains",
     "set_nameservers",
     "zapmail_domains",
     "zapmail_inboxes",
-    "zapmail_config"
+    "zapmail_config",
+    "smartlead_export",
+    "smartlead_warmup",
+    "smartlead_tags",
+    "export_csv"
   ],
   "configured_registrars": [
     "porkbun",
@@ -586,5 +590,62 @@
         "8c4eb205-2819-46a5-8ae4-08cb073bb266"
       ]
     }
-  ]
+  ],
+  "smartlead_account_ids": [
+    17699005,
+    17699000,
+    17698928,
+    17698925,
+    17698924,
+    17698923,
+    17698921,
+    17698920,
+    17698890,
+    17698889,
+    17698888,
+    17698887,
+    17698886,
+    17698882,
+    17698861,
+    17698824,
+    17698763,
+    17698762,
+    17698751,
+    17698747,
+    17698744,
+    17698742,
+    17698728,
+    17698723,
+    17698703,
+    17698702,
+    17698701,
+    17698700,
+    17698699,
+    17698698,
+    17698696,
+    17698695,
+    17698694,
+    17698693,
+    17698691,
+    17698690,
+    17698689,
+    17698598,
+    17698593,
+    17698592,
+    17698591,
+    17698590,
+    17698589,
+    17698588,
+    17698585,
+    17698582,
+    17698581,
+    17698580
+  ],
+  "smartlead_client_id": 337297,
+  "smartlead_tag_ids": [
+    364042,
+    262254,
+    364043
+  ],
+  "export_csv_path": "/Users/aidanhutchinson/email-infra/exports/generic_e_20260408.csv"
 }
