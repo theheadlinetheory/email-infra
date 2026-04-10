@@ -1,19 +1,75 @@
 {
-    "mode": "acquisition",
-    "client_name": "H Group (250/day)",
-    "group_name": "H Group (250/day)",
-    "sender": "lars_matthys",
-    "created_date": "2026-04-09",
-    "infrastructure": {
-        "daily_volume_target": 250,
-        "accounts_needed": 17,
-        "domains_needed": 6,
-        "actual_accounts": 18,
-        "actual_daily_capacity": 270,
-        "warmup_start_date": "2026-04-09",
-        "estimated_launch_date": "2026-04-23"
+  "mode": "acquisition",
+  "client_name": "H Group (250/day)",
+  "group_name": "H Group (250/day)",
+  "sender": "lars_matthys",
+  "created_date": "2026-04-09",
+  "infrastructure": {
+    "daily_volume_target": 250,
+    "accounts_needed": 17,
+    "domains_needed": 6,
+    "actual_accounts": 18,
+    "actual_daily_capacity": 270,
+    "warmup_start_date": "2026-04-09",
+    "estimated_launch_date": "2026-04-23"
+  },
+  "forwarding_domain": "https://theheadlinetheory.com/",
+  "status": "in_progress",
+  "steps_completed": [
+    "validate_apis",
+    "claim_domains",
+    "set_nameservers",
+    "zapmail_domains"
+  ],
+  "purchased_domains": [
+    {
+      "domain": "headlinetheoryideas.com",
+      "provider": "Spaceship",
+      "row_number": 52,
+      "nameservers_set": true,
+      "zapmail_domain_id": "b1a2234c-9e8e-4d5c-abe8-c9978a352f60",
+      "zapmail_connected": true
     },
-    "forwarding_domain": "https://theheadlinetheory.com/",
-    "status": "in_progress",
-    "steps_completed": []
+    {
+      "domain": "headlinetheorydigital.com",
+      "provider": "Spaceship",
+      "row_number": 63,
+      "nameservers_set": true,
+      "zapmail_domain_id": "6eb02173-0d27-4de3-b95d-cf02c74be1a9",
+      "zapmail_connected": true
+    },
+    {
+      "domain": "headlinetheorycreative.com",
+      "provider": "Spaceship",
+      "row_number": 47,
+      "nameservers_set": true,
+      "zapmail_domain_id": "a6551e2e-2b54-4ad4-aae1-fa76b3baeae0",
+      "zapmail_connected": true
+    },
+    {
+      "domain": "headlinetheorycloud.com",
+      "provider": "Spaceship",
+      "row_number": 35,
+      "nameservers_set": true,
+      "zapmail_domain_id": "577ee27d-08fc-4208-b6a1-ea13474307a6",
+      "zapmail_connected": true
+    },
+    {
+      "domain": "headlinetheorylabs.com",
+      "provider": "Spaceship",
+      "row_number": 65,
+      "nameservers_set": true,
+      "zapmail_domain_id": "b88ddfe1-8b4f-4b22-9a93-f8466100cc93",
+      "zapmail_connected": true
+    },
+    {
+      "domain": "headlinetheorypress.com",
+      "provider": "Spaceship",
+      "row_number": 67,
+      "nameservers_set": true,
+      "zapmail_domain_id": "6098de36-a46f-41f0-9cad-baeb291a587b",
+      "zapmail_connected": true
+    }
+  ],
+  "workspace_id": "06d331bc-9610-40d0-b881-ef5e9883ec70"
 }
