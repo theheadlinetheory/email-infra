@@ -990,11 +990,17 @@ function renderAcquisitionGroups(groups) {
     grid.innerHTML = groups.map(g => {
         const healthColor = g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
         const healthBg = g.health_score >= 85 ? '#1a4a3a' : g.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+        const isReady = g.status === 'ready';
+        const statusColor = isReady ? '#4ecdc4' : '#7c4dff';
+        const statusBg = isReady ? '#1a4a3a' : '#2a1a4a';
+        const statusLabel = isReady ? 'Ready' : g.days_left + 'd left';
+        const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
         return `
         <div class="client-card ${g.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${g.id}, '${g.name.replace(/'/g, "\\'")}')">
             <div class="cc-header">
                 <span class="cc-name">${g.name}</span>
                 <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${statusBg};color:${statusColor};font-size:13px;padding:3px 10px;">${statusLabel}</span>
                     <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${g.health_score}</span>
                     <span class="cc-count">${g.accounts} accounts</span>
                 </div>
@@ -1005,8 +1011,18 @@ function renderAcquisitionGroups(groups) {
                 <div class="cc-stat"><span class="label">Warming</span><span>${g.warming}</span></div>
                 <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
                 <div class="cc-stat"><span class="label">Domains</span><span>${g.total_domains}</span></div>
+                <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
+                <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
                 <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ff6b6b' : g.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4'}">${g.avg_bounce_rate}%</span></div>
                 <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#4ecdc4' : g.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b'}">${g.avg_reply_rate}%</span></div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;">
+                    <span>Warmup Progress</span><span>${progressPct}%</span>
+                </div>
+                <div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="background:${isReady ? '#4ecdc4' : '#7c4dff'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
+                </div>
             </div>
         </div>`;
     }).join('');

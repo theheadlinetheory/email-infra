@@ -271,6 +271,7 @@ Deno.serve(async (req) => {
         const clReplyRates: number[] = [];
         const flaggedDomains = new Set<string>();
         const allDomains = new Set<string>();
+        const warmupDates: string[] = [];
 
         for (const acc of clAccounts) {
           const email = (acc.from_email as string) || "";
@@ -278,6 +279,8 @@ Deno.serve(async (req) => {
           if (domain) allDomains.add(domain);
 
           const wd = (acc.warmup_details as Record<string, unknown>) || {};
+          const warmupCreated = (wd.warmup_created_at as string) || "";
+          if (warmupCreated) warmupDates.push(warmupCreated.slice(0, 10));
           if (wd.status === "ACTIVE") warming++;
           if ((acc.campaign_count as number) > 0) inCampaign++;
           if (!acc.is_smtp_success) smtpFail++;
@@ -335,6 +338,24 @@ Deno.serve(async (req) => {
         const avgReply = clReplyRates.length ? Math.round((clReplyRates.reduce((a, b) => a + b, 0) / clReplyRates.length) * 100) / 100 : 0;
         const totalDomains = allDomains.size;
 
+        // Warmup progress (14-day cycle, same as generic groups)
+        const earliestWarmup = warmupDates.length ? warmupDates.sort()[0] : null;
+        let daysWarming = 0;
+        let daysLeft = 0;
+        let readyDateStr = "";
+        let warmupStartStr = "";
+        let status = "warming";
+
+        if (earliestWarmup) {
+          const ws = new Date(earliestWarmup);
+          warmupStartStr = `${ws.getMonth() + 1}/${ws.getDate()}`;
+          daysWarming = Math.floor((now.getTime() - ws.getTime()) / 86400000);
+          const ready = new Date(ws.getTime() + 14 * 86400000);
+          readyDateStr = `${ready.getMonth() + 1}/${ready.getDate()}`;
+          daysLeft = Math.max(0, Math.ceil((ready.getTime() - now.getTime()) / 86400000));
+          if (daysLeft <= 0) status = "ready";
+        }
+
         groups.push({
           id: cl.id,
           name: cl.name,
@@ -352,6 +373,11 @@ Deno.serve(async (req) => {
           flagged_domains: flaggedDomains.size,
           flagged_pct: totalDomains ? Math.round(flaggedDomains.size / totalDomains * 100) : 0,
           needs_attention: totalDomains ? flaggedDomains.size / totalDomains >= 0.15 : false,
+          warmup_start: warmupStartStr,
+          ready_date: readyDateStr,
+          days_warming: daysWarming,
+          days_left: daysLeft,
+          status,
         });
       }
 
