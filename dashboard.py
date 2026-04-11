@@ -452,7 +452,7 @@ def _compute_overview():
     # Client summaries — exclude acquisition groups and generic groups (shown in their own sections)
     def _is_acquisition_group(name):
         nl = name.lower()
-        return "group" in nl and ("/" in name or "day" in nl)
+        return ("group" in nl and ("/" in name or "day" in nl)) or nl == "acquisition inboxes"
 
     def _is_generic_group(name):
         return name.lower().startswith("generic")
@@ -941,10 +941,11 @@ def api_acquisition():
     all_accounts = get_all_accounts()  # uses 30s cache — no extra API calls
     health = get_health_metrics()
 
-    # Find group-named clients (e.g. "A Group (250/day)")
+    # Find acquisition clients (e.g. "A Group (250/day)", "Acquisition Inboxes")
     group_clients = [
         c for c in clients
-        if "group" in c.get("name", "").lower() and ("/" in c.get("name", "") or "day" in c.get("name", "").lower())
+        if ("group" in c.get("name", "").lower() and ("/" in c.get("name", "") or "day" in c.get("name", "").lower()))
+        or c.get("name", "").lower() == "acquisition inboxes"
     ]
 
     groups = []
