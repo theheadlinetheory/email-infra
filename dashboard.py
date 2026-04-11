@@ -487,21 +487,42 @@ def _compute_overview():
             except Exception:
                 pass
 
-        # "Warming up" = still in 14-day warmup period (date-based, not warmup-enabled)
-        cl_still_warming = len(cl_accounts) if days_left is not None and days_left > 0 else 0
+        # Per-account warmup classification
+        # An account is "production-ready" if it has completed its 14-day warmup
+        # OR is already in a campaign. Only these count toward daily capacity.
+        now_dt = datetime.now()
+        cl_production = 0
+        cl_still_warming = 0
+        cl_idle = 0
+        for a in cl_accounts:
+            wd = a.get("warmup_details") or {}
+            warmup_created = wd.get("warmup_created_at", "")
+            in_campaign = a.get("campaign_count", 0) > 0
+
+            # Determine if this individual account has completed warmup
+            account_warmup_done = False
+            if in_campaign:
+                account_warmup_done = True
+            elif warmup_created:
+                try:
+                    created = datetime.strptime(warmup_created[:10], "%Y-%m-%d")
+                    account_warmup_done = (now_dt - created).days >= 14
+                except (ValueError, TypeError):
+                    account_warmup_done = False
+
+            if account_warmup_done:
+                cl_production += 1
+                if not in_campaign:
+                    cl_idle += 1
+            else:
+                cl_still_warming += 1
+
         cl_campaigns = sum(1 for a in cl_accounts if a.get("campaign_count", 0) > 0)
         cl_smtp_fail = sum(1 for a in cl_accounts if not a.get("is_smtp_success"))
         cl_blocked = sum(
             1 for a in cl_accounts
             if (a.get("warmup_details") or {}).get("status") not in ("ACTIVE", None)
         )
-
-        # Idle inboxes: warmup complete (14+ days) but not in any campaign
-        warmup_complete = days_left is not None and days_left <= 0
-        cl_idle = sum(
-            1 for a in cl_accounts
-            if warmup_complete and a.get("campaign_count", 0) == 0
-        ) if warmup_complete else 0
 
         # Aggregate health metrics for this client
         cl_sent = 0
@@ -561,6 +582,7 @@ def _compute_overview():
             "id": cl["id"],
             "name": cl["name"],
             "accounts": len(cl_accounts),
+            "production_ready": cl_production,
             "warming": cl_still_warming,
             "in_campaign": cl_campaigns,
             "smtp_failures": cl_smtp_fail,
@@ -617,12 +639,18 @@ def _compute_overview():
         target_volumes = {}
 
     # Add capacity info to each client summary
+    # Only production-ready accounts (warmup complete or in campaign) count toward capacity
     for cs in client_summaries:
-        healthy = cs["accounts"] - cs["smtp_failures"] - cs["blocked"]
+        production = cs["production_ready"]
+        # Subtract SMTP failures and blocked from production accounts only
+        prod_smtp_fail = min(cs["smtp_failures"], production)
+        prod_blocked = min(cs["blocked"], production)
+        healthy = max(0, production - prod_smtp_fail - prod_blocked)
         capacity = healthy * 15
         target = target_volumes.get(cs["name"], 0)
         cs["healthy_inboxes"] = healthy
         cs["daily_capacity"] = capacity
+        cs["warming_capacity"] = cs["warming"] * 15  # future capacity once warmup completes
         cs["target_volume"] = target
         if target > 0:
             shortfall = target - capacity
