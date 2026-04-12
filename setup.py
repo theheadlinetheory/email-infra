@@ -1252,38 +1252,49 @@ def run_pipeline(config, config_path):
                 domains_to_connect.append(domain)
 
         # Connect existing domains (NOT purchase — they're already on Spaceship)
+        # Zapmail creates DNS zones on connect, so this must happen right after NS is set.
+        # Newly registered domains may return DOMAIN_NOT_REGISTERED if Zapmail's WHOIS
+        # cache hasn't updated yet — keep retrying with longer intervals.
         if domains_to_connect:
             log(f"Uploading {len(domains_to_connect)} domain(s) to Zapmail...")
-            result = zm_connect_domains(domains_to_connect, workspace_key=workspace_id)
-            log(f"  Connect result: {json.dumps(result)[:300]}")
-
-            # --- Verification: poll until all domains appear in Zapmail ---
             remaining = set(domains_to_connect)
-            max_polls = 20  # 20 * 15s = 5 minutes
+            max_polls = 120  # 120 * 30s = 60 minutes
             for poll in range(max_polls):
-                time.sleep(15)
+                result = zm_connect_domains(list(remaining), workspace_key=workspace_id)
+                statuses = result.get("data", {}).get("domains", {}) if isinstance(result, dict) else {}
+
+                # Check domain list for any that appeared
                 current = zm_list_domains(workspace_id)
-                current_names = {d.get("domain", "") for d in current}
-                newly_found = remaining & current_names
+                current_map = {d.get("domain", ""): d for d in current}
+
+                newly_found = set()
+                for dn in list(remaining):
+                    if dn in current_map or statuses.get(dn) == "SUCCESS":
+                        cd = current_map.get(dn, {})
+                        for pd in config["purchased_domains"]:
+                            if pd["domain"] == dn:
+                                pd["zapmail_domain_id"] = cd.get("id", "")
+                                pd["zapmail_connected"] = True
+                        newly_found.add(dn)
+
                 if newly_found:
-                    for dn in newly_found:
-                        for cd in current:
-                            if cd.get("domain") == dn:
-                                for pd in config["purchased_domains"]:
-                                    if pd["domain"] == dn:
-                                        pd["zapmail_domain_id"] = cd.get("id")
-                                        pd["zapmail_connected"] = True
                     remaining -= newly_found
                     log(f"  Confirmed in Zapmail: {', '.join(newly_found)}")
+                    save_config(config, config_path)
+
                 if not remaining:
                     break
-                # Re-trigger connect for stragglers
-                zm_connect_domains(list(remaining), workspace_key=workspace_id)
-                log(f"  Poll {poll+1}: waiting for {len(remaining)} domain(s)...")
+
+                not_reg = sum(1 for s in statuses.values() if s == "DOMAIN_NOT_REGISTERED")
+                if not_reg > 0:
+                    log(f"  Poll {poll+1}: {not_reg} domain(s) DOMAIN_NOT_REGISTERED (Zapmail WHOIS cache) — retrying in 30s...")
+                else:
+                    log(f"  Poll {poll+1}: waiting for {len(remaining)} domain(s)...")
+                time.sleep(30)
 
             if remaining:
                 log(f"BLOCKED: {len(remaining)} domain(s) never appeared in Zapmail: {', '.join(remaining)}", "ERROR")
-                log("Check DNS settings and re-run the pipeline.", "ERROR")
+                log("Zapmail may need more time to verify registration. Re-run the pipeline to retry.", "ERROR")
                 save_config(config, config_path)
                 return False
 
