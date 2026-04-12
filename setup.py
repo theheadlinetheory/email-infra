@@ -399,12 +399,23 @@ def zm_check_domain_availability_batch(domains):
 
 def zm_connect_domains(domain_names, workspace_key=None):
     """Upload/connect existing domains to Zapmail (NOT purchase — domains already owned on Spaceship).
-    Endpoint: POST /v2/domains/connect-domain
+    Endpoint: POST /v2/domains/connect-domain (batch, but unreliable for newly registered domains)
     Body: {domainNames: ["domain1.co", "domain2.co"]}
     NS must be set to CloudNS before calling this. Poll this endpoint to check status.
     """
     body = {"domainNames": domain_names}
     return zm_post("/v2/domains/connect-domain", body, workspace_key)
+
+
+def zm_connect_domain_single(domain_name, workspace_key=None):
+    """Connect a single domain to Zapmail by passing NS explicitly.
+    Endpoint: POST /v2/domains/connect
+    Body: {domainName: "domain.co", nameServers: "ns1,ns2,ns3,ns4"}
+    This is the endpoint the Zapmail UI uses — more reliable than connect-domain for new domains.
+    """
+    ns_str = "pns61.cloudns.net,pns62.cloudns.com,pns63.cloudns.net,pns64.cloudns.uk"
+    body = {"domainName": domain_name, "nameServers": ns_str}
+    return zm_post("/v2/domains/connect", body, workspace_key)
 
 def zm_buy_addon_mailboxes(quantity, workspace_key=None):
     """Buy add-on mailbox slots. Uses wallet balance ($3/mailbox on Pro plan).
@@ -824,7 +835,7 @@ ACQUISITION_SENDERS = {
     "aidan_hutchinson": {
         "specs": [
             {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan"},
-            {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidan.h"},
+            {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidanh"},
             {"firstName": "Aidan", "lastName": "Hutchinson", "mailboxUsername": "aidanhutch"},
         ],
         "label": "Aidan Hutchinson",
@@ -1253,48 +1264,48 @@ def run_pipeline(config, config_path):
 
         # Connect existing domains (NOT purchase — they're already on Spaceship)
         # Zapmail creates DNS zones on connect, so this must happen right after NS is set.
-        # Newly registered domains may return DOMAIN_NOT_REGISTERED if Zapmail's WHOIS
-        # cache hasn't updated yet — keep retrying with longer intervals.
+        # Uses /v2/domains/connect (single, with explicit NS) — the reliable UI endpoint.
+        # Falls back to batch /v2/domains/connect-domain if single fails.
         if domains_to_connect:
-            log(f"Uploading {len(domains_to_connect)} domain(s) to Zapmail...")
+            log(f"Connecting {len(domains_to_connect)} domain(s) to Zapmail...")
             remaining = set(domains_to_connect)
-            max_polls = 120  # 120 * 30s = 60 minutes
-            for poll in range(max_polls):
-                result = zm_connect_domains(list(remaining), workspace_key=workspace_id)
-                statuses = result.get("data", {}).get("domains", {}) if isinstance(result, dict) else {}
+            max_retries = 30  # 30 * 60s = 30 minutes for transient failures
 
-                # Check domain list for any that appeared
-                current = zm_list_domains(workspace_id)
-                current_map = {d.get("domain", ""): d for d in current}
+            for attempt in range(max_retries):
+                still_failing = set()
+                for dn in remaining:
+                    try:
+                        result = zm_connect_domain_single(dn, workspace_key=workspace_id)
+                        if isinstance(result, dict) and result.get("status") == 200:
+                            log(f"  Connected: {dn}")
+                            for pd in config["purchased_domains"]:
+                                if pd["domain"] == dn:
+                                    pd["zapmail_domain_id"] = result.get("data", {}).get("id", "")
+                                    pd["zapmail_connected"] = True
+                        else:
+                            msg = result.get("message", "") if isinstance(result, dict) else str(result)
+                            still_failing.add(dn)
+                            if attempt == 0:
+                                log(f"  Failed: {dn} ({msg})")
+                    except Exception as e:
+                        still_failing.add(dn)
+                        if attempt == 0:
+                            log(f"  Error: {dn} ({e})")
+                    time.sleep(0.5)
 
-                newly_found = set()
-                for dn in list(remaining):
-                    if dn in current_map or statuses.get(dn) == "SUCCESS":
-                        cd = current_map.get(dn, {})
-                        for pd in config["purchased_domains"]:
-                            if pd["domain"] == dn:
-                                pd["zapmail_domain_id"] = cd.get("id", "")
-                                pd["zapmail_connected"] = True
-                        newly_found.add(dn)
-
-                if newly_found:
-                    remaining -= newly_found
-                    log(f"  Confirmed in Zapmail: {', '.join(newly_found)}")
+                if still_failing:
+                    remaining = still_failing
                     save_config(config, config_path)
-
-                if not remaining:
+                    log(f"  Attempt {attempt+1}: {len(remaining)} domain(s) still failing — retrying in 60s...")
+                    time.sleep(60)
+                else:
+                    remaining = set()
+                    save_config(config, config_path)
                     break
 
-                not_reg = sum(1 for s in statuses.values() if s == "DOMAIN_NOT_REGISTERED")
-                if not_reg > 0:
-                    log(f"  Poll {poll+1}: {not_reg} domain(s) DOMAIN_NOT_REGISTERED (Zapmail WHOIS cache) — retrying in 30s...")
-                else:
-                    log(f"  Poll {poll+1}: waiting for {len(remaining)} domain(s)...")
-                time.sleep(30)
-
             if remaining:
-                log(f"BLOCKED: {len(remaining)} domain(s) never appeared in Zapmail: {', '.join(remaining)}", "ERROR")
-                log("Zapmail may need more time to verify registration. Re-run the pipeline to retry.", "ERROR")
+                log(f"BLOCKED: {len(remaining)} domain(s) could not connect: {', '.join(remaining)}", "ERROR")
+                log("Zapmail DNS resolver may be down for these. Re-run the pipeline to retry.", "ERROR")
                 save_config(config, config_path)
                 return False
 
