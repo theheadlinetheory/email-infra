@@ -1,0 +1,76 @@
+{
+  "groups": {
+    "SR-A Group (250/day)": {
+      "domains": [
+        "propertycarefocus.co",
+        "propertycaregrounds.co",
+        "propertycareoutdoor.co",
+        "propertycarepath.co",
+        "propertycarepoint.co",
+        "propertycareprime.co"
+      ],
+      "tag_id": 367634,
+      "target_daily_volume": 250
+    },
+    "SR-B Group (250/day)": {
+      "domains": [
+        "propertycareteam.co",
+        "propertycarezone.co",
+        "propertylawncare.co",
+        "propertymaintenancedirect.co",
+        "propertymaintenancezone.co",
+        "propertyservicefocus.co"
+      ],
+      "tag_id": 367635,
+      "target_daily_volume": 250
+    },
+    "SR-C Group (250/day)": {
+      "domains": [
+        "propertyservicezone.co",
+        "turfandlandscape.co",
+        "turfandoutdoorcare.co",
+        "turfandyardservice.co",
+        "turfcareconnect.co",
+        "turfcaredirect.co"
+      ],
+      "tag_id": 367636,
+      "target_daily_volume": 250
+    },
+    "SR-D Group (250/day)": {
+      "domains": [
+        "turfcareelite.co",
+        "turfcarefocus.co",
+        "turfcarehq.co",
+        "turfcareinfo.co",
+        "turfcarelead.co"
+      ],
+      "tag_id": 367637,
+      "target_daily_volume": 250
+    }
+  },
+  "domain_to_group": {
+    "propertycarefocus.co": "SR-A Group (250/day)",
+    "propertycaregrounds.co": "SR-A Group (250/day)",
+    "propertycareoutdoor.co": "SR-A Group (250/day)",
+    "propertycarepath.co": "SR-A Group (250/day)",
+    "propertycarepoint.co": "SR-A Group (250/day)",
+    "propertycareprime.co": "SR-A Group (250/day)",
+    "propertycareteam.co": "SR-B Group (250/day)",
+    "propertycarezone.co": "SR-B Group (250/day)",
+    "propertylawncare.co": "SR-B Group (250/day)",
+    "propertymaintenancedirect.co": "SR-B Group (250/day)",
+    "propertymaintenancezone.co": "SR-B Group (250/day)",
+    "propertyservicefocus.co": "SR-B Group (250/day)",
+    "propertyservicezone.co": "SR-C Group (250/day)",
+    "turfandlandscape.co": "SR-C Group (250/day)",
+    "turfandoutdoorcare.co": "SR-C Group (250/day)",
+    "turfandyardservice.co": "SR-C Group (250/day)",
+    "turfcareconnect.co": "SR-C Group (250/day)",
+    "turfcaredirect.co": "SR-C Group (250/day)",
+    "turfcareelite.co": "SR-D Group (250/day)",
+    "turfcarefocus.co": "SR-D Group (250/day)",
+    "turfcarehq.co": "SR-D Group (250/day)",
+    "turfcareinfo.co": "SR-D Group (250/day)",
+    "turfcarelead.co": "SR-D Group (250/day)"
+  }
+}

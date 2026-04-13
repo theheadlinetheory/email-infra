@@ -935,11 +935,94 @@ def api_debug_supabase():
     return info
 
 
+def _load_sr_groups():
+    """Load SR group domain mapping from clients/sr_groups.json."""
+    sr_path = SCRIPT_DIR / "clients" / "sr_groups.json"
+    if sr_path.exists():
+        try:
+            return json.loads(sr_path.read_text())
+        except Exception:
+            pass
+    return None
+
+
+def _compute_group_stats(group_name, group_id, accounts, health):
+    """Compute health/performance stats for a list of accounts."""
+    cl_scores = []
+    warming = 0
+    in_campaign = 0
+    smtp_fail = 0
+    cl_sent = 0
+    cl_bounced = 0
+    cl_replied = 0
+    cl_bounce_rates = []
+    cl_reply_rates = []
+    flagged_domains = set()
+    all_domains = set()
+
+    for acc in accounts:
+        email = acc.get("from_email", "")
+        domain = email.split("@")[-1] if "@" in email else ""
+        all_domains.add(domain)
+
+        hs = calculate_health_score(acc, health)
+        cl_scores.append(hs["score"])
+        if hs["flags"]:
+            flagged_domains.add(domain)
+
+        h = health.get(email, {})
+        sent = h.get("sent", 0) or 0
+        bounced = h.get("bounced", 0) or 0
+        replied = h.get("replied", 0) or 0
+        cl_sent += sent
+        cl_bounced += bounced
+        cl_replied += replied
+        br_val = parse_rate(h.get("bounce_rate"))
+        if br_val is not None:
+            cl_bounce_rates.append(br_val)
+        rr_val = parse_rate(h.get("reply_rate"))
+        if rr_val is not None:
+            cl_reply_rates.append(rr_val)
+
+        if (acc.get("warmup_details") or {}).get("status") == "ACTIVE":
+            warming += 1
+        if (acc.get("campaign_count", 0) or 0) > 0:
+            in_campaign += 1
+        if not acc.get("is_smtp_success"):
+            smtp_fail += 1
+
+    avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 100
+    avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 2) if cl_bounce_rates else 0
+    avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 2) if cl_reply_rates else 0
+    total_domains = len(all_domains)
+
+    return {
+        "id": group_id,
+        "name": group_name,
+        "accounts": len(accounts),
+        "warming": warming,
+        "in_campaign": in_campaign,
+        "smtp_failures": smtp_fail,
+        "total_sent": cl_sent,
+        "total_bounced": cl_bounced,
+        "total_replied": cl_replied,
+        "avg_bounce_rate": avg_bounce,
+        "avg_reply_rate": avg_reply,
+        "health_score": avg_health,
+        "total_domains": total_domains,
+        "flagged_domains": len(flagged_domains),
+        "flagged_pct": round(len(flagged_domains) / total_domains * 100) if total_domains else 0,
+        "needs_attention": len(flagged_domains) / total_domains >= 0.15 if total_domains else False,
+    }
+
+
 def api_acquisition():
     """Acquisition inbox groups with health metrics."""
     clients = get_clients()
     all_accounts = get_all_accounts()  # uses 30s cache — no extra API calls
     health = get_health_metrics()
+    sr_mapping = _load_sr_groups()
+    domain_to_group = (sr_mapping or {}).get("domain_to_group", {})
 
     # Find acquisition clients (e.g. "A Group (250/day)", "Acquisition Inboxes")
     group_clients = [
@@ -955,73 +1038,32 @@ def api_acquisition():
         if not cl_accounts:
             continue
 
+        # Split "Acquisition Inboxes" into SR sub-groups by domain
+        if cl.get("name", "").lower() == "acquisition inboxes" and domain_to_group:
+            sr_buckets = {}
+            remainder = []
+            for acc in cl_accounts:
+                email = acc.get("from_email", "")
+                domain = email.split("@")[-1] if "@" in email else ""
+                sr_group = domain_to_group.get(domain)
+                if sr_group:
+                    sr_buckets.setdefault(sr_group, []).append(acc)
+                else:
+                    remainder.append(acc)
+
+            for sr_name in sorted(sr_buckets):
+                sr_accounts = sr_buckets[sr_name]
+                total_accounts += len(sr_accounts)
+                groups.append(_compute_group_stats(sr_name, cl["id"], sr_accounts, health))
+
+            # Remaining accounts (e.g. .info domains) stay under original name
+            if remainder:
+                total_accounts += len(remainder)
+                groups.append(_compute_group_stats(cl["name"], cl["id"], remainder, health))
+            continue
+
         total_accounts += len(cl_accounts)
-        cl_scores = []
-        warming = 0
-        in_campaign = 0
-        smtp_fail = 0
-        cl_sent = 0
-        cl_bounced = 0
-        cl_replied = 0
-        cl_bounce_rates = []
-        cl_reply_rates = []
-        flagged_domains = set()
-        all_domains = set()
-
-        for acc in cl_accounts:
-            email = acc.get("from_email", "")
-            domain = email.split("@")[-1] if "@" in email else ""
-            all_domains.add(domain)
-
-            hs = calculate_health_score(acc, health)
-            cl_scores.append(hs["score"])
-            if hs["flags"]:
-                flagged_domains.add(domain)
-
-            h = health.get(email, {})
-            sent = h.get("sent", 0) or 0
-            bounced = h.get("bounced", 0) or 0
-            replied = h.get("replied", 0) or 0
-            cl_sent += sent
-            cl_bounced += bounced
-            cl_replied += replied
-            br_val = parse_rate(h.get("bounce_rate"))
-            if br_val is not None:
-                cl_bounce_rates.append(br_val)
-            rr_val = parse_rate(h.get("reply_rate"))
-            if rr_val is not None:
-                cl_reply_rates.append(rr_val)
-
-            if (acc.get("warmup_details") or {}).get("status") == "ACTIVE":
-                warming += 1
-            if (acc.get("campaign_count", 0) or 0) > 0:
-                in_campaign += 1
-            if not acc.get("is_smtp_success"):
-                smtp_fail += 1
-
-        avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 100
-        avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 2) if cl_bounce_rates else 0
-        avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 2) if cl_reply_rates else 0
-        total_domains = len(all_domains)
-
-        groups.append({
-            "id": cl["id"],
-            "name": cl["name"],
-            "accounts": len(cl_accounts),
-            "warming": warming,
-            "in_campaign": in_campaign,
-            "smtp_failures": smtp_fail,
-            "total_sent": cl_sent,
-            "total_bounced": cl_bounced,
-            "total_replied": cl_replied,
-            "avg_bounce_rate": avg_bounce,
-            "avg_reply_rate": avg_reply,
-            "health_score": avg_health,
-            "total_domains": total_domains,
-            "flagged_domains": len(flagged_domains),
-            "flagged_pct": round(len(flagged_domains) / total_domains * 100) if total_domains else 0,
-            "needs_attention": len(flagged_domains) / total_domains >= 0.15 if total_domains else False,
-        })
+        groups.append(_compute_group_stats(cl["name"], cl["id"], cl_accounts, health))
 
     return {
         "groups": groups,
