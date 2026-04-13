@@ -178,7 +178,7 @@ def main():
                 tag_ids = [ACQUISITION_INBOX_TAG_ID, ZAPMAIL_TAG_ID, group_tag_id]
                 if date_tag_id:
                     tag_ids.insert(2, date_tag_id)
-                result = sl_tag_account(acc_id, tag_ids)
+                result = sl_tag_account(acc_id, tag_ids, client_id=ACQUISITION_INBOXES_CLIENT_ID)
                 if result.get("ok"):
                     success += 1
                     log(f"  Tagged {email} -> {group_name}")
