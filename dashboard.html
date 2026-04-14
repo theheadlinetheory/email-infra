@@ -391,8 +391,15 @@ async function loadOverview() {
     document.getElementById('content').style.display = 'none';
 
     try {
-        const resp = await fetch('/api/overview');
-        const text = await resp.text();
+        // Load ALL sections in parallel — show nothing until everything is ready
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp] = await Promise.all([
+            fetch('/api/overview'),
+            fetch('/api/unassigned').catch(() => null),
+            fetch('/api/generic-groups').catch(() => null),
+            fetch('/api/acquisition').catch(() => null),
+        ]);
+
+        const text = await overviewResp.text();
         try {
             overviewData = JSON.parse(text);
         } catch (parseErr) {
@@ -403,10 +410,48 @@ async function loadOverview() {
             document.getElementById('loading').innerHTML = '<div style="text-align:left;max-width:800px;margin:0 auto;"><h3 style="color:#ff6b6b;">API Error</h3><pre style="white-space:pre-wrap;color:#ffaaaa;font-size:12px;">' + overviewData.traceback + '</pre></div>';
             return;
         }
+
+        // Parse sub-section responses
+        let unassignedData = null, genericData = null, acquisitionData = null;
+        try { if (unassignedResp) unassignedData = await unassignedResp.json(); } catch(e) {}
+        try { if (genericResp) genericData = await genericResp.json(); } catch(e) {}
+        try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
+
+        // Render everything at once — no layout shifts
         renderOverview();
-        loadUnassigned();
-        loadGenericGroups();
-        loadAcquisition();
+
+        if (unassignedData && unassignedData.count > 0) {
+            document.getElementById('unassigned-section').style.display = 'block';
+            renderUnassigned(unassignedData.accounts);
+        } else {
+            document.getElementById('unassigned-section').style.display = 'none';
+        }
+
+        if (genericData && genericData.groups && genericData.groups.length > 0) {
+            document.getElementById('generic-section').style.display = 'block';
+            const ready = genericData.groups.filter(g => g.status === 'ready').length;
+            const warming = genericData.groups.filter(g => g.status === 'warming').length;
+            document.getElementById('generic-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${genericData.total_accounts}</div><div class="label">Generic Inboxes</div></div>
+                <div class="stat-card good"><div class="value">${ready}</div><div class="label">Ready for Clients</div></div>
+                ${warming > 0 ? '<div class="stat-card warn"><div class="value">' + warming + '</div><div class="label">Still Warming</div></div>' : ''}
+                <div class="stat-card"><div class="value">${genericData.total_daily_capacity}/day</div><div class="label">Total Capacity</div></div>
+            `;
+            renderGenericGroups(genericData.groups);
+        } else {
+            document.getElementById('generic-section').style.display = 'none';
+        }
+
+        if (acquisitionData && acquisitionData.total_groups > 0) {
+            document.getElementById('acquisition-section').style.display = 'block';
+            document.getElementById('acquisition-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${acquisitionData.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
+                <div class="stat-card"><div class="value">${acquisitionData.total_groups}</div><div class="label">Active Groups</div></div>
+            `;
+            renderAcquisitionGroups(acquisitionData.groups);
+        } else {
+            document.getElementById('acquisition-section').style.display = 'none';
+        }
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
     }
@@ -518,7 +563,14 @@ function renderOverview() {
                     </div>
                 </div>
                 ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? '#4ecdc4' : '#ff6b6b') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
-            ${cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : ''}
+            ${cl.batches && cl.batches.length > 1 ? '<div style="margin-top:10px;border-top:1px solid #0f3460;padding-top:8px;">' + cl.batches.map(b => {
+                if (b.status === 'ready') {
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:#4ecdc4;">&#9679; ' + b.total + ' accounts ready</span><span style="color:#888;">since ' + b.warmup_start + '</span></div>';
+                } else {
+                    const pct = Math.round(b.days_done / 14 * 100);
+                    return '<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:3px;"><span style="color:#7c4dff;">&#9679; ' + b.total + ' new accounts warming</span><span>Day ' + b.days_done + '/14</span></div><div style="background:#0a1628;border-radius:4px;height:5px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + pct + '%;border-radius:4px;"></div></div></div>';
+                }
+            }).join('') + '</div>' : (cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : '')}
             <div class="cc-dates">
                 ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
                 ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}

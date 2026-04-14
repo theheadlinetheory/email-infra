@@ -524,6 +524,39 @@ def _compute_overview():
             if (a.get("warmup_details") or {}).get("status") not in ("ACTIVE", None)
         )
 
+        # Group accounts into batches by warmup start date (within 3 days = same batch)
+        _batch_buckets = {}
+        for a in cl_accounts:
+            wd = a.get("warmup_details") or {}
+            wc = wd.get("warmup_created_at", "")
+            if not wc:
+                continue
+            try:
+                d = datetime.strptime(wc[:10], "%Y-%m-%d")
+                bucket = (d - datetime(2020, 1, 1)).days // 3
+                if bucket not in _batch_buckets:
+                    _batch_buckets[bucket] = {"date": d, "total": 0, "ready": 0, "warming": 0}
+                _batch_buckets[bucket]["total"] += 1
+                if (now_dt - d).days >= 14 or a.get("campaign_count", 0) > 0:
+                    _batch_buckets[bucket]["ready"] += 1
+                else:
+                    _batch_buckets[bucket]["warming"] += 1
+            except (ValueError, TypeError):
+                pass
+
+        batches = []
+        for bucket in sorted(_batch_buckets.keys()):
+            b = _batch_buckets[bucket]
+            days_since = (now_dt - b["date"]).days
+            batches.append({
+                "warmup_start": b["date"].strftime("%Y-%m-%d"),
+                "total": b["total"],
+                "ready": b["ready"],
+                "warming": b["warming"],
+                "days_done": min(14, days_since),
+                "status": "ready" if days_since >= 14 else "warming",
+            })
+
         # Aggregate health metrics for this client
         cl_sent = 0
         cl_bounced = 0
@@ -606,6 +639,7 @@ def _compute_overview():
             "warmup_progress": warmup_progress,
             "warmup_days_done": warmup_days_done,
             "idle_inboxes": cl_idle,
+            "batches": batches,
         })
 
     client_summaries.sort(
