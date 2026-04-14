@@ -1382,7 +1382,7 @@ def api_pipeline_new_acquisition(body):
 
 
 def api_pipeline_active():
-    """List all active pipelines."""
+    """List all pipelines with per-domain status."""
     try:
         all_p = load_all_pipelines()
     except Exception as e:
@@ -1390,17 +1390,32 @@ def api_pipeline_active():
         all_p = []
     result = []
     for p in all_p:
+        # Build per-domain summary
+        domain_details = {}
+        for domain, info in p.get("domains", {}).items():
+            domain_details[domain] = {
+                "step": info.get("step", ""),
+                "step_status": info.get("step_status", ""),
+                "error": info.get("error"),
+                "attempt": info.get("attempt", 1),
+                "max_attempts": info.get("max_attempts", 3),
+                "step_history": info.get("step_history", []),
+            }
+
         result.append({
             "id": p["id"],
             "type": p["type"],
             "client_name": p["client_name"],
             "status": p["status"],
             "current_step": p.get("current_step", ""),
+            "steps": p.get("steps", []),
             "domains": list(p["domains"].keys()),
+            "domain_details": domain_details,
             "created_at": p.get("created_at", ""),
             "updated_at": p.get("updated_at", ""),
             "errors": p.get("errors", []),
             "pending_removals": p.get("pending_removals", {}),
+            "retry_info": p.get("retry_info"),
         })
     result.sort(key=lambda p: p["created_at"], reverse=True)
     return {"pipelines": result}
@@ -1412,6 +1427,93 @@ def api_pipeline_detail(pipeline_id):
     if not p:
         return {"error": "Pipeline not found"}
     return p
+
+
+def api_pipeline_retry(body):
+    """Retry failed domains on the current step of an errored pipeline."""
+    pipeline_id = body.get("pipeline_id", "")
+    retry_domains = body.get("domains", [])  # empty = retry all failed
+
+    if not pipeline_id:
+        return {"error": "pipeline_id required"}
+
+    p = load_pipeline(pipeline_id)
+    if not p:
+        return {"error": "Pipeline not found"}
+    if p["status"] != "error":
+        return {"error": f"Pipeline is '{p['status']}', not 'error' — cannot retry"}
+
+    # Find domains to retry
+    retrying = []
+    for domain, info in p["domains"].items():
+        if info.get("step_status") == "error":
+            if retry_domains and domain not in retry_domains:
+                continue
+            info["step_status"] = "pending"
+            info["error"] = None
+            info["attempt"] = 1
+            retrying.append(domain)
+
+    if not retrying:
+        return {"error": "No failed domains to retry"}
+
+    p["status"] = "running"
+    p["errors"] = []  # clear stale error list
+    p["updated_at"] = datetime.now().isoformat()
+    save_pipeline(p)
+
+    threading.Thread(target=run_pipeline_steps, args=(p,), daemon=True).start()
+
+    return {"pipeline_id": p["id"], "status": "running", "retrying_domains": retrying}
+
+
+def api_pipeline_skip_step(body):
+    """Skip the current step and advance to the next one."""
+    pipeline_id = body.get("pipeline_id", "")
+
+    if not pipeline_id:
+        return {"error": "pipeline_id required"}
+
+    p = load_pipeline(pipeline_id)
+    if not p:
+        return {"error": "Pipeline not found"}
+    if p["status"] != "error":
+        return {"error": f"Pipeline is '{p['status']}', not 'error' — cannot skip"}
+
+    current_step = p["current_step"]
+    steps = p["steps"]
+    current_idx = steps.index(current_step)
+
+    if current_idx >= len(steps) - 1:
+        return {"error": "Already on the last step — cannot skip"}
+
+    # Mark all domains as complete for skipped step, log the skip
+    for domain, info in p["domains"].items():
+        info.setdefault("step_history", []).append({
+            "attempt": info.get("attempt", 0),
+            "result": "skipped",
+            "message": f"Step '{current_step}' manually skipped",
+            "at": datetime.now().isoformat(),
+        })
+        info["step"] = current_step
+        info["step_status"] = "complete"
+        info["error"] = None
+
+    next_step = steps[current_idx + 1]
+    p["current_step"] = next_step
+    p["status"] = "running"
+    p["errors"] = []
+    p["updated_at"] = datetime.now().isoformat()
+    save_pipeline(p)
+
+    threading.Thread(target=run_pipeline_steps, args=(p,), daemon=True).start()
+
+    return {
+        "pipeline_id": p["id"],
+        "skipped_step": current_step,
+        "next_step": next_step,
+        "warning": "Step skipped — some domains may have incomplete setup",
+    }
 
 
 def api_inbox_campaigns(email):
@@ -2542,6 +2644,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/pipeline/new-acquisition":
             result = api_pipeline_new_acquisition(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/pipeline/retry":
+            result = api_pipeline_retry(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/pipeline/skip-step":
+            result = api_pipeline_skip_step(body)
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/client/pause-monitor":
             client_name = body.get("client_name", "")
