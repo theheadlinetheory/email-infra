@@ -72,6 +72,15 @@ MAILBOXES_PER_DOMAIN = 3
 ZAPMAIL_ACTIVATION_TIMEOUT_S = 30 * 60
 EXPORT_TIMEOUT_S = 15 * 60
 
+# Retry policies: {step_name: (max_attempts, [wait_seconds_between_attempts])}
+RETRY_POLICIES = {
+    "connect_zapmail":      (3, [0, 1800, 1800]),    # 30 min poll window each
+    "create_mailboxes":     (3, [0, 300, 600]),       # 5 min, then 10 min
+    "export_to_smartlead":  (3, [0, 900, 900]),       # 15 min poll window each
+    "enable_warmup":        (3, [0, 120, 300]),       # 2 min, then 5 min
+}
+DEFAULT_RETRY_POLICY = (2, [0, 120])                  # 2 attempts, 2 min wait
+
 # Profile photo URLs (hosted on Supabase Storage — permanent, publicly accessible)
 _SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
 HEADSHOT_URL = f"{_SUPABASE_STORAGE}/sean_reynolds.png"
@@ -111,8 +120,12 @@ def _get_pipeline_lock(pipeline_id):
 
 
 def _mark_all_domains_complete(pipeline, step_name):
-    """Mark all domains as complete for a given step."""
+    """Mark pending/error domains as complete for a given step.
+    Skips domains already marked complete for this step (preserves retry state).
+    """
     for info in pipeline["domains"].values():
+        if info["step"] == step_name and info["step_status"] == "complete":
+            continue
         info["step"] = step_name
         info["step_status"] = "complete"
 
@@ -184,6 +197,9 @@ def create_pipeline(pipeline_type, client_name, domains, forwarding_url=""):
             "mailbox_ids": [],
             "smartlead_account_ids": [],
             "error": None,
+            "attempt": 1,
+            "max_attempts": 3,
+            "step_history": [],
         }
 
     save_pipeline(pipeline)
