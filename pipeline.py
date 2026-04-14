@@ -81,6 +81,12 @@ RETRY_POLICIES = {
 }
 DEFAULT_RETRY_POLICY = (2, [0, 120])                  # 2 attempts, 2 min wait
 
+
+def notify_pipeline_error(pipeline):
+    """Stub — replaced in Task 3 with Slack notification."""
+    log.warning("[PIPELINE] Error in pipeline %s at step %s", pipeline.get("id"), pipeline.get("current_step"))
+
+
 # Profile photo URLs (hosted on Supabase Storage — permanent, publicly accessible)
 _SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
 HEADSHOT_URL = f"{_SUPABASE_STORAGE}/sean_reynolds.png"
@@ -845,6 +851,89 @@ STEP_EXECUTORS = {
 }
 
 
+def _run_step_with_retry(pipeline, step_name):
+    """Execute a step with automatic retry and backoff.
+
+    Returns True if all domains passed, False if any domain still errored
+    after exhausting all retry attempts.
+    """
+    policy = RETRY_POLICIES.get(step_name, DEFAULT_RETRY_POLICY)
+    max_attempts, waits = policy
+
+    executor = STEP_EXECUTORS[step_name]
+
+    for attempt_num in range(1, max_attempts + 1):
+        # Update attempt info on pending/error domains
+        for info in pipeline["domains"].values():
+            if info["step_status"] in ("pending", "error", "retry"):
+                info["attempt"] = attempt_num
+                info["max_attempts"] = max_attempts
+
+        # Update pipeline retry info for frontend display
+        pipeline["retry_info"] = {
+            "step": step_name,
+            "attempt": attempt_num,
+            "max_attempts": max_attempts,
+        }
+        pipeline["updated_at"] = datetime.now().isoformat()
+        save_pipeline(pipeline)
+
+        # Run the step executor
+        success = executor(pipeline)
+        save_pipeline(pipeline)
+
+        if success:
+            pipeline.pop("retry_info", None)
+            return True
+
+        # Check if any domains actually errored (vs waiting states)
+        errored = [
+            d for d, info in pipeline["domains"].items()
+            if info.get("step_status") in ("error", "retry")
+        ]
+        if not errored:
+            # Step returned False but no domain errors — might be a wait state
+            pipeline.pop("retry_info", None)
+            return False
+
+        # If we have more attempts, log the failure and wait
+        if attempt_num < max_attempts:
+            wait_secs = waits[attempt_num] if attempt_num < len(waits) else waits[-1]
+            log.info(
+                "[RETRY] %s attempt %d/%d failed for %d domains, waiting %ds",
+                step_name, attempt_num, max_attempts, len(errored), wait_secs,
+            )
+
+            # Record attempt in step_history
+            for d_name in errored:
+                info = pipeline["domains"][d_name]
+                info["step_history"].append({
+                    "attempt": attempt_num,
+                    "result": "error",
+                    "message": info.get("error", ""),
+                    "at": datetime.now().isoformat(),
+                })
+                # Reset for next attempt
+                info["step_status"] = "pending"
+                info["error"] = None
+
+            save_pipeline(pipeline)
+            time.sleep(wait_secs)
+        else:
+            # Final attempt exhausted — record in history
+            for d_name in errored:
+                info = pipeline["domains"][d_name]
+                info["step_history"].append({
+                    "attempt": attempt_num,
+                    "result": "error",
+                    "message": info.get("error", ""),
+                    "at": datetime.now().isoformat(),
+                })
+
+    pipeline.pop("retry_info", None)
+    return False
+
+
 def run_pipeline_steps(pipeline):
     """Execute pipeline steps from current position until blocked or complete.
     Acquires a per-pipeline lock to prevent concurrent execution.
@@ -864,18 +953,18 @@ def run_pipeline_steps(pipeline):
             pipeline["updated_at"] = datetime.now().isoformat()
             save_pipeline(pipeline)
 
-            executor = STEP_EXECUTORS[step_name]
-            success = executor(pipeline)
+            success = _run_step_with_retry(pipeline, step_name)
             save_pipeline(pipeline)
 
             if not success:
                 if pipeline["status"] == "awaiting_removal":
-                    return  # Paused for manual action
+                    return
                 if step_name == "wait_for_warmup":
-                    return  # Will be re-checked by monitor
-                # Error — stop
+                    return
+                # All retries exhausted — error
                 pipeline["status"] = "error"
                 save_pipeline(pipeline)
+                notify_pipeline_error(pipeline)
                 return
 
         # All steps complete
