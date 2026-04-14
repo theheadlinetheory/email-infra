@@ -82,9 +82,48 @@ RETRY_POLICIES = {
 DEFAULT_RETRY_POLICY = (2, [0, 120])                  # 2 attempts, 2 min wait
 
 
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+
 def notify_pipeline_error(pipeline):
-    """Stub — replaced in Task 3 with Slack notification."""
-    log.warning("[PIPELINE] Error in pipeline %s at step %s", pipeline.get("id"), pipeline.get("current_step"))
+    """Send Slack notification when a pipeline fails after all automatic retries."""
+    if not SLACK_WEBHOOK_URL:
+        log.warning("[SLACK] No SLACK_WEBHOOK_URL configured, skipping notification")
+        return
+
+    step = pipeline.get("current_step", "unknown")
+    client = pipeline.get("client_name", "unknown")
+
+    # Collect failed domains
+    failed = []
+    passed = 0
+    for domain, info in pipeline.get("domains", {}).items():
+        if info.get("step_status") == "error":
+            failed.append(f"  • {domain}: {info.get('error', 'Unknown error')}")
+        elif info.get("step_status") == "complete":
+            passed += 1
+
+    total = len(pipeline.get("domains", {}))
+    failed_text = "\n".join(failed) if failed else "  (no domain-level errors captured)"
+
+    policy = RETRY_POLICIES.get(step, DEFAULT_RETRY_POLICY)
+    attempts_used = policy[0]
+
+    text = (
+        f":rotating_light: *Pipeline Error: {client}*\n"
+        f"*Step:* {step} ({attempts_used}/{attempts_used} attempts exhausted)\n\n"
+        f"*Failed domains:*\n{failed_text}\n\n"
+        f"{passed}/{total} domains completed successfully."
+    )
+
+    try:
+        requests.post(
+            SLACK_WEBHOOK_URL,
+            json={"text": text},
+            timeout=10,
+        )
+    except Exception as e:
+        log.warning("[SLACK] Failed to send notification: %s", e)
 
 
 # Profile photo URLs (hosted on Supabase Storage — permanent, publicly accessible)
