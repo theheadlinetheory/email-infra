@@ -30,7 +30,7 @@ from zapmail_ops import (
     zm_get_placement_results, zm_get_placement_eligible_mailboxes,
     zm_run_placement_test, zm_get_placement_credits,
 )
-from sheets import get_available_domains, get_domain_summary, get_all_master_domains, write_range, setup_client_tab
+from sheets import get_available_domains, get_acquisition_domains, get_domain_summary, get_all_master_domains, write_range, setup_client_tab
 from setup import (
     sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
     zm_list_domain_tags, zm_create_domain_tag, zm_assign_domain_tag,
@@ -1605,22 +1605,56 @@ def api_wallet():
     return zm_get_wallet_balance()
 
 
+_inventory_alert_times = {}  # {"Client": datetime, "Acquisition": datetime}
+
+
+def _send_inventory_alert(pool_name, count):
+    """Send Slack alert for low domain inventory, max once per pool per 24h."""
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
+    if not webhook_url:
+        return
+
+    now = datetime.utcnow()
+    last_sent = _inventory_alert_times.get(pool_name)
+    if last_sent and (now - last_sent) < timedelta(hours=24):
+        return  # Already alerted recently
+
+    try:
+        requests.post(
+            webhook_url,
+            json={"text": f"\u26a0\ufe0f Domain inventory low: {pool_name} pool has {count} available (threshold: {DOMAIN_INVENTORY_THRESHOLD})"},
+            timeout=10,
+        )
+        _inventory_alert_times[pool_name] = now
+    except Exception as e:
+        print(f"[SLACK] Failed to send inventory alert: {e}")
+
+
+DOMAIN_INVENTORY_THRESHOLD = 20
+
+
 def api_domain_inventory():
-    """Get available domain inventory from THT spreadsheet."""
-    available = get_available_domains()
-    summary = get_domain_summary()
+    """Get available domain inventory split by client and acquisition pools."""
+    client_domains = get_available_domains()
+    acquisition_domains = get_acquisition_domains()
+    client_count = len(client_domains)
+    acq_count = len(acquisition_domains)
+    client_low = client_count < DOMAIN_INVENTORY_THRESHOLD
+    acq_low = acq_count < DOMAIN_INVENTORY_THRESHOLD
+
+    # Send Slack alerts for low inventory (debounced)
+    if client_low:
+        _send_inventory_alert("Client", client_count)
+    if acq_low:
+        _send_inventory_alert("Acquisition", acq_count)
+
     return {
-        "available_count": len(available),
-        "available_domains": [
-            {
-                "domain": d["domain"],
-                "provider": d.get("provider", ""),
-                "purchase_date": d.get("purchase_date", ""),
-                "notes": d.get("notes", ""),
-            }
-            for d in available
-        ],
-        "summary": summary,
+        "client_available": client_count,
+        "acquisition_available": acq_count,
+        "client_threshold": DOMAIN_INVENTORY_THRESHOLD,
+        "acquisition_threshold": DOMAIN_INVENTORY_THRESHOLD,
+        "client_low": client_low,
+        "acquisition_low": acq_low,
     }
 
 
