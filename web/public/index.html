@@ -4,116 +4,240 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THT Dashboard</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%234ecdc4'/><text x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='14' fill='%231a1a2e'>THT</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2340E0D0'/><text x='16' y='22' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='700' font-size='14' fill='%230d0d14'>THT</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
+:root {
+    --bg-root: #0d0d14;
+    --bg-surface: #14141f;
+    --bg-raised: #1a1a28;
+    --bg-input: #10101a;
+    --border: #252535;
+    --border-light: #1e1e2e;
+    --text-primary: #e8e8ed;
+    --text-secondary: #7a7a8e;
+    --text-muted: #50506a;
+    --accent: #40E0D0;
+    --accent-dim: #2ba89b;
+    --accent-bg: #162b28;
+    --purple: #8b5cf6;
+    --purple-bg: #1e1635;
+    --red: #ef4444;
+    --red-dim: #dc2626;
+    --red-bg: #2a1215;
+    --yellow: #f59e0b;
+    --yellow-bg: #2a2010;
+    --font-body: 'Outfit', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SF Mono', monospace;
+    --radius: 8px;
+    --radius-lg: 12px;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+body { font-family: var(--font-body); background: var(--bg-root); color: var(--text-primary); min-height: 100vh; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
-.topbar { background: #16213e; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460; }
-.topbar h1 { font-size: 20px; font-weight: 600; }
-.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: #888; }
-.topbar-right button { background: #0f3460; color: #eee; border: 1px solid #1a5276; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-.topbar-right button:hover { background: #1a5276; }
+/* --- Topbar --- */
+.topbar { padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px); background: rgba(20,20,31,0.92); }
+.topbar-left { display: flex; align-items: center; gap: 24px; }
+.topbar h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--text-primary); }
+.topbar h1 span { color: var(--accent); }
 
-.container { max-width: 1400px; margin: 0 auto; padding: 20px 24px; }
+/* --- Mode Switcher (like CRM Monitor) --- */
+.mode-switcher { display: flex; align-items: center; background: var(--bg-root); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.mode-switcher .mode-btn { padding: 6px 16px; font-size: 12px; font-weight: 500; font-family: var(--font-body); color: var(--text-muted); background: transparent; border: none; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.mode-switcher .mode-btn:hover { color: var(--text-secondary); }
+.mode-switcher .mode-btn.active { background: var(--accent); color: var(--bg-root); font-weight: 600; }
 
-.alert-banner { background: #5c1a1a; border: 1px solid #8b3a3a; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
-.alert-banner h3 { color: #ff6b6b; font-size: 14px; margin-bottom: 8px; }
-.alert-banner .alert-item { font-size: 13px; color: #ffaaaa; padding: 2px 0; }
+/* --- Nav Tabs (inline in topbar) --- */
+.topbar-nav { display: flex; align-items: center; gap: 4px; }
+.topbar-nav .nav-tab { padding: 8px 14px; font-size: 13px; font-weight: 500; color: var(--text-muted); background: none; border: none; cursor: pointer; border-radius: var(--radius); transition: all 0.12s; font-family: var(--font-body); }
+.topbar-nav .nav-tab:hover { color: var(--text-secondary); background: var(--bg-raised); }
+.topbar-nav .nav-tab.active { color: var(--accent); background: var(--accent-bg); }
 
-.summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
-.stat-card { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; text-align: center; }
-.stat-card .value { font-size: 28px; font-weight: 700; }
-.stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
-.stat-card.alert .value { color: #ff6b6b; }
-.stat-card.good .value { color: #4ecdc4; }
-.stat-card.warn .value { color: #ffd93d; }
+.topbar-right { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.topbar-right button { background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border); padding: 6px 14px; border-radius: var(--radius); cursor: pointer; font-size: 12px; font-family: var(--font-body); font-weight: 500; transition: all 0.15s; }
+.topbar-right button:hover { background: var(--border); color: var(--text-primary); }
+.sync-btn { background: var(--accent) !important; color: var(--bg-root) !important; border: none !important; font-weight: 600 !important; padding: 7px 18px !important; }
+.sync-btn:hover { background: #5aeadb !important; }
 
-h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 0 12px; text-transform: uppercase; letter-spacing: 1px; }
+/* --- Layout --- */
+.container { padding: 24px 32px; }
 
-.clients-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-.client-card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 16px; cursor: pointer; transition: border-color 0.2s, transform 0.1s; }
-.client-card:hover { border-color: #1a5276; transform: translateY(-1px); }
-.client-card.has-alert { border-left: 3px solid #ff6b6b; }
+/* --- Alert Banner --- */
+.alert-banner { background: var(--red-bg); border: 1px solid #3d1519; border-radius: var(--radius); padding: 14px 18px; margin-bottom: 20px; }
+.alert-banner h3 { color: var(--red); font-size: 13px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.alert-banner .alert-item { font-size: 13px; color: #f8a0a0; padding: 3px 0; }
+
+/* --- Action Bar --- */
+.action-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+.action-bar .action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--font-body); transition: all 0.15s; border: none; }
+.action-bar .action-btn.primary { background: var(--accent); color: var(--bg-root); }
+.action-bar .action-btn.primary:hover { background: #5aeadb; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(64,224,208,0.2); }
+.action-bar .action-btn.secondary { background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border); }
+.action-bar .action-btn.secondary:hover { border-color: var(--accent-dim); color: var(--accent); }
+.action-bar .action-btn.purple { background: var(--purple); color: #fff; }
+.action-bar .action-btn.purple:hover { background: #9d6ff8; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(139,92,246,0.2); }
+
+/* --- Stats Row --- */
+.summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 24px; }
+.stat-card { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius); padding: 16px 18px; text-align: left; }
+.stat-card .value { font-size: 26px; font-weight: 700; font-family: var(--font-mono); letter-spacing: -1px; }
+.stat-card .label { font-size: 11px; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
+.stat-card.alert .value { color: var(--red); }
+.stat-card.good .value { color: var(--accent); }
+.stat-card.warn .value { color: var(--yellow); }
+
+/* --- Page Header --- */
+.page-header { margin-bottom: 20px; }
+.page-header h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 4px; }
+.page-header .subtitle { font-size: 13px; color: var(--text-muted); font-family: var(--font-mono); }
+
+/* --- Filter Pills --- */
+.filter-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 20px; }
+.filter-pill { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500; font-family: var(--font-body); color: var(--text-muted); background: transparent; border: 1px solid transparent; cursor: pointer; transition: all 0.12s; }
+.filter-pill:hover { color: var(--text-secondary); background: var(--bg-raised); }
+.filter-pill.active { color: var(--text-primary); background: var(--bg-raised); border-color: var(--border); }
+.filter-pill .count { display: inline-block; background: var(--bg-surface); padding: 1px 6px; border-radius: 10px; font-size: 11px; font-family: var(--font-mono); margin-left: 4px; }
+.filter-pill.active .count { background: var(--accent-bg); color: var(--accent); }
+
+/* --- Section Titles --- */
+h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 28px 0 14px; text-transform: uppercase; letter-spacing: 1.2px; }
+
+/* --- Client Cards --- */
+.clients-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.client-card { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius-lg); padding: 18px; cursor: pointer; transition: all 0.2s; }
+.client-card:hover { border-color: var(--border); background: var(--bg-raised); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+.client-card.has-alert { border-left: 3px solid var(--red); }
 .client-card .cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.client-card .cc-name { font-size: 16px; font-weight: 600; }
-.client-card .cc-count { font-size: 13px; color: #888; }
-.client-card .cc-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 13px; }
-.client-card .cc-stat { display: flex; justify-content: space-between; padding: 3px 0; }
-.client-card .cc-stat .label { color: #888; }
-.client-card .cc-dates { margin-top: 10px; padding-top: 10px; border-top: 1px solid #0f3460; font-size: 12px; color: #888; }
+.client-card .cc-name { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+.client-card .cc-count { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.client-card .cc-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 13px; }
+.client-card .cc-stat { display: flex; justify-content: space-between; padding: 4px 0; }
+.client-card .cc-stat .label { color: var(--text-muted); font-size: 12px; }
+.client-card .cc-dates { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light); font-size: 12px; color: var(--text-muted); }
 .client-card .cc-dates .date-row { display: flex; justify-content: space-between; padding: 2px 0; }
 
-.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-.badge-green { background: #1a4a3a; color: #4ecdc4; }
-.badge-yellow { background: #4a3a1a; color: #ffd93d; }
-.badge-red { background: #4a1a1a; color: #ff6b6b; }
+/* --- Badges --- */
+.badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; font-family: var(--font-mono); }
+.badge-green { background: var(--accent-bg); color: var(--accent); }
+.badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
+.badge-red { background: var(--red-bg); color: var(--red); }
 
-.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; }
-.detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 900px; max-width: 95vw; background: #16213e; z-index: 101; overflow-y: auto; padding: 24px; border-left: 1px solid #0f3460; }
-.detail-panel .close-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; }
-.detail-panel h2 { font-size: 20px; margin-bottom: 16px; }
+/* --- Detail Panel --- */
+.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; }
+.detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 940px; max-width: 95vw; background: var(--bg-surface); z-index: 101; overflow-y: auto; padding: 28px; border-left: 1px solid var(--border); }
+.detail-panel .close-btn { position: absolute; top: 16px; right: 20px; background: var(--bg-raised); border: 1px solid var(--border); color: var(--text-muted); width: 32px; height: 32px; border-radius: var(--radius); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.detail-panel .close-btn:hover { background: var(--border); color: var(--text-primary); }
+.detail-panel h2 { font-size: 18px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.3px; }
 .detail-panel table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.detail-panel th { text-align: left; padding: 8px; color: #888; border-bottom: 1px solid #0f3460; font-weight: 500; }
-.detail-panel td { padding: 8px; border-bottom: 1px solid #0a1628; }
-.detail-panel tr:hover td { background: #1a2744; }
+.detail-panel th { text-align: left; padding: 10px 8px; color: var(--text-muted); border-bottom: 1px solid var(--border); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.detail-panel td { padding: 10px 8px; border-bottom: 1px solid var(--border-light); }
+.detail-panel tr:hover td { background: var(--bg-raised); }
 
+/* --- Unassigned --- */
 .unassigned-section { margin-top: 32px; }
-.assign-controls { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
-.assign-controls select { background: #0a1628; color: #eee; border: 1px solid #0f3460; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
-.assign-controls button { background: #0f3460; color: #eee; border: 1px solid #1a5276; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-.assign-controls button:hover { background: #1a5276; }
-.assign-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+.assign-controls { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
+.assign-controls select { background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); padding: 8px 12px; border-radius: var(--radius); font-size: 13px; font-family: var(--font-body); }
+.assign-controls button { background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border); padding: 8px 16px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-family: var(--font-body); font-weight: 500; transition: all 0.15s; }
+.assign-controls button:hover { border-color: var(--accent-dim); color: var(--accent); }
+.assign-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .unassigned-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
-.unassigned-table th { text-align: left; padding: 8px; color: #888; border-bottom: 1px solid #0f3460; }
-.unassigned-table td { padding: 8px; border-bottom: 1px solid #0a1628; }
-.unassigned-table tr:hover td { background: #1a2744; }
-.unassigned-table input[type="checkbox"] { accent-color: #4ecdc4; }
+.unassigned-table th { text-align: left; padding: 10px 8px; color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.unassigned-table td { padding: 10px 8px; border-bottom: 1px solid var(--border-light); }
+.unassigned-table tr:hover td { background: var(--bg-raised); }
+.unassigned-table input[type="checkbox"] { accent-color: var(--accent); }
 
-.loading { text-align: center; padding: 60px; color: #888; font-size: 16px; }
-.loading .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid #333; border-top-color: #4ecdc4; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 12px; vertical-align: middle; }
+/* --- Loading --- */
+.loading { text-align: center; padding: 80px; color: var(--text-muted); font-size: 14px; }
+.loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 10px; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid #0f3460; }
-.tab { padding: 10px 24px; cursor: pointer; color: #888; font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; transition: color 0.2s, border-color 0.2s; }
-.tab:hover { color: #ccc; }
-.tab.active { color: #4ecdc4; border-bottom-color: #4ecdc4; }
+/* --- Tab Content --- */
 .tab-content { display: none; }
-.tab-content.active { display: block; }
+.tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
 
-.zm-client-card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
-.zm-client-card.has-renewal { border-left: 3px solid #ff6b6b; }
+/* --- Smooth Content Transitions --- */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+.detail-panel { animation: slideIn 0.2s ease-out; }
+.modal-panel { animation: fadeIn 0.15s ease-out; }
+.modal-overlay { animation: fadeIn 0.12s ease-out; }
+
+/* --- Smooth Scrollbar --- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* --- ZapMail --- */
+.zm-client-card { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 12px; }
+.zm-client-card.has-renewal { border-left: 3px solid var(--red); }
 .zm-client-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: pointer; }
-.zm-client-header h3 { font-size: 16px; font-weight: 600; }
-.zm-client-header .zm-meta { font-size: 13px; color: #888; }
+.zm-client-header h3 { font-size: 15px; font-weight: 600; }
+.zm-client-header .zm-meta { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 .zm-domain-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
-.zm-domain-table th { text-align: left; padding: 6px 8px; color: #888; border-bottom: 1px solid #0f3460; }
-.zm-domain-table td { padding: 6px 8px; border-bottom: 1px solid #0a1628; }
-.zm-domain-table tr:hover td { background: #1a2744; }
-.zm-domain-table input[type="checkbox"] { accent-color: #ff6b6b; }
+.zm-domain-table th { text-align: left; padding: 8px; color: var(--text-muted); border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.zm-domain-table td { padding: 8px; border-bottom: 1px solid var(--border-light); }
+.zm-domain-table tr:hover td { background: var(--bg-raised); }
+.zm-domain-table input[type="checkbox"] { accent-color: var(--red); }
 
-.cancel-controls { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
-.cancel-btn { background: #5c1a1a; color: #ff6b6b; border: 1px solid #8b3a3a; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-.cancel-btn:hover { background: #8b3a3a; }
-.cancel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* --- Cancel / Sync --- */
+.cancel-controls { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
+.cancel-btn { background: var(--red-bg); color: var(--red); border: 1px solid #3d1519; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-family: var(--font-body); font-weight: 500; transition: all 0.15s; }
+.cancel-btn:hover { background: #3d1519; }
+.cancel-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .sync-section { margin-top: 24px; }
-.sync-item { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; font-size: 13px; }
-.sync-item .mismatch { color: #ffd93d; }
-.sync-item .domain { color: #4ecdc4; }
+.sync-item { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 8px; font-size: 13px; }
+.sync-item .mismatch { color: var(--yellow); }
+.sync-item .domain { color: var(--accent); }
+
+/* --- Modals --- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 200; }
+.modal-panel { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px 32px; z-index: 201; width: 500px; max-width: 92vw; box-shadow: 0 24px 48px rgba(0,0,0,0.5); }
+.modal-panel h2 { font-size: 17px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.2px; }
+.modal-panel label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
+.modal-panel input[type="text"],
+.modal-panel input[type="number"],
+.modal-panel select { width: 100%; padding: 9px 12px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); font-size: 14px; font-family: var(--font-body); transition: border-color 0.15s; }
+.modal-panel input:focus, .modal-panel select:focus { outline: none; border-color: var(--accent-dim); }
+.modal-panel .btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.modal-panel .btn { padding: 9px 20px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--font-body); border: none; transition: all 0.15s; }
+.modal-panel .btn-cancel { background: none; color: var(--text-muted); border: 1px solid var(--border); }
+.modal-panel .btn-cancel:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.modal-panel .btn-primary { background: var(--accent); color: var(--bg-root); font-weight: 600; }
+.modal-panel .btn-primary:hover { background: #5aeadb; }
+.modal-panel .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.modal-panel .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid #3d1519; font-weight: 600; }
+.modal-panel .btn-danger:hover { background: #3d1519; }
 </style>
 </head>
 <body>
 
 <div class="topbar">
-    <h1>THT Dashboard</h1>
+    <div class="topbar-left">
+        <h1><span>THT</span> Infrastructure</h1>
+        <div class="mode-switcher">
+            <button class="mode-btn active" onclick="switchMode('fulfillment')">Fulfillment</button>
+            <button class="mode-btn" onclick="switchMode('acquisition')">Acquisition</button>
+        </div>
+        <nav class="topbar-nav" id="topbar-nav">
+            <button class="nav-tab active" onclick="switchTab('smartlead')">SmartLead</button>
+            <button class="nav-tab" onclick="switchTab('zapmail')">ZapMail</button>
+            <button class="nav-tab" onclick="switchTab('domains')">Domains</button>
+            <button class="nav-tab" onclick="switchTab('pipelines')">Pipelines</button>
+            <button class="nav-tab" onclick="switchTab('sync')">Sync Check</button>
+        </nav>
+    </div>
     <div class="topbar-right">
-        <span id="wallet-balance" style="color:#4ecdc4;font-weight:600;"></span>
-        <span id="pipeline-badge" style="display:none;background:#7c4dff;color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;"></span>
+        <span id="wallet-balance" style="color:var(--accent);font-weight:600;"></span>
+        <span id="pipeline-badge" style="display:none;background:var(--purple);color:#fff;padding:3px 10px;border-radius:6px;font-size:11px;font-family:var(--font-mono);"></span>
         <span id="last-updated"></span>
-        <button onclick="loadOverview()">Refresh</button>
+        <button class="sync-btn" onclick="loadOverview()">Sync</button>
     </div>
 </div>
 
@@ -125,36 +249,35 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
     <div id="content" style="display:none;">
         <div id="alert-banner"></div>
 
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('smartlead')">SmartLead</div>
-            <div class="tab" onclick="switchTab('zapmail')">ZapMail</div>
-            <div class="tab" onclick="switchTab('domains')">Domains</div>
-            <div class="tab" onclick="switchTab('pipelines')">Pipelines</div>
-            <div class="tab" onclick="switchTab('sync')">Sync Check</div>
-        </div>
-
         <!-- SmartLead Tab -->
         <div id="tab-smartlead" class="tab-content active">
-            <div style="display:flex;gap:12px;margin-bottom:16px;">
-                <button onclick="showNewClientForm()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;">+ New Client Setup</button>
-                <span id="inventory-alert" style="display:none;color:#ffd93d;font-size:13px;padding:10px 0;"></span>
+            <div class="page-header">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <h2 id="sl-page-title">SmartLead</h2>
+                        <div class="subtitle" id="sl-subtitle"></div>
+                    </div>
+                    <div class="action-bar" style="margin-bottom:0;">
+                        <button class="action-btn primary" onclick="showNewClientForm()">+ New Client</button>
+                        <button class="action-btn secondary" onclick="showNewGenericForm ? showNewGenericForm() : showNewClientForm()">+ Generic Group</button>
+                        <button class="action-btn secondary" onclick="showNewAcquisitionForm()">+ Acquisition Group</button>
+                    </div>
+                </div>
             </div>
+            <span id="inventory-alert" style="display:none;color:var(--yellow);font-size:12px;font-family:var(--font-mono);"></span>
+            <div id="sl-filter-bar" class="filter-bar"></div>
             <div class="summary-row" id="summary-row"></div>
 
-            <h2 class="section-title">Clients</h2>
             <div class="clients-grid" id="clients-grid"></div>
 
-            <div id="generic-section" style="display:none;margin-top:24px;">
+            <div id="generic-section" style="display:none;margin-top:28px;">
                 <h2 class="section-title">Generic Groups</h2>
                 <div class="summary-row" id="generic-stats"></div>
                 <div class="clients-grid" id="generic-grid"></div>
             </div>
 
-            <div id="acquisition-section" style="display:none;margin-top:24px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <h2 class="section-title" style="margin:0;">Acquisition Groups</h2>
-                    <button onclick="showNewAcquisitionForm()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">+ New Acquisition Group</button>
-                </div>
+            <div id="acquisition-section" style="display:none;margin-top:28px;">
+                <h2 class="section-title">Acquisition Groups</h2>
                 <div class="summary-row" id="acquisition-stats"></div>
                 <div class="clients-grid" id="acquisition-grid"></div>
             </div>
@@ -215,161 +338,161 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
     </div>
 </div>
 
-<div id="new-client-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeNewClientForm()"></div>
-<div id="new-client-form" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:500px;max-width:90vw;">
-    <h2 style="margin-bottom:20px;">New Client Setup</h2>
+<div id="new-client-overlay" class="modal-overlay" style="display:none;" onclick="closeNewClientForm()"></div>
+<div id="new-client-form" class="modal-panel" style="display:none;">
+    <h2>New Client Setup</h2>
     <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Client Name</label>
-        <input id="nc-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+        <label>Client Name</label>
+        <input id="nc-client-name" type="text">
     </div>
     <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Number of Domains</label>
-        <input id="nc-domain-count" type="number" min="1" max="50" value="5" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+        <label>Number of Domains</label>
+        <input id="nc-domain-count" type="number" min="1" max="50" value="5">
     </div>
     <div id="nc-forwarding-section" style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding URL</label>
-        <input id="nc-forwarding" type="text" placeholder="https://..." style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+        <label>Forwarding URL</label>
+        <input id="nc-forwarding" type="text" placeholder="https://...">
     </div>
     <div style="margin-bottom:16px;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#888;cursor:pointer;">
-            <input id="nc-generic" type="checkbox" onchange="toggleGenericMode()" style="accent-color:#4ecdc4;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;">
+            <input id="nc-generic" type="checkbox" onchange="toggleGenericMode()" style="accent-color:var(--accent);">
             Generic (no forwarding URL — set later when client signs)
         </label>
     </div>
-    <div id="nc-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
-    <div style="display:flex;gap:12px;justify-content:flex-end;">
-        <button onclick="closeNewClientForm()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
-        <button id="nc-start-btn" onclick="startNewClientPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
+    <div id="nc-inventory" style="font-size:13px;color:var(--text-muted);margin-bottom:16px;"></div>
+    <div class="btn-row">
+        <button class="btn btn-cancel" onclick="closeNewClientForm()">Cancel</button>
+        <button id="nc-start-btn" class="btn btn-primary" onclick="startNewClientPipeline()">Start Setup</button>
     </div>
     <div id="nc-status" style="margin-top:12px;font-size:13px;"></div>
 </div>
 
-<div id="new-acq-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeNewAcquisitionForm()"></div>
-<div id="new-acq-form" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:500px;max-width:90vw;">
-    <h2 style="margin-bottom:20px;">New Acquisition Group</h2>
+<div id="new-acq-overlay" class="modal-overlay" style="display:none;" onclick="closeNewAcquisitionForm()"></div>
+<div id="new-acq-form" class="modal-panel" style="display:none;">
+    <h2>New Acquisition Group</h2>
     <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Group Name</label>
-        <input id="acq-group-name" type="text" placeholder='e.g. "H Group (250/day)"' style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+        <label>Group Name</label>
+        <input id="acq-group-name" type="text" placeholder='e.g. "H Group (250/day)"'>
     </div>
     <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Daily Sending Volume</label>
-        <input id="acq-daily-volume" type="number" min="15" max="5000" value="250" onchange="updateAcqMath()" oninput="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+        <label>Daily Sending Volume</label>
+        <input id="acq-daily-volume" type="number" min="15" max="5000" value="250" onchange="updateAcqMath()" oninput="updateAcqMath()">
     </div>
     <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Sender</label>
-        <select id="acq-sender" onchange="updateAcqMath()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+        <label>Sender</label>
+        <select id="acq-sender" onchange="updateAcqMath()">
             <option value="aidan_hutchinson">Aidan Hutchinson (aidan / aidan.h / aidanhutch)</option>
             <option value="lars_matthys">Lars Matthys (lars / lars.m / larsmatthys)</option>
         </select>
     </div>
-    <div id="acq-math" style="font-size:13px;color:#888;margin-bottom:12px;padding:10px;background:#0a1628;border-radius:6px;"></div>
-    <div id="acq-inventory" style="font-size:13px;color:#888;margin-bottom:16px;"></div>
-    <div style="display:flex;gap:12px;justify-content:flex-end;">
-        <button onclick="closeNewAcquisitionForm()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
-        <button id="acq-start-btn" onclick="startNewAcquisitionPipeline()" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Start Setup</button>
+    <div id="acq-math" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;padding:10px;background:var(--bg-input);border-radius:var(--radius);"></div>
+    <div id="acq-inventory" style="font-size:13px;color:var(--text-muted);margin-bottom:16px;"></div>
+    <div class="btn-row">
+        <button class="btn btn-cancel" onclick="closeNewAcquisitionForm()">Cancel</button>
+        <button id="acq-start-btn" class="btn btn-primary" onclick="startNewAcquisitionPipeline()">Start Setup</button>
     </div>
     <div id="acq-status" style="margin-top:12px;font-size:13px;"></div>
 </div>
 
-<div id="assign-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeAssignModal()"></div>
-<div id="assign-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+<div id="assign-overlay" class="modal-overlay" style="display:none;" onclick="closeAssignModal()"></div>
+<div id="assign-modal" class="modal-panel" style="display:none;width:520px;">
     <div id="assign-form">
-        <h2 style="margin-bottom:20px;">Assign to Client</h2>
+        <h2>Assign to Client</h2>
         <input type="hidden" id="ac-pipeline-id">
-        <div style="margin-bottom:4px;font-size:13px;color:#888;" id="ac-group-label"></div>
+        <div style="margin-bottom:6px;font-size:12px;color:var(--text-muted);font-family:var(--font-mono);" id="ac-group-label"></div>
         <div style="margin-bottom:16px;">
-            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Client</label>
-            <select id="ac-client-select" onchange="onClientSelectChange()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+            <label>Client</label>
+            <select id="ac-client-select" onchange="onClientSelectChange()">
                 <option value="">Select a client...</option>
             </select>
         </div>
         <div id="ac-new-client-row" style="display:none;margin-bottom:16px;">
-            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client Name</label>
-            <input id="ac-new-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkAssignReady()">
+            <label>New Client Name</label>
+            <input id="ac-new-client-name" type="text" oninput="checkAssignReady()">
         </div>
         <div style="margin-bottom:16px;">
-            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding Domain</label>
-            <input id="ac-forwarding" type="text" placeholder="clientwebsite.com" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkAssignReady()">
+            <label>Forwarding Domain</label>
+            <input id="ac-forwarding" type="text" placeholder="clientwebsite.com" oninput="checkAssignReady()">
         </div>
-        <div style="display:flex;gap:12px;justify-content:flex-end;">
-            <button onclick="closeAssignModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
-            <button id="ac-assign-btn" onclick="startAssignment()" disabled style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Assign</button>
+        <div class="btn-row">
+            <button class="btn btn-cancel" onclick="closeAssignModal()">Cancel</button>
+            <button id="ac-assign-btn" class="btn btn-primary" onclick="startAssignment()" disabled style="opacity:0.4;">Assign</button>
         </div>
     </div>
     <div id="assign-progress" style="display:none;">
-        <h2 style="margin-bottom:20px;">Assigning to <span id="ac-progress-client"></span></h2>
+        <h2>Assigning to <span id="ac-progress-client"></span></h2>
         <div id="ac-steps"></div>
         <div id="ac-result" style="margin-top:16px;display:none;"></div>
     </div>
 </div>
 
-<div id="delete-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeDeleteModal()"></div>
-<div id="delete-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+<div id="delete-overlay" class="modal-overlay" style="display:none;" onclick="closeDeleteModal()"></div>
+<div id="delete-modal" class="modal-panel" style="display:none;width:520px;">
     <div id="delete-confirm">
-        <h2 style="margin-bottom:16px;color:#ff6b6b;">Delete Infrastructure</h2>
+        <h2 style="color:var(--red);">Delete Infrastructure</h2>
         <input type="hidden" id="del-client-id">
         <input type="hidden" id="del-client-name">
         <div id="del-step1" style="margin-bottom:16px;">
             <p style="font-size:14px;margin-bottom:12px;">This will permanently delete all infrastructure for <strong id="del-client-label"></strong>:</p>
-            <ul style="font-size:13px;color:#ffaaaa;margin-left:20px;line-height:1.8;">
+            <ul style="font-size:13px;color:#f8a0a0;margin-left:20px;line-height:1.8;">
                 <li>Remove all accounts from active campaigns</li>
                 <li>Delete all SmartLead email accounts</li>
                 <li>Cancel all Zapmail domains</li>
                 <li>Mark domains as cancelled in Google Sheet</li>
                 <li>Delete the SmartLead client</li>
             </ul>
-            <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">
-                <button onclick="closeDeleteModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
-                <button onclick="showDeleteStep2()" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;">Yes, Delete Everything</button>
+            <div class="btn-row" style="margin-top:16px;">
+                <button class="btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="showDeleteStep2()">Yes, Delete Everything</button>
             </div>
         </div>
         <div id="del-step2" style="display:none;">
-            <div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:16px;margin-bottom:16px;">
-                <p style="font-size:14px;color:#ff6b6b;font-weight:600;margin-bottom:8px;">Are you absolutely sure?</p>
-                <p style="font-size:13px;color:#ffaaaa;">Type the client name to confirm: <strong id="del-confirm-name"></strong></p>
-                <input id="del-confirm-input" type="text" style="width:100%;margin-top:8px;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #8b3a3a;border-radius:6px;font-size:14px;" oninput="checkDeleteConfirm()">
+            <div style="background:var(--red-bg);border:1px solid #3d1519;border-radius:var(--radius);padding:16px;margin-bottom:16px;">
+                <p style="font-size:14px;color:var(--red);font-weight:600;margin-bottom:8px;">Are you absolutely sure?</p>
+                <p style="font-size:13px;color:#f8a0a0;">Type the client name to confirm: <strong id="del-confirm-name"></strong></p>
+                <input id="del-confirm-input" type="text" style="margin-top:8px;border-color:#3d1519;" oninput="checkDeleteConfirm()">
             </div>
-            <div style="display:flex;gap:12px;justify-content:flex-end;">
-                <button onclick="closeDeleteModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
-                <button id="del-final-btn" onclick="startDeletion()" disabled style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Permanently Delete</button>
+            <div class="btn-row">
+                <button class="btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+                <button id="del-final-btn" class="btn btn-danger" onclick="startDeletion()" disabled style="opacity:0.4;">Permanently Delete</button>
             </div>
         </div>
     </div>
     <div id="delete-progress" style="display:none;">
-        <h2 style="margin-bottom:20px;color:#ff6b6b;">Deleting <span id="del-progress-client"></span></h2>
+        <h2 style="color:var(--red);">Deleting <span id="del-progress-client"></span></h2>
         <div id="del-steps"></div>
         <div id="del-result" style="margin-top:16px;display:none;"></div>
     </div>
 </div>
 
-<div id="transition-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;" onclick="closeTransitionModal()"></div>
-<div id="transition-modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:32px;z-index:201;width:520px;max-width:90vw;">
+<div id="transition-overlay" class="modal-overlay" style="display:none;" onclick="closeTransitionModal()"></div>
+<div id="transition-modal" class="modal-panel" style="display:none;width:520px;">
     <div id="transition-form">
-        <h2 style="margin-bottom:20px;">Transition Infrastructure</h2>
+        <h2>Transition Infrastructure</h2>
         <input type="hidden" id="tr-client-id">
         <input type="hidden" id="tr-client-name">
-        <div style="margin-bottom:4px;font-size:13px;color:#888;" id="tr-source-label"></div>
+        <div style="margin-bottom:6px;font-size:12px;color:var(--text-muted);font-family:var(--font-mono);" id="tr-source-label"></div>
         <div style="margin-bottom:16px;">
-            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client</label>
-            <select id="tr-client-select" onchange="onTransitionClientChange()" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;">
+            <label>New Client</label>
+            <select id="tr-client-select" onchange="onTransitionClientChange()">
                 <option value="">Select a client...</option>
             </select>
         </div>
         <div id="tr-new-client-row" style="display:none;margin-bottom:16px;">
-            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">New Client Name</label>
-            <input id="tr-new-client-name" type="text" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkTransitionReady()">
+            <label>New Client Name</label>
+            <input id="tr-new-client-name" type="text" oninput="checkTransitionReady()">
         </div>
         <div style="margin-bottom:16px;">
-            <label style="display:block;font-size:13px;color:#888;margin-bottom:4px;">Forwarding Domain</label>
-            <input id="tr-forwarding" type="text" placeholder="clientwebsite.com" style="width:100%;padding:8px 12px;background:#0a1628;color:#eee;border:1px solid #0f3460;border-radius:6px;font-size:14px;" oninput="checkTransitionReady()">
+            <label>Forwarding Domain</label>
+            <input id="tr-forwarding" type="text" placeholder="clientwebsite.com" oninput="checkTransitionReady()">
         </div>
-        <div style="display:flex;gap:12px;justify-content:flex-end;">
-            <button onclick="closeTransitionModal()" style="background:none;color:#888;border:1px solid #0f3460;padding:8px 18px;border-radius:6px;cursor:pointer;">Cancel</button>
-            <button id="tr-start-btn" onclick="startTransition()" disabled style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;opacity:0.5;">Transition</button>
+        <div class="btn-row">
+            <button class="btn btn-cancel" onclick="closeTransitionModal()">Cancel</button>
+            <button id="tr-start-btn" class="btn btn-primary" onclick="startTransition()" disabled style="opacity:0.4;">Transition</button>
         </div>
     </div>
     <div id="transition-progress" style="display:none;">
-        <h2 style="margin-bottom:20px;">Transitioning to <span id="tr-progress-client"></span></h2>
+        <h2>Transitioning to <span id="tr-progress-client"></span></h2>
         <div id="tr-steps"></div>
         <div id="tr-result" style="margin-top:16px;display:none;"></div>
     </div>
@@ -382,24 +505,6 @@ h2.section-title { font-size: 16px; font-weight: 600; color: #aaa; margin: 24px 
     <div id="detail-content"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-  const SUPABASE_URL = 'https://ghjmqpnqljgwykpjkvzy.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdoam1xcG5xbGpnd3lrcGprdnp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDg5NTQsImV4cCI6MjA5MTE4NDk1NH0.VHSaoQzLxYD-1X7dx5Nfts2skCw-0-4NQlY_CVen5H8';
-  const EDGE_BASE = SUPABASE_URL + '/functions/v1';
-  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-  // Helper for Edge Function calls
-  async function edgeFetch(path, options = {}) {
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-      ...(options.headers || {}),
-    };
-    const resp = await fetch(EDGE_BASE + path, { ...options, headers });
-    return resp.json();
-  }
-</script>
 <script>
 let overviewData = null;
 let clientsList = [];
@@ -409,22 +514,67 @@ async function loadOverview() {
     document.getElementById('content').style.display = 'none';
 
     try {
-        const { data: row, error } = await sb.from('state').select('data,updated_at').eq('key', 'cache:overview').single();
-        if (error || !row) {
-            document.getElementById('loading').innerHTML = 'Cache not ready — the background sync will populate data shortly. Refresh in ~30 seconds.';
+        // Load ALL sections in parallel — show nothing until everything is ready
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp] = await Promise.all([
+            fetch('/api/overview'),
+            fetch('/api/unassigned').catch(() => null),
+            fetch('/api/generic-groups').catch(() => null),
+            fetch('/api/acquisition').catch(() => null),
+        ]);
+
+        const text = await overviewResp.text();
+        try {
+            overviewData = JSON.parse(text);
+        } catch (parseErr) {
+            document.getElementById('loading').innerHTML = 'Error parsing response: ' + text.substring(0, 500);
             return;
         }
-        overviewData = JSON.parse(row.data);
-        overviewData._cached = true;
-        overviewData._synced_at = row.updated_at;
         if (overviewData.error) {
-            document.getElementById('loading').innerHTML = '<div style="text-align:left;max-width:800px;margin:0 auto;"><h3 style="color:#ff6b6b;">API Error</h3><pre style="white-space:pre-wrap;color:#ffaaaa;font-size:12px;">' + overviewData.traceback + '</pre></div>';
+            document.getElementById('loading').innerHTML = '<div style="text-align:left;max-width:800px;margin:0 auto;"><h3 style="color:var(--red);">API Error</h3><pre style="white-space:pre-wrap;color:#f8a0a0;font-size:12px;">' + overviewData.traceback + '</pre></div>';
             return;
         }
+
+        // Parse sub-section responses
+        let unassignedData = null, genericData = null, acquisitionData = null;
+        try { if (unassignedResp) unassignedData = await unassignedResp.json(); } catch(e) {}
+        try { if (genericResp) genericData = await genericResp.json(); } catch(e) {}
+        try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
+
+        // Render everything at once — no layout shifts
         renderOverview();
-        loadUnassigned();
-        loadGenericGroups();
-        loadAcquisition();
+
+        if (unassignedData && unassignedData.count > 0) {
+            document.getElementById('unassigned-section').style.display = 'block';
+            renderUnassigned(unassignedData.accounts);
+        } else {
+            document.getElementById('unassigned-section').style.display = 'none';
+        }
+
+        if (genericData && genericData.groups && genericData.groups.length > 0) {
+            document.getElementById('generic-section').style.display = 'block';
+            const ready = genericData.groups.filter(g => g.status === 'ready').length;
+            const warming = genericData.groups.filter(g => g.status === 'warming').length;
+            document.getElementById('generic-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${genericData.total_accounts}</div><div class="label">Generic Inboxes</div></div>
+                <div class="stat-card good"><div class="value">${ready}</div><div class="label">Ready for Clients</div></div>
+                ${warming > 0 ? '<div class="stat-card warn"><div class="value">' + warming + '</div><div class="label">Still Warming</div></div>' : ''}
+                <div class="stat-card"><div class="value">${genericData.total_daily_capacity}/day</div><div class="label">Total Capacity</div></div>
+            `;
+            renderGenericGroups(genericData.groups);
+        } else {
+            document.getElementById('generic-section').style.display = 'none';
+        }
+
+        if (acquisitionData && acquisitionData.total_groups > 0) {
+            document.getElementById('acquisition-section').style.display = 'block';
+            document.getElementById('acquisition-stats').innerHTML = `
+                <div class="stat-card"><div class="value">${acquisitionData.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
+                <div class="stat-card"><div class="value">${acquisitionData.total_groups}</div><div class="label">Active Groups</div></div>
+            `;
+            renderAcquisitionGroups(acquisitionData.groups);
+        } else {
+            document.getElementById('acquisition-section').style.display = 'none';
+        }
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
     }
@@ -432,7 +582,9 @@ async function loadOverview() {
 
 function renderOverview() {
     document.getElementById('loading').style.display = 'none';
-    document.getElementById('content').style.display = 'block';
+    const content = document.getElementById('content');
+    content.style.display = 'block';
+    content.style.animation = 'fadeIn 0.25s ease-out';
 
     const d = overviewData;
     const time = new Date(d.generated_at).toLocaleTimeString();
@@ -444,7 +596,7 @@ function renderOverview() {
     if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0) {
         let html = '<div class="alert-banner"><h3>Alerts</h3>';
         if (d.idle_inboxes > 0) {
-            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:#ffd93d;">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
+            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:var(--yellow);">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
         }
         if (attentionClients.length > 0) {
             html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;">' + attentionClients.length + ' client(s) have infrastructure that needs attention</div>';
@@ -489,6 +641,21 @@ function renderOverview() {
         <div class="stat-card ${d.smtp_failures > 0 ? 'alert' : 'good'}"><div class="value">${d.smtp_failures}</div><div class="label">SMTP Failures</div></div>
     `;
 
+    // Subtitle + filter bar
+    const totalClients = d.clients.length;
+    const attentionCount = d.clients.filter(c => c.needs_attention).length;
+    const warmingCount = d.clients.filter(c => c.warming > 0).length;
+    const readyCount = d.clients.filter(c => c.days_until_ready !== null && c.days_until_ready <= 0).length;
+    document.getElementById('sl-subtitle').textContent = `${totalClients} clients, ${d.total_accounts} accounts, ${d.in_campaign} in campaigns — ${d.warming} warming`;
+
+    const filterBar = document.getElementById('sl-filter-bar');
+    filterBar.innerHTML = `
+        <button class="filter-pill active" onclick="filterClients('all')">All <span class="count">${totalClients}</span></button>
+        ${attentionCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'attention\')">Needs Attention <span class="count">' + attentionCount + '</span></button>' : ''}
+        ${warmingCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'warming\')">Warming <span class="count">' + warmingCount + '</span></button>' : ''}
+        ${readyCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'ready\')">Ready <span class="count">' + readyCount + '</span></button>' : ''}
+    `;
+
     // Client cards
     const pausedClients = d.paused_clients || [];
     const gridEl = document.getElementById('clients-grid');
@@ -505,7 +672,7 @@ function renderOverview() {
             ? '<span class="badge badge-red">Rotate soon</span>'
             : '';
 
-        const healthColor = cl.health_score >= 85 ? '#4ecdc4' : cl.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthColor = cl.health_score >= 85 ? '#40E0D0' : cl.health_score >= 60 ? '#f59e0b' : '#ef4444';
         const healthBg = cl.health_score >= 85 ? '#1a4a3a' : cl.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
 
         return `
@@ -514,36 +681,43 @@ function renderOverview() {
                 <span class="cc-name">${cl.name}</span>
                 <div style="display:flex;align-items:center;gap:8px;">
                     <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${cl.health_score}</span>
-                    <span class="cc-count">${cl.production_ready != null ? cl.production_ready : cl.accounts} accounts${cl.warming > 0 ? ' <span style="color:#7c4dff;font-size:11px;">(+' + cl.warming + ' warming)</span>' : ''}</span>
+                    <span class="cc-count">${cl.accounts} accounts</span>
                 </div>
             </div>
-            ${cl.needs_attention ? '<div style="background:#4a1a1a;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ff6b6b;">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
+            ${cl.needs_attention ? '<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
             <div class="cc-stats">
-                <div class="cc-stat"><span class="label">Active</span><span style="color:#4ecdc4">${cl.healthy_inboxes}</span></div>
-                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day${cl.warming_capacity ? ' <span style="color:#7c4dff;font-size:10px;">(+' + cl.warming_capacity + ' incoming)</span>' : ''}</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.smtp_failures}</span></div>
-                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ff6b6b' : '#4ecdc4'}">${cl.blocked}</span></div>
-                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ff6b6b' : cl.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4') : '#888'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
-                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? '#4ecdc4' : cl.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b') : '#888'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
+                <div class="cc-stat"><span class="label">Healthy</span><span style="color:var(--accent)">${cl.healthy_inboxes}</span></div>
+                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ef4444' : '#40E0D0'}">${cl.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ef4444' : '#40E0D0'}">${cl.blocked}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ef4444' : cl.avg_bounce_rate > 1 ? '#f59e0b' : '#40E0D0') : '#50506a'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? '#40E0D0' : cl.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444') : '#50506a'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
             </div>
-            <div style="margin-top:8px;padding:8px 10px;background:#0a1628;border-radius:6px;font-size:12px;">
+            <div style="margin-top:8px;padding:8px 10px;background:var(--bg-input);border-radius:6px;font-size:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:#888;">Target Volume</span>
+                    <span style="color:var(--text-muted);">Target Volume</span>
                     <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
-                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:#16213e;color:#eee;border:1px solid #0f3460;border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
-                        <span style="color:#888;">/day</span>
-                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
+                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
+                        <span style="color:var(--text-muted);">/day</span>
+                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
                     </div>
                 </div>
-                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? '#4ecdc4' : '#ff6b6b') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
-            ${cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : ''}
+                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? '#40E0D0' : '#ef4444') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
+            ${cl.batches && cl.batches.length > 1 ? '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">' + cl.batches.map(b => {
+                if (b.status === 'ready') {
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--accent);">&#9679; ' + b.total + ' accounts ready</span><span style="color:var(--text-muted);">since ' + b.warmup_start + '</span></div>';
+                } else {
+                    const pct = Math.round(b.days_done / 14 * 100);
+                    return '<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px;"><span style="color:var(--purple);">&#9679; ' + b.total + ' new accounts warming</span><span>Day ' + b.days_done + '/14</span></div><div style="background:var(--bg-input);border-radius:4px;height:5px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + pct + '%;border-radius:4px;"></div></div></div>';
+                }
+            }).join('') + '</div>' : (cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : '')}
             <div class="cc-dates">
                 ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
                 ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
                 ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
             </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #0f3460;text-align:right;">
-                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? '#4a3a1a' : '#0a1628'};color:${isPaused ? '#ffd93d' : '#888'};border:1px solid ${isPaused ? '#8b7a3a' : '#0f3460'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);text-align:right;">
+                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? '#4a3a1a' : '#0a1628'};color:${isPaused ? '#f59e0b' : '#50506a'};border:1px solid ${isPaused ? '#8b7a3a' : '#0f3460'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
             </div>
         </div>`;
     }).join('');
@@ -569,57 +743,30 @@ async function openDetail(clientId, clientName) {
     currentTrendClientId = clientId;
 
     try {
-        const [accountsResult, trends] = await Promise.all([
-            sb.from('state').select('data,updated_at').eq('key', 'cache:client_accounts_' + clientId).single().then(({data: row}) => {
-                if (row) { const d = JSON.parse(row.data); d._cached = true; d._synced_at = row.updated_at; return d; }
-                // No cache — build from all-accounts filtered by client
-                return edgeFetch('/smartlead-proxy?action=all-accounts').then(allAccounts => {
-                    const arr = Array.isArray(allAccounts) ? allAccounts : [];
-                    const clAccounts = arr.filter(a => a.client_id == clientId);
-                    return {
-                        client_id: clientId,
-                        client_name: clientName,
-                        accounts: clAccounts.map(a => {
-                            const wd = a.warmup_details || {};
-                            const email = a.from_email || '';
-                            return {
-                                id: a.id, email, domain: email.split('@').pop() || '',
-                                warmup_status: wd.status || 'UNKNOWN',
-                                warmup_sent: wd.total_sent_count || 0,
-                                warmup_spam: wd.total_spam_count || 0,
-                                warmup_reputation: wd.warmup_reputation ?? '?',
-                                campaign_count: a.campaign_count || 0,
-                                smtp_ok: a.is_smtp_success || false,
-                                imap_ok: a.is_imap_success || false,
-                                health_score: 100, health_flags: [],
-                                warmup_days: null,
-                            };
-                        }),
-                        flagged_domains: [],
-                        flagged_inbox_count: 0,
-                    };
-                });
-            }),
-            edgeFetch('/smartlead-proxy?action=trends&client_id=' + clientId + '&days=30'),
+        const [accountsResp, trendsResp] = await Promise.all([
+            fetch('/api/client/' + clientId + '/accounts'),
+            fetch('/api/client/' + clientId + '/trends?days=30'),
         ]);
-        renderDetailTable(accountsResult, trends);
+        const data = await accountsResp.json();
+        const trends = await trendsResp.json();
+        renderDetailTable(data, trends);
     } catch (err) {
         document.getElementById('detail-content').innerHTML = 'Error: ' + err.message;
     }
 }
 
 function renderDetailTable(data, trends) {
-    const accounts = data.accounts;
+    const accounts = data.accounts || [];
 
     // Replacement recommendation
     let recHtml = '';
     if (data.flagged_domains && data.flagged_domains.length > 0) {
-        recHtml = `<div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
-            <div style="font-size:14px;color:#ff6b6b;font-weight:600;margin-bottom:6px;">Infrastructure Replacement Needed</div>
-            <div style="font-size:13px;color:#ffaaaa;">${data.flagged_inbox_count} inbox(es) across ${data.flagged_domains.length} domain(s) are unhealthy.</div>
-            <div style="font-size:13px;color:#ffaaaa;margin-bottom:10px;">Recommended: Set up ${data.replacement_domains_needed} new domain(s) (${data.replacement_inboxes} inboxes).</div>
-            <div style="font-size:12px;color:#888;margin-bottom:10px;">Flagged domains: ${data.flagged_domains.join(', ')}</div>
-            <button onclick="triggerReplacement('${data.client_id}', ${JSON.stringify(data.flagged_domains).replace(/'/g, "\\'")})" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Start Replacement</button>
+        recHtml = `<div style="background:var(--red-bg);border:1px solid #3d1519;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+            <div style="font-size:14px;color:var(--red);font-weight:600;margin-bottom:6px;">Infrastructure Replacement Needed</div>
+            <div style="font-size:13px;color:#f8a0a0;">${data.flagged_inbox_count} inbox(es) across ${data.flagged_domains.length} domain(s) are unhealthy.</div>
+            <div style="font-size:13px;color:#f8a0a0;margin-bottom:10px;">Recommended: Set up ${data.replacement_domains_needed} new domain(s) (${data.replacement_inboxes} inboxes).</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Flagged domains: ${data.flagged_domains.join(', ')}</div>
+            <button onclick="triggerReplacement('${data.client_id}', ${JSON.stringify(data.flagged_domains).replace(/'/g, "\\'")})" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Start Replacement</button>
             <span id="replacement-status-${data.client_id}" style="margin-left:12px;font-size:13px;"></span>
         </div>`;
     }
@@ -629,27 +776,27 @@ function renderDetailTable(data, trends) {
     if (trends && !trends.error) {
         const s = trends.summary || {};
         const trendIcon = s.trend === 'up' ? '&#9650;' : s.trend === 'down' ? '&#9660;' : '&#9654;';
-        const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
-        chartHtml = `<div style="background:#0a1628;border:1px solid #0f3460;border-radius:8px;padding:16px;margin-bottom:16px;">
+        const trendColor = s.trend === 'up' ? '#40E0D0' : s.trend === 'down' ? '#ef4444' : '#50506a';
+        chartHtml = `<div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <div style="font-size:14px;font-weight:600;">Campaign Performance <span style="font-size:11px;color:#666;font-weight:400;">(7-day rolling avg)</span></div>
                 <div style="display:flex;gap:4px;" id="trend-zoom-btns">
-                    <button onclick="loadTrends(7)" class="trend-zoom" data-days="7" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">7D</button>
-                    <button onclick="loadTrends(14)" class="trend-zoom" data-days="14" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">14D</button>
-                    <button onclick="loadTrends(30)" class="trend-zoom" data-days="30" style="background:#16213e;color:#4ecdc4;border:1px solid #4ecdc4;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">30D</button>
-                    <button onclick="loadTrends(90)" class="trend-zoom" data-days="90" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">90D</button>
-                    <button onclick="loadTrends(0)" class="trend-zoom" data-days="0" style="background:#16213e;color:#888;border:1px solid #0f3460;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">All</button>
+                    <button onclick="loadTrends(7)" class="trend-zoom" data-days="7" style="background:var(--bg-surface);color:var(--text-muted);border:1px solid var(--border);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">7D</button>
+                    <button onclick="loadTrends(14)" class="trend-zoom" data-days="14" style="background:var(--bg-surface);color:var(--text-muted);border:1px solid var(--border);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">14D</button>
+                    <button onclick="loadTrends(30)" class="trend-zoom" data-days="30" style="background:var(--bg-surface);color:var(--accent);border:1px solid #4ecdc4;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">30D</button>
+                    <button onclick="loadTrends(90)" class="trend-zoom" data-days="90" style="background:var(--bg-surface);color:var(--text-muted);border:1px solid var(--border);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">90D</button>
+                    <button onclick="loadTrends(0)" class="trend-zoom" data-days="0" style="background:var(--bg-surface);color:var(--text-muted);border:1px solid var(--border);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;">All</button>
                 </div>
             </div>
             <div style="height:200px;position:relative;"><canvas id="trend-chart"></canvas></div>
             <div id="trend-summary" style="display:flex;gap:16px;margin-top:12px;font-size:12px;flex-wrap:wrap;">
-                <div><span style="color:#4ecdc4;">&#9679;</span> <span style="color:#888;">Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
-                <div><span style="color:#ff6b6b;">&#9679;</span> <span style="color:#888;">Bounce Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
-                <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
-                <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
-                <div><span style="color:#888;">Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
-                <div><span style="color:#888;">Bounced:</span> <span style="color:#eee;">${(s.total_bounced || 0).toLocaleString()}</span></div>
-                <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
+                <div><span style="color:var(--accent);">&#9679;</span> <span style="color:var(--text-muted);">Reply Rate:</span> <span style="color:var(--text-primary);font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+                <div><span style="color:var(--red);">&#9679;</span> <span style="color:var(--text-muted);">Bounce Rate:</span> <span style="color:var(--text-primary);font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
+                <div><span style="color:var(--text-muted);">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
+                <div><span style="color:var(--text-muted);">Prior 7d:</span> <span style="color:var(--text-muted);">${s.prior_7d_rate || 0}%</span></div>
+                <div><span style="color:var(--text-muted);">Sent:</span> <span style="color:var(--text-primary);">${(s.total_sent || 0).toLocaleString()}</span></div>
+                <div><span style="color:var(--text-muted);">Bounced:</span> <span style="color:var(--text-primary);">${(s.total_bounced || 0).toLocaleString()}</span></div>
+                <div><span style="color:var(--text-muted);">Replies:</span> <span style="color:var(--text-primary);">${s.total_replied || 0}</span></div>
             </div>
         </div>`;
     }
@@ -658,8 +805,8 @@ function renderDetailTable(data, trends) {
     let idleHtml = '';
     const idleInboxes = accounts.filter(a => a.warmup_status !== 'ACTIVE' && a.campaign_count === 0 && a.warmup_days !== null && a.warmup_days >= 14);
     if (idleInboxes.length > 0) {
-        idleHtml = `<div style="background:#4a3a1a;border:1px solid #8b7a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
-            <div style="font-size:14px;color:#ffd93d;font-weight:600;margin-bottom:6px;">${idleInboxes.length} warmed inbox(es) not in any campaign</div>
+        idleHtml = `<div style="background:var(--yellow-bg);border:1px solid #8b7a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+            <div style="font-size:14px;color:var(--yellow);font-weight:600;margin-bottom:6px;">${idleInboxes.length} warmed inbox(es) not in any campaign</div>
             <div style="font-size:13px;color:#ffd9aa;">${idleInboxes.map(a => a.email).join(', ')}</div>
         </div>`;
     }
@@ -669,30 +816,30 @@ function renderDetailTable(data, trends) {
     html += '<thead><tr><th>Email</th><th>Health</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
 
     accounts.forEach(a => {
-        const statusColor = a.warmup_status === 'ACTIVE' ? '#4ecdc4' : (a.blocked_reason ? '#ff6b6b' : '#ffd93d');
+        const statusColor = a.warmup_status === 'ACTIVE' ? '#40E0D0' : (a.blocked_reason ? '#ef4444' : '#f59e0b');
         const br = a.bounce_rate !== null ? parseFloat(a.bounce_rate) : null;
         const rr = a.reply_rate !== null ? parseFloat(a.reply_rate) : null;
-        const brColor = br !== null ? (br > 3 ? '#ff6b6b' : br > 1 ? '#ffd93d' : '#4ecdc4') : '#888';
-        const rrColor = rr !== null ? (rr > 5 ? '#4ecdc4' : rr > 2 ? '#ffd93d' : '#ff6b6b') : '#888';
+        const brColor = br !== null ? (br > 3 ? '#ef4444' : br > 1 ? '#f59e0b' : '#40E0D0') : '#50506a';
+        const rrColor = rr !== null ? (rr > 5 ? '#40E0D0' : rr > 2 ? '#f59e0b' : '#ef4444') : '#50506a';
 
-        const healthColor = a.health_score >= 85 ? '#4ecdc4' : a.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthColor = a.health_score >= 85 ? '#40E0D0' : a.health_score >= 60 ? '#f59e0b' : '#ef4444';
         const healthBg = a.health_score >= 85 ? '#1a4a3a' : a.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
         const rowBg = a.domain_flagged ? 'background:#2a1a1a;' : '';
 
         // Flag icons
         const flagIcons = (a.health_flags || []).map(f => {
             const icons = {bounce:'B',reply:'R',reputation:'REP',placement:'P',smtp:'SMTP',blocked:'BLK',warmup_off:'WU'};
-            return '<span style="background:#4a1a1a;color:#ff6b6b;padding:1px 4px;border-radius:3px;font-size:10px;margin-left:2px;" title="' + f + '">' + (icons[f]||f) + '</span>';
+            return '<span style="background:var(--red-bg);color:var(--red);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:2px;" title="' + f + '">' + (icons[f]||f) + '</span>';
         }).join('');
 
         // Warmup cell with progress bar for new accounts
         let warmupCell = `<span style="color:${statusColor}">${a.warmup_status}</span>`;
         if (a.warmup_status === 'ACTIVE' && a.warmup_days !== null && a.warmup_days < 14) {
             const pct = Math.min(100, Math.round(a.warmup_days / 14 * 100));
-            warmupCell += `<div style="margin-top:4px;background:#0a1628;border-radius:3px;height:4px;width:80px;"><div style="background:#7c4dff;height:100%;width:${pct}%;border-radius:3px;"></div></div><div style="font-size:10px;color:#888;margin-top:2px;">${a.warmup_days}d / 14d</div>`;
+            warmupCell += `<div style="margin-top:4px;background:var(--bg-input);border-radius:3px;height:4px;width:80px;"><div style="background:var(--purple);height:100%;width:${pct}%;border-radius:3px;"></div></div><div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${a.warmup_days}d / 14d</div>`;
         }
         if (a.blocked_reason) {
-            warmupCell += `<br><small style="color:#ff6b6b">${a.blocked_reason}</small>`;
+            warmupCell += `<br><small style="color:var(--red)">${a.blocked_reason}</small>`;
         }
 
         html += `<tr style="${rowBg}">
@@ -704,15 +851,15 @@ function renderDetailTable(data, trends) {
             <td style="color:${rrColor}">${rr !== null ? rr.toFixed(1) + '%' : '—'}</td>
             <td>${a.health_sent || a.warmup_sent}</td>
             <td>${a.campaign_count}</td>
-            <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+            <td style="color:${a.smtp_ok ? '#40E0D0' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
         </tr>`;
     });
     html += '</tbody></table>';
 
     // Delete + Transition buttons
-    html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #0f3460;display:flex;gap:12px;justify-content:flex-end;">
-        <button onclick="openTransitionModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Transition to Another Client</button>
-        <button onclick="openDeleteModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Delete All Infrastructure</button>
+    html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end;">
+        <button onclick="openTransitionModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Transition to Another Client</button>
+        <button onclick="openDeleteModal(${data.client_id},'${data.client_name.replace(/'/g, "\\'")}')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Delete All Infrastructure</button>
     </div>`;
 
     document.getElementById('detail-content').innerHTML = html;
@@ -751,17 +898,17 @@ function renderTrendChart(trends) {
     // Update summary stats
     const s = trends.summary || {};
     const trendIcon = s.trend === 'up' ? '\u25B2' : s.trend === 'down' ? '\u25BC' : '\u25B6';
-    const trendColor = s.trend === 'up' ? '#4ecdc4' : s.trend === 'down' ? '#ff6b6b' : '#888';
+    const trendColor = s.trend === 'up' ? '#40E0D0' : s.trend === 'down' ? '#ef4444' : '#50506a';
     const summaryEl = document.getElementById('trend-summary');
     if (summaryEl) {
         summaryEl.innerHTML = `
-            <div><span style="color:#4ecdc4;">\u25CF</span> <span style="color:#888;">Reply Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
-            <div><span style="color:#ff6b6b;">\u25CF</span> <span style="color:#888;">Bounce Rate:</span> <span style="color:#eee;font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
-            <div><span style="color:#888;">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
-            <div><span style="color:#888;">Prior 7d:</span> <span style="color:#888;">${s.prior_7d_rate || 0}%</span></div>
-            <div><span style="color:#888;">Sent:</span> <span style="color:#eee;">${(s.total_sent || 0).toLocaleString()}</span></div>
-            <div><span style="color:#888;">Bounced:</span> <span style="color:#eee;">${(s.total_bounced || 0).toLocaleString()}</span></div>
-            <div><span style="color:#888;">Replies:</span> <span style="color:#eee;">${s.total_replied || 0}</span></div>
+            <div><span style="color:var(--accent);">\u25CF</span> <span style="color:var(--text-muted);">Reply Rate:</span> <span style="color:var(--text-primary);font-weight:600;">${s.avg_reply_rate || 0}%</span></div>
+            <div><span style="color:var(--red);">\u25CF</span> <span style="color:var(--text-muted);">Bounce Rate:</span> <span style="color:var(--text-primary);font-weight:600;">${s.avg_bounce_rate || 0}%</span></div>
+            <div><span style="color:var(--text-muted);">Last 7d:</span> <span style="color:${trendColor};font-weight:600;">${s.recent_7d_rate || 0}% ${trendIcon}</span></div>
+            <div><span style="color:var(--text-muted);">Prior 7d:</span> <span style="color:var(--text-muted);">${s.prior_7d_rate || 0}%</span></div>
+            <div><span style="color:var(--text-muted);">Sent:</span> <span style="color:var(--text-primary);">${(s.total_sent || 0).toLocaleString()}</span></div>
+            <div><span style="color:var(--text-muted);">Bounced:</span> <span style="color:var(--text-primary);">${(s.total_bounced || 0).toLocaleString()}</span></div>
+            <div><span style="color:var(--text-muted);">Replies:</span> <span style="color:var(--text-primary);">${s.total_replied || 0}</span></div>
         `;
     }
 
@@ -773,22 +920,22 @@ function renderTrendChart(trends) {
             datasets: [{
                 label: 'Reply Rate',
                 data: points.map(d => d.reply_rate),
-                borderColor: '#4ecdc4',
-                backgroundColor: 'rgba(78, 205, 196, 0.08)',
+                borderColor: '#40E0D0',
+                backgroundColor: 'rgba(64, 224, 208, 0.08)',
                 borderWidth: 2,
                 pointRadius: 3,
-                pointBackgroundColor: '#4ecdc4',
+                pointBackgroundColor: '#40E0D0',
                 pointHoverRadius: 6,
                 fill: true,
                 tension: 0.3,
             }, {
                 label: 'Bounce Rate',
                 data: points.map(d => d.bounce_rate),
-                borderColor: '#ff6b6b',
-                backgroundColor: 'rgba(255, 107, 107, 0.05)',
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239, 68, 68, 0.05)',
                 borderWidth: 2,
                 pointRadius: 2,
-                pointBackgroundColor: '#ff6b6b',
+                pointBackgroundColor: '#ef4444',
                 pointHoverRadius: 5,
                 fill: true,
                 tension: 0.3,
@@ -802,7 +949,7 @@ function renderTrendChart(trends) {
                     display: true,
                     position: 'top',
                     align: 'end',
-                    labels: { color: '#888', boxWidth: 12, padding: 12, font: { size: 11 } }
+                    labels: { color: '#50506a', boxWidth: 12, padding: 12, font: { size: 11 } }
                 },
                 tooltip: {
                     backgroundColor: '#16213e',
@@ -841,11 +988,12 @@ async function loadTrends(days) {
     // Update zoom button styles
     document.querySelectorAll('.trend-zoom').forEach(btn => {
         const isActive = parseInt(btn.dataset.days) === days;
-        btn.style.color = isActive ? '#4ecdc4' : '#888';
-        btn.style.borderColor = isActive ? '#4ecdc4' : '#0f3460';
+        btn.style.color = isActive ? '#40E0D0' : '#50506a';
+        btn.style.borderColor = isActive ? '#40E0D0' : '#0f3460';
     });
     try {
-        const trends = await edgeFetch('/smartlead-proxy?action=trends&client_id=' + currentTrendClientId + '&days=' + days);
+        const resp = await fetch('/api/client/' + currentTrendClientId + '/trends?days=' + days);
+        const trends = await resp.json();
         if (trends && !trends.error) {
             // Update summary
             const s = trends.summary || {};
@@ -864,7 +1012,8 @@ function closeDetail() {
 
 async function loadUnassigned() {
     try {
-        const data = await edgeFetch('/smartlead-proxy?action=unassigned');
+        const resp = await fetch('/api/unassigned');
+        const data = await resp.json();
         if (data.count > 0) {
             document.getElementById('unassigned-section').style.display = 'block';
             renderUnassigned(data.accounts);
@@ -883,9 +1032,9 @@ function renderUnassigned(accounts) {
             <td><input type="checkbox" class="ua-check" value="${a.id}" onchange="updateAssignBtn()"></td>
             <td>${a.email}</td>
             <td>${a.domain}</td>
-            <td style="color:${a.warmup_status === 'ACTIVE' ? '#4ecdc4' : '#ffd93d'}">${a.warmup_status}</td>
+            <td style="color:${a.warmup_status === 'ACTIVE' ? '#40E0D0' : '#f59e0b'}">${a.warmup_status}</td>
             <td>${a.warmup_reputation}</td>
-            <td style="color:${a.smtp_ok ? '#4ecdc4' : '#ff6b6b'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+            <td style="color:${a.smtp_ok ? '#40E0D0' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
         </tr>
     `).join('');
 }
@@ -913,10 +1062,12 @@ async function assignSelected() {
     document.getElementById('assign-status').textContent = 'Assigning ' + accountIds.length + ' accounts...';
 
     try {
-        const result = await edgeFetch('/mutations?action=assign', {
+        const resp = await fetch('/api/assign', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({account_ids: accountIds, client_id: clientId})
         });
+        const result = await resp.json();
         document.getElementById('assign-status').textContent =
             'Done! ' + result.success + ' assigned, ' + result.fail + ' failed.';
         setTimeout(() => loadOverview(), 2000);
@@ -927,7 +1078,8 @@ async function assignSelected() {
 
 async function loadGenericGroups() {
     try {
-        const data = await edgeFetch('/smartlead-proxy?action=generic-groups');
+        const resp = await fetch('/api/generic-groups');
+        const data = await resp.json();
         if (data.groups && data.groups.length > 0) {
             document.getElementById('generic-section').style.display = 'block';
             const ready = data.groups.filter(g => g.status === 'ready').length;
@@ -951,7 +1103,7 @@ function renderGenericGroups(groups) {
     const grid = document.getElementById('generic-grid');
     grid.innerHTML = groups.map(g => {
         const isReady = g.status === 'ready';
-        const statusColor = isReady ? '#4ecdc4' : '#7c4dff';
+        const statusColor = isReady ? '#40E0D0' : '#8b5cf6';
         const statusBg = isReady ? '#1a4a3a' : '#2a1a4a';
         const statusLabel = isReady ? 'Ready' : g.days_left + 'd left';
         const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
@@ -970,21 +1122,21 @@ function renderGenericGroups(groups) {
                 <div class="cc-stat"><span class="label">Capacity</span><span>${g.daily_capacity}/day</span></div>
                 <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
                 <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
-                <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b'}">${g.health_score}</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#40E0D0' : g.health_score >= 60 ? '#f59e0b' : '#ef4444'}">${g.health_score}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#40E0D0'}">${g.smtp_failures}</span></div>
             </div>
             <div style="margin-top:10px;">
-                <div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;">
                     <span>Warmup Progress</span><span>${progressPct}%</span>
                 </div>
-                <div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;">
-                    <div style="background:${isReady ? '#4ecdc4' : '#7c4dff'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
+                <div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="background:${isReady ? '#40E0D0' : '#8b5cf6'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
                 </div>
             </div>`;
 
         if (isReady) {
             html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
-                <button onclick="event.stopPropagation();openAssignModal('${g.pipeline_id || ''}','${g.name.replace(/'/g, "\\'")}')" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
+                <button onclick="event.stopPropagation();openAssignModal('${g.pipeline_id || ''}','${g.name.replace(/'/g, "\\'")}')" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
             </div>`;
         }
 
@@ -995,7 +1147,8 @@ function renderGenericGroups(groups) {
 
 async function loadAcquisition() {
     try {
-        const data = await edgeFetch('/smartlead-proxy?action=acquisition');
+        const resp = await fetch('/api/acquisition');
+        const data = await resp.json();
         if (data.total_groups > 0) {
             document.getElementById('acquisition-section').style.display = 'block';
             document.getElementById('acquisition-stats').innerHTML = `
@@ -1014,44 +1167,44 @@ async function loadAcquisition() {
 function renderAcquisitionGroups(groups) {
     const grid = document.getElementById('acquisition-grid');
     grid.innerHTML = groups.map(g => {
-        const healthColor = g.health_score >= 85 ? '#4ecdc4' : g.health_score >= 60 ? '#ffd93d' : '#ff6b6b';
+        const healthColor = g.health_score >= 85 ? '#40E0D0' : g.health_score >= 60 ? '#f59e0b' : '#ef4444';
         const healthBg = g.health_score >= 85 ? '#1a4a3a' : g.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
-        const isReady = g.status === 'ready';
-        const statusColor = isReady ? '#4ecdc4' : '#7c4dff';
-        const statusBg = isReady ? '#1a4a3a' : '#2a1a4a';
-        const statusLabel = isReady ? 'Ready' : g.days_left + 'd left';
-        const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
         return `
         <div class="client-card ${g.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${g.id}, '${g.name.replace(/'/g, "\\'")}')">
             <div class="cc-header">
                 <span class="cc-name">${g.name}</span>
                 <div style="display:flex;align-items:center;gap:8px;">
-                    <span class="badge" style="background:${statusBg};color:${statusColor};font-size:13px;padding:3px 10px;">${statusLabel}</span>
                     <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${g.health_score}</span>
                     <span class="cc-count">${g.accounts} accounts</span>
                 </div>
             </div>
-            ${g.needs_attention ? '<div style="background:#4a1a1a;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:#ff6b6b;">' + g.flagged_domains + '/' + g.total_domains + ' domains flagged (' + g.flagged_pct + '%)</div>' : ''}
+            ${g.needs_attention ? '<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">' + g.flagged_domains + '/' + g.total_domains + ' domains flagged (' + g.flagged_pct + '%)</div>' : ''}
             <div class="cc-stats">
                 <div class="cc-stat"><span class="label">In Campaign</span><span>${g.in_campaign}</span></div>
                 <div class="cc-stat"><span class="label">Warming</span><span>${g.warming}</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ff6b6b' : '#4ecdc4'}">${g.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#40E0D0'}">${g.smtp_failures}</span></div>
                 <div class="cc-stat"><span class="label">Domains</span><span>${g.total_domains}</span></div>
-                <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
-                <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
-                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ff6b6b' : g.avg_bounce_rate > 1 ? '#ffd93d' : '#4ecdc4'}">${g.avg_bounce_rate}%</span></div>
-                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#4ecdc4' : g.avg_reply_rate > 2 ? '#ffd93d' : '#ff6b6b'}">${g.avg_reply_rate}%</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ef4444' : g.avg_bounce_rate > 1 ? '#f59e0b' : '#40E0D0'}">${g.avg_bounce_rate}%</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#40E0D0' : g.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444'}">${g.avg_reply_rate}%</span></div>
             </div>
-            ${!isReady ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;"><span>Warmup Progress</span><span>' + progressPct + '%</span></div><div style="background:#0a1628;border-radius:4px;height:6px;overflow:hidden;"><div style="background:#7c4dff;height:100%;width:' + progressPct + '%;border-radius:4px;transition:width 0.3s;"></div></div></div>' : ''}
         </div>`;
     }).join('');
 }
 
 // --- Tab switching ---
+let currentMode = 'fulfillment';
+
+function switchMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.mode-btn[onclick="switchMode('${mode}')"]`).classList.add('active');
+    if (overviewData) renderOverview();
+}
+
 function switchTab(tab) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+    document.querySelector(`.nav-tab[onclick="switchTab('${tab}')"]`).classList.add('active');
     document.getElementById('tab-' + tab).classList.add('active');
 
     if (tab === 'zapmail' && !zmData) loadZapmail();
@@ -1060,13 +1213,30 @@ function switchTab(tab) {
     if (tab === 'sync' && !syncData) loadSync();
 }
 
+function filterClients(filter) {
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    event.target.closest('.filter-pill').classList.add('active');
+    const cards = document.querySelectorAll('#clients-grid .client-card');
+    const d = overviewData;
+    cards.forEach((card, i) => {
+        const cl = d.clients[i];
+        if (!cl) return;
+        let show = true;
+        if (filter === 'attention') show = cl.needs_attention;
+        else if (filter === 'warming') show = cl.warming > 0;
+        else if (filter === 'ready') show = cl.days_until_ready !== null && cl.days_until_ready <= 0;
+        card.style.display = show ? '' : 'none';
+    });
+}
+
 // --- ZapMail ---
 let zmData = null;
 
 async function loadZapmail() {
     document.getElementById('zm-clients').innerHTML = '<div class="loading"><span class="spinner"></span> Loading ZapMail data...</div>';
     try {
-        zmData = await edgeFetch('/zapmail-proxy?action=domains');
+        const resp = await fetch('/api/zapmail');
+        zmData = await resp.json();
         renderZapmail();
     } catch (err) {
         document.getElementById('zm-clients').innerHTML = 'Error: ' + err.message;
@@ -1119,7 +1289,7 @@ function renderZapmail() {
                             <td>${dm.mailbox_count}</td>
                             <td>${dm.created}</td>
                             <td>${dm.next_renewal || '?'} ${renewBadge}</td>
-                            <td style="color:${dm.status === 'ACTIVE' ? '#4ecdc4' : '#ff6b6b'}">${dm.status}</td>
+                            <td style="color:${dm.status === 'ACTIVE' ? '#40E0D0' : '#ef4444'}">${dm.status}</td>
                         </tr>`;
                     }).join('')}
                     </tbody>
@@ -1152,10 +1322,12 @@ async function cancelSelectedDomains(cardId) {
     status.textContent = 'Cancelling...';
 
     try {
-        const result = await edgeFetch('/zapmail-proxy?action=cancel', {
+        const resp = await fetch('/api/zapmail/cancel', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({domain_ids: domainIds})
         });
+        const result = await resp.json();
         if (result.error) {
             status.textContent = 'Error: ' + result.error.substring(0, 100);
         } else {
@@ -1174,7 +1346,8 @@ let domData = null;
 async function loadDomains() {
     document.getElementById('dom-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading domain registrar data...</div>';
     try {
-        domData = await edgeFetch('/domain-proxy?action=list');
+        const resp = await fetch('/api/domains');
+        domData = await resp.json();
         renderDomains();
     } catch (err) {
         document.getElementById('dom-content').innerHTML = 'Error: ' + err.message;
@@ -1209,15 +1382,15 @@ function renderDomains() {
         html += '<table class="zm-domain-table"><thead><tr><th>Domain</th><th>Status</th><th>Expires</th><th>Days Left</th><th>Auto-Renew</th></tr></thead><tbody>';
         domains.forEach(dm => {
             const daysLeft = dm.days_until_expiry;
-            const daysColor = daysLeft === null ? '#888' : (daysLeft <= 7 ? '#ff6b6b' : (daysLeft <= 30 ? '#ffd93d' : '#4ecdc4'));
-            const renewColor = dm.auto_renew ? '#4ecdc4' : '#ffd93d';
+            const daysColor = daysLeft === null ? '#50506a' : (daysLeft <= 7 ? '#ef4444' : (daysLeft <= 30 ? '#f59e0b' : '#40E0D0'));
+            const renewColor = dm.auto_renew ? '#40E0D0' : '#f59e0b';
             const canToggle = dm.registrar === 'porkbun';
             const toggleBtn = canToggle
                 ? `<button onclick="toggleAutoRenew('${dm.domain}','${dm.registrar}',${!dm.auto_renew},this)" style="background:none;border:1px solid ${renewColor};color:${renewColor};padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;">${dm.auto_renew ? 'ON' : 'OFF'}</button>`
                 : `<span style="color:${renewColor}" title="${dm.registrar} doesn't support API toggle">${dm.auto_renew ? 'ON' : 'OFF'}</span>`;
             html += `<tr>
                 <td>${dm.domain}</td>
-                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#4ecdc4' : '#ffd93d'}">${dm.status}</td>
+                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#40E0D0' : '#f59e0b'}">${dm.status}</td>
                 <td>${dm.expires || '?'}</td>
                 <td style="color:${daysColor}">${daysLeft !== null ? daysLeft + 'd' : '?'}</td>
                 <td>${toggleBtn}</td>
@@ -1235,14 +1408,16 @@ async function toggleAutoRenew(domain, registrar, enabled, btn) {
     btn.disabled = true;
     btn.textContent = '...';
     try {
-        const result = await edgeFetch('/domain-proxy?action=auto-renew', {
+        const resp = await fetch('/api/domains/auto-renew', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({domain, registrar, enabled})
         });
+        const result = await resp.json();
         if (result.success) {
             btn.textContent = enabled ? 'ON' : 'OFF';
-            btn.style.color = enabled ? '#4ecdc4' : '#ffd93d';
-            btn.style.borderColor = enabled ? '#4ecdc4' : '#ffd93d';
+            btn.style.color = enabled ? '#40E0D0' : '#f59e0b';
+            btn.style.borderColor = enabled ? '#40E0D0' : '#f59e0b';
             btn.disabled = false;
             btn.onclick = () => toggleAutoRenew(domain, registrar, !enabled, btn);
         } else {
@@ -1264,7 +1439,8 @@ async function loadSync() {
     document.getElementById('sync-loading').style.display = 'block';
     document.getElementById('sync-content').innerHTML = '';
     try {
-        syncData = await edgeFetch('/zapmail-proxy?action=sync');
+        const resp = await fetch('/api/zapmail/sync');
+        syncData = await resp.json();
         renderSync();
     } catch (err) {
         document.getElementById('sync-content').innerHTML = 'Error: ' + err.message;
@@ -1293,7 +1469,7 @@ function renderSync() {
         d.zapmail_only.forEach(domain => {
             html += `<div class="sync-item"><span class="domain">${domain}</span></div>`;
         });
-        if (d.zapmail_only_count > 20) html += `<div class="sync-item" style="color:#888">...and ${d.zapmail_only_count - 20} more</div>`;
+        if (d.zapmail_only_count > 20) html += `<div class="sync-item" style="color:var(--text-muted)">...and ${d.zapmail_only_count - 20} more</div>`;
     }
 
     if (d.smartlead_only_count > 0) {
@@ -1301,11 +1477,11 @@ function renderSync() {
         d.smartlead_only.forEach(domain => {
             html += `<div class="sync-item"><span class="domain">${domain}</span></div>`;
         });
-        if (d.smartlead_only_count > 20) html += `<div class="sync-item" style="color:#888">...and ${d.smartlead_only_count - 20} more</div>`;
+        if (d.smartlead_only_count > 20) html += `<div class="sync-item" style="color:var(--text-muted)">...and ${d.smartlead_only_count - 20} more</div>`;
     }
 
     if (d.mismatches.length === 0 && d.zapmail_only_count === 0 && d.smartlead_only_count === 0) {
-        html += '<div class="sync-item" style="color:#4ecdc4;">Everything in sync!</div>';
+        html += '<div class="sync-item" style="color:var(--accent);">Everything in sync!</div>';
     }
 
     document.getElementById('sync-content').innerHTML = html;
@@ -1314,12 +1490,13 @@ function renderSync() {
 // --- Wallet ---
 async function loadWallet() {
     try {
-        const data = await edgeFetch('/zapmail-proxy?action=wallet');
+        const resp = await fetch('/api/wallet');
+        const data = await resp.json();
         const balance = data.data?.balance || data.balance || '?';
         const el = document.getElementById('wallet-balance');
         const num = parseFloat(balance);
         el.textContent = '$' + (isNaN(num) ? '?' : num.toFixed(2));
-        el.style.color = num < 50 ? '#ff6b6b' : num < 150 ? '#ffd93d' : '#4ecdc4';
+        el.style.color = num < 50 ? '#ef4444' : num < 150 ? '#f59e0b' : '#40E0D0';
     } catch(e) { console.error('Wallet error:', e); }
 }
 
@@ -1343,24 +1520,26 @@ async function toggleMonitor(clientName, currentlyPaused) {
     const btn = event.target;
     btn.textContent = newPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
     btn.style.background = newPaused ? '#4a3a1a' : '#0a1628';
-    btn.style.color = newPaused ? '#ffd93d' : '#888';
+    btn.style.color = newPaused ? '#f59e0b' : '#50506a';
     btn.style.borderColor = newPaused ? '#8b7a3a' : '#0f3460';
     btn.disabled = true;
     try {
-        const result = await edgeFetch('/mutations?action=pause-monitor', {
+        const resp = await fetch('/api/client/pause-monitor', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({client_name: clientName, paused: newPaused})
         });
+        const result = await resp.json();
         if (result.error) {
             btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
             btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
-            btn.style.color = currentlyPaused ? '#ffd93d' : '#888';
+            btn.style.color = currentlyPaused ? '#f59e0b' : '#50506a';
             btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
         }
     } catch(e) {
         btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
         btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
-        btn.style.color = currentlyPaused ? '#ffd93d' : '#888';
+        btn.style.color = currentlyPaused ? '#f59e0b' : '#50506a';
         btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
     }
     btn.disabled = false;
@@ -1369,10 +1548,12 @@ async function toggleMonitor(clientName, currentlyPaused) {
 async function setTargetVolume(clientName, value) {
     const vol = parseInt(value) || 0;
     try {
-        const result = await edgeFetch('/mutations?action=set-target-volume', {
+        const resp = await fetch('/api/client/set-target-volume', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({client_name: clientName, target_volume: vol})
         });
+        const result = await resp.json();
         if (!result.error) {
             loadOverview();
         }
@@ -1388,16 +1569,18 @@ function toggleGenericMode() {
 async function loadInventoryPreview() {
     const el = document.getElementById('nc-inventory');
     try {
-        const data = await edgeFetch('/sheets-proxy?action=domain-inventory');
-        if (!data) { el.textContent = 'Could not load inventory'; el.style.color = '#ff6b6b'; return; }
+        const resp = await fetch('/api/domain-inventory');
+        const text = await resp.text();
+        if (!text) { el.textContent = 'Could not load inventory'; el.style.color = '#ef4444'; return; }
+        const data = JSON.parse(text);
         const count = data.available_count ?? 0;
         if (data.error) {
             el.textContent = 'Could not load inventory: ' + data.error;
-            el.style.color = '#ff6b6b';
+            el.style.color = '#ef4444';
             return;
         }
         el.textContent = count + ' domains available in inventory';
-        el.style.color = count < 5 ? '#ff6b6b' : '#4ecdc4';
+        el.style.color = count < 5 ? '#ef4444' : '#40E0D0';
 
         const alertEl = document.getElementById('inventory-alert');
         if (count < 5) {
@@ -1406,7 +1589,7 @@ async function loadInventoryPreview() {
         }
     } catch(e) {
         el.textContent = 'Could not load inventory';
-        el.style.color = '#ff6b6b';
+        el.style.color = '#ef4444';
         console.error('Inventory error:', e);
     }
 }
@@ -1423,15 +1606,17 @@ async function startNewClientPipeline() {
     document.getElementById('nc-status').innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Starting pipeline...';
 
     try {
-        const result = await edgeFetch('/pipeline-ops?action=new-client', {
+        const resp = await fetch('/api/pipeline/new-client', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({client_name: clientName, domain_count: domainCount, forwarding_url: forwarding})
         });
+        const result = await resp.json();
         if (result.error) {
-            document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            document.getElementById('nc-status').innerHTML = '<span style="color:var(--red);">' + result.error + '</span>';
             document.getElementById('nc-start-btn').disabled = false;
         } else {
-            document.getElementById('nc-status').innerHTML = '<span style="color:#4ecdc4;">Pipeline started! ID: ' + result.pipeline_id + '</span>';
+            document.getElementById('nc-status').innerHTML = '<span style="color:var(--accent);">Pipeline started! ID: ' + result.pipeline_id + '</span>';
             setTimeout(() => {
                 closeNewClientForm();
                 switchTab('pipelines');
@@ -1439,7 +1624,7 @@ async function startNewClientPipeline() {
             }, 1500);
         }
     } catch(err) {
-        document.getElementById('nc-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        document.getElementById('nc-status').innerHTML = '<span style="color:var(--red);">Error: ' + err.message + '</span>';
         document.getElementById('nc-start-btn').disabled = false;
     }
 }
@@ -1477,13 +1662,14 @@ function updateAcqMath() {
 async function loadAcqInventory() {
     const el = document.getElementById('acq-inventory');
     try {
-        const data = await edgeFetch('/sheets-proxy?action=domain-inventory');
+        const resp = await fetch('/api/domain-inventory');
+        const data = await resp.json();
         const count = data.available_count ?? 0;
         el.textContent = count + ' domains available in inventory';
-        el.style.color = count < 5 ? '#ff6b6b' : '#4ecdc4';
+        el.style.color = count < 5 ? '#ef4444' : '#40E0D0';
     } catch(e) {
         el.textContent = 'Could not load inventory';
-        el.style.color = '#ff6b6b';
+        el.style.color = '#ef4444';
     }
 }
 
@@ -1498,15 +1684,17 @@ async function startNewAcquisitionPipeline() {
     document.getElementById('acq-status').innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Starting pipeline...';
 
     try {
-        const result = await edgeFetch('/pipeline-ops?action=new-acquisition', {
+        const resp = await fetch('/api/pipeline/new-acquisition', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({group_name: groupName, daily_volume: dailyVolume, sender: document.getElementById('acq-sender').value})
         });
+        const result = await resp.json();
         if (result.error) {
-            document.getElementById('acq-status').innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            document.getElementById('acq-status').innerHTML = '<span style="color:var(--red);">' + result.error + '</span>';
             document.getElementById('acq-start-btn').disabled = false;
         } else {
-            document.getElementById('acq-status').innerHTML = '<span style="color:#4ecdc4;">Pipeline started! ' + result.infra.domains_needed + ' domains, ' + result.infra.actual_accounts + ' inboxes</span>';
+            document.getElementById('acq-status').innerHTML = '<span style="color:var(--accent);">Pipeline started! ' + result.infra.domains_needed + ' domains, ' + result.infra.actual_accounts + ' inboxes</span>';
             setTimeout(() => {
                 closeNewAcquisitionForm();
                 switchTab('pipelines');
@@ -1514,7 +1702,7 @@ async function startNewAcquisitionPipeline() {
             }, 1500);
         }
     } catch(err) {
-        document.getElementById('acq-status').innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        document.getElementById('acq-status').innerHTML = '<span style="color:var(--red);">Error: ' + err.message + '</span>';
         document.getElementById('acq-start-btn').disabled = false;
     }
 }
@@ -1526,8 +1714,11 @@ async function loadPipelines() {
     document.getElementById('pipelines-loading').style.display = 'block';
     document.getElementById('pipelines-content').innerHTML = '';
     try {
-        pipelineData = await edgeFetch('/pipeline-ops?action=active');
+        const resp = await fetch('/api/pipeline/active');
+        pipelineData = await resp.json();
         renderPipelines();
+        var hasRunning = (pipelineData.pipelines || []).some(function(p) { return p.status === 'running'; });
+        if (hasRunning) startPipelinePolling();
     } catch(err) {
         document.getElementById('pipelines-content').innerHTML = 'Error: ' + err.message;
     }
@@ -1547,7 +1738,7 @@ function renderPipelines() {
     }
 
     if (pipelines.length === 0) {
-        document.getElementById('pipelines-content').innerHTML = '<div style="text-align:center;color:#888;padding:40px;">No pipelines yet. Start one from the SmartLead tab.</div>';
+        document.getElementById('pipelines-content').innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px;">No pipelines yet. Start one from the SmartLead tab.</div>';
         return;
     }
 
@@ -1571,63 +1762,104 @@ function renderPipelines() {
 
     let html = '';
     pipelines.forEach(p => {
-        const statusColor = p.status === 'complete' ? '#4ecdc4' : p.status === 'error' ? '#ff6b6b' : p.status === 'awaiting_removal' ? '#ffd93d' : '#7c4dff';
+        const statusColor = p.status === 'complete' ? '#40E0D0' : p.status === 'error' ? '#ef4444' : p.status === 'awaiting_removal' ? '#f59e0b' : '#8b5cf6';
         const statusLabel = p.status === 'awaiting_removal' ? 'Awaiting Removal' : p.status.charAt(0).toUpperCase() + p.status.slice(1);
 
-        html += `<div style="background:#16213e;border:1px solid #0f3460;border-radius:10px;padding:16px;margin-bottom:12px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <div>
-                    <span style="font-size:16px;font-weight:600;">${p.client_name}</span>
-                    <span style="font-size:13px;color:#888;margin-left:12px;">${p.type === 'new_setup' ? 'New Setup' : 'Replacement'}</span>
-                </div>
-                <span style="color:${statusColor};font-weight:500;">${statusLabel}</span>
-            </div>
-            <div style="font-size:13px;color:#888;margin-bottom:8px;">Domains: ${p.domains.join(', ')}</div>
-            <div style="font-size:12px;color:#888;">Started: ${new Date(p.created_at).toLocaleString()}</div>`;
+        var stepSuffix = '';
+        if (p.retry_info && p.status === 'running') {
+            stepSuffix = ' (attempt ' + p.retry_info.attempt + '/' + p.retry_info.max_attempts + ')';
+        }
+
+        html += '<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+        html += '<div><span style="font-size:16px;font-weight:600;">' + p.client_name + '</span>';
+        html += '<span style="font-size:13px;color:var(--text-muted);margin-left:12px;">' + (p.type === 'new_setup' ? 'New Setup' : p.type === 'acquisition' ? 'Acquisition' : 'Replacement') + '</span></div>';
+        html += '<span style="color:' + statusColor + ';font-weight:500;">' + statusLabel + '</span></div>';
+        html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Domains: ' + p.domains.length + '</div>';
+        html += '<div style="font-size:12px;color:var(--text-muted);">Started: ' + new Date(p.created_at).toLocaleString() + '</div>';
 
         if (p.status !== 'complete') {
-            const allSteps = p.type === 'new_setup'
-                ? ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','smartlead_tags','export_csv','gcal_rotation']
-                : ['claim_domains','set_dns','connect_zapmail','create_mailboxes','upload_photos','tag_and_configure','export_to_smartlead','enable_warmup','smartlead_tags','wait_for_warmup','check_campaigns','remove_old','cleanup','export_csv','gcal_rotation'];
-            const currentIdx = allSteps.indexOf(p.current_step);
+            var allSteps = p.steps || [];
+            var currentIdx = allSteps.indexOf(p.current_step);
             html += '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">';
-            allSteps.forEach((s, i) => {
-                const color = i < currentIdx ? '#4ecdc4' : i === currentIdx ? '#7c4dff' : '#333';
-                const label = stepLabels[s] || s;
-                html += `<div style="background:${color};padding:4px 10px;border-radius:4px;font-size:11px;color:${i <= currentIdx ? '#fff' : '#666'};" title="${label}">${label}</div>`;
+            allSteps.forEach(function(s, i) {
+                var color, textColor;
+                if (i < currentIdx) { color = '#40E0D0'; textColor = '#fff'; }
+                else if (i === currentIdx) { color = p.status === 'error' ? '#ef4444' : '#8b5cf6'; textColor = '#fff'; }
+                else { color = '#333'; textColor = '#666'; }
+                var label = (stepLabels[s] || s) + (i === currentIdx ? stepSuffix : '');
+                html += '<div style="background:' + color + ';padding:4px 10px;border-radius:4px;font-size:11px;color:' + textColor + ';" title="' + label + '">' + label + '</div>';
             });
             html += '</div>';
         }
 
+        var dd = p.domain_details || {};
+        var hasErrors = false;
+        for (var dk in dd) { if (dd[dk].step_status === 'error') { hasErrors = true; break; } }
+        if ((p.status === 'error' || hasErrors) && Object.keys(dd).length > 0) {
+            html += '<div style="margin-top:12px;background:var(--bg-input);border-radius:8px;padding:12px;overflow-x:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+            html += '<thead><tr><th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Domain</th>';
+            html += '<th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Status</th>';
+            html += '<th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Error</th>';
+            html += '<th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Attempts</th></tr></thead><tbody>';
+            for (var domain in dd) {
+                var detail = dd[domain];
+                var statusBadge = detail.step_status === 'complete'
+                    ? '<span style="color:var(--accent);font-weight:500;">Complete</span>'
+                    : detail.step_status === 'error'
+                    ? '<span style="color:var(--red);font-weight:500;">Error</span>'
+                    : detail.step_status === 'pending'
+                    ? '<span style="color:var(--text-muted);">Pending</span>'
+                    : '<span style="color:var(--purple);font-weight:500;">Running</span>';
+                var errorText = detail.error || '\u2014';
+                var attemptText = detail.step_status === 'error'
+                    ? detail.attempt + '/' + detail.max_attempts + ' failed'
+                    : detail.step_status === 'complete' ? '\u2014' : detail.attempt + '/' + detail.max_attempts;
+                html += '<tr><td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:var(--text-primary);">' + domain + '</td>';
+                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border-light);">' + statusBadge + '</td>';
+                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:#f8a0a0;font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;">' + errorText + '</td>';
+                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:var(--text-muted);">' + attemptText + '</td></tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+
+        if (p.status === 'error') {
+            var failedCount = 0;
+            for (var dk2 in dd) { if (dd[dk2].step_status === 'error') failedCount++; }
+            html += '<div style="margin-top:12px;display:flex;gap:12px;align-items:center;">';
+            html += '<button onclick="retryPipeline(\'' + p.id + '\')" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">Retry Failed (' + failedCount + ')</button>';
+            html += '<button onclick="skipPipelineStep(\'' + p.id + '\',\'' + p.current_step + '\')" style="background:none;color:var(--red);border:1px solid #5c1a1a;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">Skip Step</button>';
+            html += '</div>';
+        }
+
         if (p.status === 'awaiting_removal' && p.pending_removals) {
-            html += '<div style="background:#4a1a1a;border:1px solid #8b3a3a;border-radius:8px;padding:12px;margin-top:12px;">';
-            html += '<div style="color:#ff6b6b;font-weight:600;margin-bottom:8px;">Inboxes need removal from campaigns</div>';
-            for (const [email, camps] of Object.entries(p.pending_removals)) {
-                html += `<div style="margin-bottom:8px;">
-                    <div style="font-size:13px;color:#ffaaaa;">${email} is in ${camps.length} campaign(s):</div>`;
-                camps.forEach(c => {
-                    html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 4px 16px;font-size:12px;">
-                        <span style="color:#888;">${c.campaign_name}</span>
-                        <button onclick="removeFromCampaign('${email}',${c.campaign_id})" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Remove</button>
-                    </div>`;
+            html += '<div style="background:var(--red-bg);border:1px solid #3d1519;border-radius:8px;padding:12px;margin-top:12px;">';
+            html += '<div style="color:var(--red);font-weight:600;margin-bottom:8px;">Inboxes need removal from campaigns</div>';
+            for (var email in p.pending_removals) {
+                var camps = p.pending_removals[email];
+                html += '<div style="margin-bottom:8px;"><div style="font-size:13px;color:#f8a0a0;">' + email + ' is in ' + camps.length + ' campaign(s):</div>';
+                camps.forEach(function(c) {
+                    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 4px 16px;font-size:12px;">';
+                    html += '<span style="color:var(--text-muted);">' + c.campaign_name + '</span>';
+                    html += '<button onclick="removeFromCampaign(\'' + email + '\',' + c.campaign_id + ')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Remove</button></div>';
                 });
-                html += `<button onclick="removeFromAllCampaigns('${email}')" style="background:#5c1a1a;color:#ff6b6b;border:1px solid #8b3a3a;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Remove from all campaigns</button>`;
+                html += '<button onclick="removeFromAllCampaigns(\'' + email + '\')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Remove from all campaigns</button>';
                 html += '</div>';
             }
             html += '</div>';
         }
 
-        // Assign to Client button for generic pipelines
-        const isGeneric = p.client_name && p.client_name.toLowerCase().startsWith('generic');
+        var isGeneric = p.client_name && p.client_name.toLowerCase().indexOf('generic') === 0;
         if (isGeneric && (p.status === 'complete' || p.status === 'running')) {
-            html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
-                <button onclick="event.stopPropagation();openAssignModal('${p.id}','${p.client_name.replace(/'/g, "\\'")}')" style="background:#7c4dff;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
-            </div>`;
+            html += '<div style="margin-top:12px;display:flex;justify-content:flex-end;">';
+            html += '<button onclick="event.stopPropagation();openAssignModal(\'' + p.id + '\',\'' + p.client_name.replace(/'/g, "\\'") + '\')" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>';
+            html += '</div>';
         }
 
         if (p.errors && p.errors.length > 0) {
-            html += '<div style="margin-top:8px;font-size:12px;color:#ff6b6b;">';
-            p.errors.forEach(e => { html += '<div>' + e + '</div>'; });
+            html += '<div style="margin-top:8px;font-size:12px;color:var(--red);">';
+            p.errors.forEach(function(e) { html += '<div>' + e + '</div>'; });
             html += '</div>';
         }
 
@@ -1640,8 +1872,9 @@ function renderPipelines() {
 async function removeFromCampaign(email, campaignId) {
     if (!confirm('Remove ' + email + ' from this campaign?')) return;
     try {
-        await edgeFetch('/mutations?action=remove-from-campaign', {
+        await fetch('/api/inbox/remove-from-campaign', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({email, campaign_id: campaignId})
         });
         loadPipelines();
@@ -1651,12 +1884,83 @@ async function removeFromCampaign(email, campaignId) {
 async function removeFromAllCampaigns(email) {
     if (!confirm('Remove ' + email + ' from ALL active campaigns?')) return;
     try {
-        await edgeFetch('/mutations?action=remove-from-all-campaigns', {
+        await fetch('/api/inbox/remove-from-all-campaigns', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({email})
         });
         loadPipelines();
     } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function retryPipeline(pipelineId, domains) {
+    try {
+        const resp = await fetch('/api/pipeline/retry', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({pipeline_id: pipelineId, domains: domains || []})
+        });
+        const result = await resp.json();
+        if (result.error) {
+            alert('Retry failed: ' + result.error);
+        } else {
+            loadPipelines();
+            startPipelinePolling();
+        }
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function skipPipelineStep(pipelineId, stepName) {
+    const stepLabels = {
+        claim_domains: 'Claim Domains', set_dns: 'Set DNS', connect_zapmail: 'Connect ZapMail',
+        create_mailboxes: 'Create Mailboxes', upload_photos: 'Upload Photos',
+        tag_and_configure: 'Tag & Configure', export_to_smartlead: 'Export to SmartLead',
+        enable_warmup: 'Enable Warmup', smartlead_tags: 'SmartLead Tags',
+        export_csv: 'Export CSV', gcal_rotation: 'Schedule Rotation',
+    };
+    const label = stepLabels[stepName] || stepName;
+    if (!confirm('Skip "' + label + '"? Domains that failed this step may have incomplete setup. This should only be used as a last resort.')) return;
+    try {
+        const resp = await fetch('/api/pipeline/skip-step', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({pipeline_id: pipelineId})
+        });
+        const result = await resp.json();
+        if (result.error) {
+            alert('Skip failed: ' + result.error);
+        } else {
+            alert('Skipped ' + label + '. Pipeline moving to: ' + (stepLabels[result.next_step] || result.next_step));
+            loadPipelines();
+            startPipelinePolling();
+        }
+    } catch(e) { alert('Error: ' + e.message); }
+}
+
+var pipelinePollingInterval = null;
+
+function startPipelinePolling() {
+    if (pipelinePollingInterval) return;
+    pipelinePollingInterval = setInterval(async function() {
+        var pipelines = (pipelineData || {}).pipelines || [];
+        var hasRunning = pipelines.some(function(p) { return p.status === 'running'; });
+        if (!hasRunning) {
+            stopPipelinePolling();
+            return;
+        }
+        try {
+            var resp = await fetch('/api/pipeline/active');
+            pipelineData = await resp.json();
+            renderPipelines();
+        } catch(e) { /* silent */ }
+    }, 10000);
+}
+
+function stopPipelinePolling() {
+    if (pipelinePollingInterval) {
+        clearInterval(pipelinePollingInterval);
+        pipelinePollingInterval = null;
+    }
 }
 
 // --- Assign to Client ---
@@ -1686,7 +1990,8 @@ async function openAssignModal(pipelineId, groupName) {
     const select = document.getElementById('ac-client-select');
     select.innerHTML = '<option value="">Loading...</option>';
     try {
-        const data = await edgeFetch('/smartlead-proxy?action=clients-list');
+        const resp = await fetch('/api/clients/list');
+        const data = await resp.json();
         let opts = '<option value="">Select a client...</option>';
         (data.clients || []).forEach(c => {
             opts += `<option value="${c}">${c}</option>`;
@@ -1737,53 +2042,58 @@ function startAssignment() {
     ASSIGN_STEPS.forEach(s => {
         stepsHtml += `<div id="ac-step-${s.id}" style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
             <span id="ac-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
-            <span id="ac-label-${s.id}" style="color:#888;">${s.label}</span>
+            <span id="ac-label-${s.id}" style="color:var(--text-muted);">${s.label}</span>
         </div>`;
     });
     document.getElementById('ac-steps').innerHTML = stepsHtml;
     document.getElementById('ac-result').style.display = 'none';
 
-    // Start job via Edge Function, then poll for events
-    edgeFetch('/sse-ops?action=assign-client', {
+    // Start SSE
+    fetch('/api/pipeline/assign-client', {
         method: 'POST',
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({pipeline_id: pipelineId, client_name: clientName, forwarding_domain: fwd, is_new_client: isNew})
-    }).then(result => {
-        if (!result.job_id) {
-            document.getElementById('ac-result').style.display = 'block';
-            document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">Failed to start job: ${result.error || 'unknown error'}</div>
-                <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
-            return;
-        }
-        let lastStep = 0;
-        const poll = setInterval(async () => {
-            const { data: events } = await sb.from('sse_events').select('*').eq('job_id', result.job_id).order('step');
-            if (!events) return;
-            events.forEach(e => {
-                if (e.step > lastStep || e.status === 'complete' || e.status === 'error') {
-                    handleAssignEvent(e);
-                    if (e.step > lastStep) lastStep = e.step;
-                }
-                if (e.status === 'complete' || (e.status === 'error' && e.step === 0)) clearInterval(poll);
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const evt = JSON.parse(line.slice(6));
+                            handleAssignEvent(evt);
+                        } catch(e) {}
+                    }
+                });
+                read();
             });
-        }, 2000);
+        }
+        read();
     }).catch(err => {
         document.getElementById('ac-result').style.display = 'block';
-        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
-            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        document.getElementById('ac-result').innerHTML = `<div style="color:var(--red);">Connection error: ${err.message}</div>
+            <button onclick="closeAssignModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
     });
 }
 
 function handleAssignEvent(evt) {
     if (evt.status === 'complete') {
         document.getElementById('ac-result').style.display = 'block';
-        document.getElementById('ac-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Assignment complete!</div>
-            <button onclick="closeAssignModal();loadPipelines();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        document.getElementById('ac-result').innerHTML = `<div style="color:var(--accent);font-weight:600;margin-bottom:8px;">Assignment complete!</div>
+            <button onclick="closeAssignModal();loadPipelines();" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
         return;
     }
     if (evt.step === 0 && evt.status === 'error') {
         document.getElementById('ac-result').style.display = 'block';
-        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
-            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        document.getElementById('ac-result').innerHTML = `<div style="color:var(--red);">${evt.message}</div>
+            <button onclick="closeAssignModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
         return;
     }
 
@@ -1796,12 +2106,12 @@ function handleAssignEvent(evt) {
         label.style.color = '#eee';
     } else if (evt.status === 'done') {
         icon.innerHTML = '✓';
-        icon.style.color = '#4ecdc4';
-        label.style.color = '#4ecdc4';
+        icon.style.color = '#40E0D0';
+        label.style.color = '#40E0D0';
     } else if (evt.status === 'error') {
         icon.innerHTML = '✗';
-        icon.style.color = '#ff6b6b';
-        label.style.color = '#ff6b6b';
+        icon.style.color = '#ef4444';
+        label.style.color = '#ef4444';
         // Mark remaining steps as skipped
         for (let i = evt.step + 1; i <= 7; i++) {
             const si = document.getElementById('ac-icon-' + i);
@@ -1810,8 +2120,8 @@ function handleAssignEvent(evt) {
             if (sl) sl.style.color = '#444';
         }
         document.getElementById('ac-result').style.display = 'block';
-        document.getElementById('ac-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
-            <button onclick="closeAssignModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+        document.getElementById('ac-result').innerHTML = `<div style="color:var(--red);font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeAssignModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
     }
 }
 
@@ -1871,52 +2181,53 @@ function startDeletion() {
     DELETE_STEPS.forEach(s => {
         stepsHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
             <span id="del-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
-            <span id="del-label-${s.id}" style="color:#888;">${s.label}</span>
+            <span id="del-label-${s.id}" style="color:var(--text-muted);">${s.label}</span>
         </div>`;
     });
     document.getElementById('del-steps').innerHTML = stepsHtml;
     document.getElementById('del-result').style.display = 'none';
 
-    edgeFetch('/sse-ops?action=delete-infra', {
+    fetch('/api/client/delete-infra', {
         method: 'POST',
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({client_id: clientId, client_name: clientName})
-    }).then(result => {
-        if (!result.job_id) {
-            document.getElementById('del-result').style.display = 'block';
-            document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">Failed to start job: ${result.error || 'unknown error'}</div>
-                <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
-            return;
-        }
-        let lastStep = 0;
-        const poll = setInterval(async () => {
-            const { data: events } = await sb.from('sse_events').select('*').eq('job_id', result.job_id).order('step');
-            if (!events) return;
-            events.forEach(e => {
-                if (e.step > lastStep || e.status === 'complete' || e.status === 'error') {
-                    handleDeleteEvent(e);
-                    if (e.step > lastStep) lastStep = e.step;
-                }
-                if (e.status === 'complete' || (e.status === 'error' && e.step === 0)) clearInterval(poll);
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                        try { handleDeleteEvent(JSON.parse(line.slice(6))); } catch(e) {}
+                    }
+                });
+                read();
             });
-        }, 2000);
+        }
+        read();
     }).catch(err => {
         document.getElementById('del-result').style.display = 'block';
-        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
-            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        document.getElementById('del-result').innerHTML = `<div style="color:var(--red);">Connection error: ${err.message}</div>
+            <button onclick="closeDeleteModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
     });
 }
 
 function handleDeleteEvent(evt) {
     if (evt.status === 'complete') {
         document.getElementById('del-result').style.display = 'block';
-        document.getElementById('del-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Infrastructure deleted successfully.</div>
-            <button onclick="closeDeleteModal();closeDetail();loadOverview();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        document.getElementById('del-result').innerHTML = `<div style="color:var(--accent);font-weight:600;margin-bottom:8px;">Infrastructure deleted successfully.</div>
+            <button onclick="closeDeleteModal();closeDetail();loadOverview();" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
         return;
     }
     if (evt.step === 0 && evt.status === 'error') {
         document.getElementById('del-result').style.display = 'block';
-        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
-            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        document.getElementById('del-result').innerHTML = `<div style="color:var(--red);">${evt.message}</div>
+            <button onclick="closeDeleteModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
         return;
     }
     const icon = document.getElementById('del-icon-' + evt.step);
@@ -1926,10 +2237,10 @@ function handleDeleteEvent(evt) {
         icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
         label.style.color = '#eee';
     } else if (evt.status === 'done') {
-        icon.innerHTML = '✓'; icon.style.color = '#4ecdc4'; label.style.color = '#4ecdc4';
+        icon.innerHTML = '✓'; icon.style.color = '#40E0D0'; label.style.color = '#40E0D0';
         if (evt.message) label.textContent += ' — ' + evt.message;
     } else if (evt.status === 'error') {
-        icon.innerHTML = '✗'; icon.style.color = '#ff6b6b'; label.style.color = '#ff6b6b';
+        icon.innerHTML = '✗'; icon.style.color = '#ef4444'; label.style.color = '#ef4444';
         for (let i = evt.step + 1; i <= 5; i++) {
             const si = document.getElementById('del-icon-' + i);
             const sl = document.getElementById('del-label-' + i);
@@ -1937,8 +2248,8 @@ function handleDeleteEvent(evt) {
             if (sl) sl.style.color = '#444';
         }
         document.getElementById('del-result').style.display = 'block';
-        document.getElementById('del-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
-            <button onclick="closeDeleteModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+        document.getElementById('del-result').innerHTML = `<div style="color:var(--red);font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeDeleteModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
     }
 }
 
@@ -1968,7 +2279,8 @@ async function openTransitionModal(clientId, clientName) {
     const select = document.getElementById('tr-client-select');
     select.innerHTML = '<option value="">Loading...</option>';
     try {
-        const data = await edgeFetch('/smartlead-proxy?action=clients-list');
+        const resp = await fetch('/api/clients/list');
+        const data = await resp.json();
         let opts = '<option value="">Select a client...</option>';
         (data.clients || []).filter(c => c !== clientName).forEach(c => {
             opts += `<option value="${c}">${c}</option>`;
@@ -2018,52 +2330,53 @@ function startTransition() {
     TRANSITION_STEPS.forEach(s => {
         stepsHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;">
             <span id="tr-icon-${s.id}" style="width:22px;text-align:center;color:#555;">○</span>
-            <span id="tr-label-${s.id}" style="color:#888;">${s.label}</span>
+            <span id="tr-label-${s.id}" style="color:var(--text-muted);">${s.label}</span>
         </div>`;
     });
     document.getElementById('tr-steps').innerHTML = stepsHtml;
     document.getElementById('tr-result').style.display = 'none';
 
-    edgeFetch('/sse-ops?action=transition', {
+    fetch('/api/client/transition', {
         method: 'POST',
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({client_id: clientId, client_name: clientName, new_client_name: newClientName, forwarding_domain: fwd, is_new_client: isNew})
-    }).then(result => {
-        if (!result.job_id) {
-            document.getElementById('tr-result').style.display = 'block';
-            document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">Failed to start job: ${result.error || 'unknown error'}</div>
-                <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
-            return;
-        }
-        let lastStep = 0;
-        const poll = setInterval(async () => {
-            const { data: events } = await sb.from('sse_events').select('*').eq('job_id', result.job_id).order('step');
-            if (!events) return;
-            events.forEach(e => {
-                if (e.step > lastStep || e.status === 'complete' || e.status === 'error') {
-                    handleTransitionEvent(e);
-                    if (e.step > lastStep) lastStep = e.step;
-                }
-                if (e.status === 'complete' || (e.status === 'error' && e.step === 0)) clearInterval(poll);
+    }).then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                lines.forEach(line => {
+                    if (line.startsWith('data: ')) {
+                        try { handleTransitionEvent(JSON.parse(line.slice(6))); } catch(e) {}
+                    }
+                });
+                read();
             });
-        }, 2000);
+        }
+        read();
     }).catch(err => {
         document.getElementById('tr-result').style.display = 'block';
-        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">Connection error: ${err.message}</div>
-            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        document.getElementById('tr-result').innerHTML = `<div style="color:var(--red);">Connection error: ${err.message}</div>
+            <button onclick="closeTransitionModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
     });
 }
 
 function handleTransitionEvent(evt) {
     if (evt.status === 'complete') {
         document.getElementById('tr-result').style.display = 'block';
-        document.getElementById('tr-result').innerHTML = `<div style="color:#4ecdc4;font-weight:600;margin-bottom:8px;">Transition complete!</div>
-            <button onclick="closeTransitionModal();closeDetail();loadOverview();" style="background:#4ecdc4;color:#1a1a2e;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+        document.getElementById('tr-result').innerHTML = `<div style="color:var(--accent);font-weight:600;margin-bottom:8px;">Transition complete!</div>
+            <button onclick="closeTransitionModal();closeDetail();loadOverview();" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
         return;
     }
     if (evt.step === 0 && evt.status === 'error') {
         document.getElementById('tr-result').style.display = 'block';
-        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;">${evt.message}</div>
-            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
+        document.getElementById('tr-result').innerHTML = `<div style="color:var(--red);">${evt.message}</div>
+            <button onclick="closeTransitionModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
         return;
     }
     const icon = document.getElementById('tr-icon-' + evt.step);
@@ -2073,9 +2386,9 @@ function handleTransitionEvent(evt) {
         icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
         label.style.color = '#eee';
     } else if (evt.status === 'done') {
-        icon.innerHTML = '✓'; icon.style.color = '#4ecdc4'; label.style.color = '#4ecdc4';
+        icon.innerHTML = '✓'; icon.style.color = '#40E0D0'; label.style.color = '#40E0D0';
     } else if (evt.status === 'error') {
-        icon.innerHTML = '✗'; icon.style.color = '#ff6b6b'; label.style.color = '#ff6b6b';
+        icon.innerHTML = '✗'; icon.style.color = '#ef4444'; label.style.color = '#ef4444';
         for (let i = evt.step + 1; i <= 6; i++) {
             const si = document.getElementById('tr-icon-' + i);
             const sl = document.getElementById('tr-label-' + i);
@@ -2083,8 +2396,8 @@ function handleTransitionEvent(evt) {
             if (sl) sl.style.color = '#444';
         }
         document.getElementById('tr-result').style.display = 'block';
-        document.getElementById('tr-result').innerHTML = `<div style="color:#ff6b6b;font-size:13px;margin-bottom:8px;">${evt.message}</div>
-            <button onclick="closeTransitionModal()" style="background:#0f3460;color:#eee;border:1px solid #1a5276;padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
+        document.getElementById('tr-result').innerHTML = `<div style="color:var(--red);font-size:13px;margin-bottom:8px;">${evt.message}</div>
+            <button onclick="closeTransitionModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;">Close</button>`;
     }
 }
 
@@ -2097,8 +2410,9 @@ async function triggerReplacement(clientId, flaggedDomains) {
     if (!client) { statusEl.textContent = 'Client not found'; return; }
 
     try {
-        const result = await edgeFetch('/pipeline-ops?action=replacement', {
+        const resp = await fetch('/api/pipeline/replacement', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 client_name: client.name,
                 old_domain: flaggedDomains[0],
@@ -2106,13 +2420,14 @@ async function triggerReplacement(clientId, flaggedDomains) {
                 old_account_ids: [],
             })
         });
+        const result = await resp.json();
         if (result.error) {
-            statusEl.innerHTML = '<span style="color:#ff6b6b;">' + result.error + '</span>';
+            statusEl.innerHTML = '<span style="color:var(--red);">' + result.error + '</span>';
         } else {
-            statusEl.innerHTML = '<span style="color:#4ecdc4;">Pipeline started!</span>';
+            statusEl.innerHTML = '<span style="color:var(--accent);">Pipeline started!</span>';
         }
     } catch(err) {
-        statusEl.innerHTML = '<span style="color:#ff6b6b;">Error: ' + err.message + '</span>';
+        statusEl.innerHTML = '<span style="color:var(--red);">Error: ' + err.message + '</span>';
     }
 }
 

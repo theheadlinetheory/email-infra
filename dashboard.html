@@ -40,15 +40,31 @@
 body { font-family: var(--font-body); background: var(--bg-root); color: var(--text-primary); min-height: 100vh; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
 /* --- Topbar --- */
-.topbar { background: var(--bg-surface); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px); background: rgba(20,20,31,0.92); }
+.topbar { padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px); background: rgba(20,20,31,0.92); }
+.topbar-left { display: flex; align-items: center; gap: 24px; }
 .topbar h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--text-primary); }
 .topbar h1 span { color: var(--accent); }
+
+/* --- Mode Switcher (like CRM Monitor) --- */
+.mode-switcher { display: flex; align-items: center; background: var(--bg-root); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.mode-switcher .mode-btn { padding: 6px 16px; font-size: 12px; font-weight: 500; font-family: var(--font-body); color: var(--text-muted); background: transparent; border: none; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.mode-switcher .mode-btn:hover { color: var(--text-secondary); }
+.mode-switcher .mode-btn.active { background: var(--accent); color: var(--bg-root); font-weight: 600; }
+
+/* --- Nav Tabs (inline in topbar) --- */
+.topbar-nav { display: flex; align-items: center; gap: 4px; }
+.topbar-nav .nav-tab { padding: 8px 14px; font-size: 13px; font-weight: 500; color: var(--text-muted); background: none; border: none; cursor: pointer; border-radius: var(--radius); transition: all 0.12s; font-family: var(--font-body); }
+.topbar-nav .nav-tab:hover { color: var(--text-secondary); background: var(--bg-raised); }
+.topbar-nav .nav-tab.active { color: var(--accent); background: var(--accent-bg); }
+
 .topbar-right { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 .topbar-right button { background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border); padding: 6px 14px; border-radius: var(--radius); cursor: pointer; font-size: 12px; font-family: var(--font-body); font-weight: 500; transition: all 0.15s; }
 .topbar-right button:hover { background: var(--border); color: var(--text-primary); }
+.sync-btn { background: var(--accent) !important; color: var(--bg-root) !important; border: none !important; font-weight: 600 !important; padding: 7px 18px !important; }
+.sync-btn:hover { background: #5aeadb !important; }
 
 /* --- Layout --- */
-.container { max-width: 1440px; margin: 0 auto; padding: 24px 32px; }
+.container { padding: 24px 32px; }
 
 /* --- Alert Banner --- */
 .alert-banner { background: var(--red-bg); border: 1px solid #3d1519; border-radius: var(--radius); padding: 14px 18px; margin-bottom: 20px; }
@@ -73,6 +89,19 @@ body { font-family: var(--font-body); background: var(--bg-root); color: var(--t
 .stat-card.alert .value { color: var(--red); }
 .stat-card.good .value { color: var(--accent); }
 .stat-card.warn .value { color: var(--yellow); }
+
+/* --- Page Header --- */
+.page-header { margin-bottom: 20px; }
+.page-header h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 4px; }
+.page-header .subtitle { font-size: 13px; color: var(--text-muted); font-family: var(--font-mono); }
+
+/* --- Filter Pills --- */
+.filter-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 20px; }
+.filter-pill { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500; font-family: var(--font-body); color: var(--text-muted); background: transparent; border: 1px solid transparent; cursor: pointer; transition: all 0.12s; }
+.filter-pill:hover { color: var(--text-secondary); background: var(--bg-raised); }
+.filter-pill.active { color: var(--text-primary); background: var(--bg-raised); border-color: var(--border); }
+.filter-pill .count { display: inline-block; background: var(--bg-surface); padding: 1px 6px; border-radius: 10px; font-size: 11px; font-family: var(--font-mono); margin-left: 4px; }
+.filter-pill.active .count { background: var(--accent-bg); color: var(--accent); }
 
 /* --- Section Titles --- */
 h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 28px 0 14px; text-transform: uppercase; letter-spacing: 1.2px; }
@@ -127,11 +156,7 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 10px; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* --- Tabs --- */
-.tabs { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
-.tab { padding: 12px 20px; cursor: pointer; color: var(--text-muted); font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; transition: all 0.15s; letter-spacing: 0.2px; }
-.tab:hover { color: var(--text-secondary); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+/* --- Tab Content --- */
 .tab-content { display: none; }
 .tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
 
@@ -194,12 +219,25 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 <body>
 
 <div class="topbar">
-    <h1><span>THT</span> Infrastructure</h1>
+    <div class="topbar-left">
+        <h1><span>THT</span> Infrastructure</h1>
+        <div class="mode-switcher">
+            <button class="mode-btn active" onclick="switchMode('fulfillment')">Fulfillment</button>
+            <button class="mode-btn" onclick="switchMode('acquisition')">Acquisition</button>
+        </div>
+        <nav class="topbar-nav" id="topbar-nav">
+            <button class="nav-tab active" onclick="switchTab('smartlead')">SmartLead</button>
+            <button class="nav-tab" onclick="switchTab('zapmail')">ZapMail</button>
+            <button class="nav-tab" onclick="switchTab('domains')">Domains</button>
+            <button class="nav-tab" onclick="switchTab('pipelines')">Pipelines</button>
+            <button class="nav-tab" onclick="switchTab('sync')">Sync Check</button>
+        </nav>
+    </div>
     <div class="topbar-right">
         <span id="wallet-balance" style="color:var(--accent);font-weight:600;"></span>
         <span id="pipeline-badge" style="display:none;background:var(--purple);color:#fff;padding:3px 10px;border-radius:6px;font-size:11px;font-family:var(--font-mono);"></span>
         <span id="last-updated"></span>
-        <button onclick="loadOverview()">Refresh</button>
+        <button class="sync-btn" onclick="loadOverview()">Sync</button>
     </div>
 </div>
 
@@ -211,25 +249,25 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
     <div id="content" style="display:none;">
         <div id="alert-banner"></div>
 
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('smartlead')">SmartLead</div>
-            <div class="tab" onclick="switchTab('zapmail')">ZapMail</div>
-            <div class="tab" onclick="switchTab('domains')">Domains</div>
-            <div class="tab" onclick="switchTab('pipelines')">Pipelines</div>
-            <div class="tab" onclick="switchTab('sync')">Sync Check</div>
-        </div>
-
         <!-- SmartLead Tab -->
         <div id="tab-smartlead" class="tab-content active">
-            <div class="action-bar">
-                <button class="action-btn primary" onclick="showNewClientForm()">+ New Client</button>
-                <button class="action-btn secondary" onclick="showNewGenericForm ? showNewGenericForm() : showNewClientForm()">+ Generic Group</button>
-                <button class="action-btn secondary" onclick="showNewAcquisitionForm()">+ Acquisition Group</button>
-                <span id="inventory-alert" style="display:none;color:var(--yellow);font-size:12px;font-family:var(--font-mono);margin-left:auto;"></span>
+            <div class="page-header">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <h2 id="sl-page-title">SmartLead</h2>
+                        <div class="subtitle" id="sl-subtitle"></div>
+                    </div>
+                    <div class="action-bar" style="margin-bottom:0;">
+                        <button class="action-btn primary" onclick="showNewClientForm()">+ New Client</button>
+                        <button class="action-btn secondary" onclick="showNewGenericForm ? showNewGenericForm() : showNewClientForm()">+ Generic Group</button>
+                        <button class="action-btn secondary" onclick="showNewAcquisitionForm()">+ Acquisition Group</button>
+                    </div>
+                </div>
             </div>
+            <span id="inventory-alert" style="display:none;color:var(--yellow);font-size:12px;font-family:var(--font-mono);"></span>
+            <div id="sl-filter-bar" class="filter-bar"></div>
             <div class="summary-row" id="summary-row"></div>
 
-            <h2 class="section-title">Clients</h2>
             <div class="clients-grid" id="clients-grid"></div>
 
             <div id="generic-section" style="display:none;margin-top:28px;">
@@ -601,6 +639,21 @@ function renderOverview() {
         <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
         <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
         <div class="stat-card ${d.smtp_failures > 0 ? 'alert' : 'good'}"><div class="value">${d.smtp_failures}</div><div class="label">SMTP Failures</div></div>
+    `;
+
+    // Subtitle + filter bar
+    const totalClients = d.clients.length;
+    const attentionCount = d.clients.filter(c => c.needs_attention).length;
+    const warmingCount = d.clients.filter(c => c.warming > 0).length;
+    const readyCount = d.clients.filter(c => c.days_until_ready !== null && c.days_until_ready <= 0).length;
+    document.getElementById('sl-subtitle').textContent = `${totalClients} clients, ${d.total_accounts} accounts, ${d.in_campaign} in campaigns — ${d.warming} warming`;
+
+    const filterBar = document.getElementById('sl-filter-bar');
+    filterBar.innerHTML = `
+        <button class="filter-pill active" onclick="filterClients('all')">All <span class="count">${totalClients}</span></button>
+        ${attentionCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'attention\')">Needs Attention <span class="count">' + attentionCount + '</span></button>' : ''}
+        ${warmingCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'warming\')">Warming <span class="count">' + warmingCount + '</span></button>' : ''}
+        ${readyCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'ready\')">Ready <span class="count">' + readyCount + '</span></button>' : ''}
     `;
 
     // Client cards
@@ -1139,16 +1192,41 @@ function renderAcquisitionGroups(groups) {
 }
 
 // --- Tab switching ---
+let currentMode = 'fulfillment';
+
+function switchMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.mode-btn[onclick="switchMode('${mode}')"]`).classList.add('active');
+    if (overviewData) renderOverview();
+}
+
 function switchTab(tab) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+    document.querySelector(`.nav-tab[onclick="switchTab('${tab}')"]`).classList.add('active');
     document.getElementById('tab-' + tab).classList.add('active');
 
     if (tab === 'zapmail' && !zmData) loadZapmail();
     if (tab === 'domains' && !domData) loadDomains();
     if (tab === 'pipelines') loadPipelines();
     if (tab === 'sync' && !syncData) loadSync();
+}
+
+function filterClients(filter) {
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    event.target.closest('.filter-pill').classList.add('active');
+    const cards = document.querySelectorAll('#clients-grid .client-card');
+    const d = overviewData;
+    cards.forEach((card, i) => {
+        const cl = d.clients[i];
+        if (!cl) return;
+        let show = true;
+        if (filter === 'attention') show = cl.needs_attention;
+        else if (filter === 'warming') show = cl.warming > 0;
+        else if (filter === 'ready') show = cl.days_until_ready !== null && cl.days_until_ready <= 0;
+        card.style.display = show ? '' : 'none';
+    });
 }
 
 // --- ZapMail ---
