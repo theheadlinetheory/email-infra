@@ -40,7 +40,7 @@
 body { font-family: var(--font-body); background: var(--bg-root); color: var(--text-primary); min-height: 100vh; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
 /* --- Topbar --- */
-.topbar { background: var(--bg-surface); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; }
+.topbar { background: var(--bg-surface); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px); background: rgba(20,20,31,0.92); }
 .topbar h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--text-primary); }
 .topbar h1 span { color: var(--accent); }
 .topbar-right { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
@@ -133,7 +133,20 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .tab:hover { color: var(--text-secondary); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab-content { display: none; }
-.tab-content.active { display: block; }
+.tab-content.active { display: block; animation: fadeIn 0.2s ease-out; }
+
+/* --- Smooth Content Transitions --- */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+.detail-panel { animation: slideIn 0.2s ease-out; }
+.modal-panel { animation: fadeIn 0.15s ease-out; }
+.modal-overlay { animation: fadeIn 0.12s ease-out; }
+
+/* --- Smooth Scrollbar --- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* --- ZapMail --- */
 .zm-client-card { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 12px; }
@@ -531,7 +544,9 @@ async function loadOverview() {
 
 function renderOverview() {
     document.getElementById('loading').style.display = 'none';
-    document.getElementById('content').style.display = 'block';
+    const content = document.getElementById('content');
+    content.style.display = 'block';
+    content.style.animation = 'fadeIn 0.25s ease-out';
 
     const d = overviewData;
     const time = new Date(d.generated_at).toLocaleTimeString();
