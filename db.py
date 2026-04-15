@@ -135,6 +135,49 @@ def remove_pending_deletion(domain: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Client Rotations (A/B group swap)
+# ---------------------------------------------------------------------------
+
+def get_all_rotations() -> list[dict]:
+    """Get all client rotation records."""
+    return _request("GET", "/client_rotations", params={"select": "*", "order": "client_name"})
+
+
+def get_rotation(client_name: str) -> dict | None:
+    """Get a single client's rotation record."""
+    rows = _request("GET", "/client_rotations", params={
+        "select": "*",
+        "client_name": f"eq.{client_name}",
+    })
+    return rows[0] if rows else None
+
+
+def upsert_rotation(client_name: str, group_a_ids: list, group_b_ids: list,
+                    active_group: str = "A", last_swap_date: str = "") -> None:
+    """Create or update a rotation record."""
+    row = {
+        "client_name": client_name,
+        "group_a_ids": json.dumps(group_a_ids),
+        "group_b_ids": json.dumps(group_b_ids),
+        "active_group": active_group,
+        "last_swap_date": last_swap_date,
+    }
+    _request("POST", "/client_rotations", json_body=row, headers={
+        "Prefer": "resolution=merge-duplicates",
+    })
+
+
+def update_rotation_swap(client_name: str, new_active: str, swap_date: str) -> None:
+    """Flip the active group after a swap."""
+    _request("PATCH", "/client_rotations", params={
+        "client_name": f"eq.{client_name}",
+    }, json_body={
+        "active_group": new_active,
+        "last_swap_date": swap_date,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Client Configs
 # ---------------------------------------------------------------------------
 
