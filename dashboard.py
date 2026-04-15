@@ -13,7 +13,7 @@ import time
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -30,7 +30,7 @@ from zapmail_ops import (
     zm_get_placement_results, zm_get_placement_eligible_mailboxes,
     zm_run_placement_test, zm_get_placement_credits,
 )
-from sheets import get_available_domains, get_acquisition_domains, get_domain_summary, get_all_master_domains, write_range, setup_client_tab
+from sheets import get_available_domains, get_acquisition_domains, get_all_master_domains, write_range, setup_client_tab
 from setup import (
     sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
     zm_list_domain_tags, zm_create_domain_tag, zm_assign_domain_tag,
@@ -1605,6 +1605,8 @@ def api_wallet():
     return zm_get_wallet_balance()
 
 
+DOMAIN_INVENTORY_THRESHOLD = 20
+
 _inventory_alert_times = {}  # {"Client": datetime, "Acquisition": datetime}
 
 
@@ -1614,23 +1616,21 @@ def _send_inventory_alert(pool_name, count):
     if not webhook_url:
         return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     last_sent = _inventory_alert_times.get(pool_name)
     if last_sent and (now - last_sent) < timedelta(hours=24):
         return  # Already alerted recently
 
     try:
-        requests.post(
+        resp = requests.post(
             webhook_url,
             json={"text": f"\u26a0\ufe0f Domain inventory low: {pool_name} pool has {count} available (threshold: {DOMAIN_INVENTORY_THRESHOLD})"},
             timeout=10,
         )
+        resp.raise_for_status()
         _inventory_alert_times[pool_name] = now
     except Exception as e:
         print(f"[SLACK] Failed to send inventory alert: {e}")
-
-
-DOMAIN_INVENTORY_THRESHOLD = 20
 
 
 def api_domain_inventory():
