@@ -11,25 +11,25 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
 :root {
-    --bg-root: #1a1c23;
-    --bg-surface: #22252e;
-    --bg-raised: #2a2d38;
-    --bg-input: #1e2028;
-    --border: #353845;
-    --border-light: #2e3140;
-    --text-primary: #eceef3;
-    --text-secondary: #9498a8;
-    --text-muted: #6b7084;
-    --accent: #40E0D0;
-    --accent-dim: #2ba89b;
-    --accent-bg: #1a3330;
+    --bg-root: #f8f9fa;
+    --bg-surface: #ffffff;
+    --bg-raised: #f3f4f6;
+    --bg-input: #f9fafb;
+    --border: #e5e7eb;
+    --border-light: #f0f1f3;
+    --text-primary: #111827;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --accent: #22c55e;
+    --accent-dim: #16a34a;
+    --accent-bg: #f0fdf4;
     --purple: #8b5cf6;
-    --purple-bg: #2a2040;
+    --purple-bg: #f5f3ff;
     --red: #ef4444;
     --red-dim: #dc2626;
-    --red-bg: #352020;
+    --red-bg: #fef2f2;
     --yellow: #f59e0b;
-    --yellow-bg: #352e1a;
+    --yellow-bg: #fffbeb;
     --font-body: 'Outfit', -apple-system, sans-serif;
     --font-mono: 'IBM Plex Mono', 'SF Mono', monospace;
     --radius: 8px;
@@ -40,7 +40,7 @@
 body { font-family: var(--font-body); background: var(--bg-root); color: var(--text-primary); min-height: 100vh; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
 /* --- Topbar --- */
-.topbar { padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px); background: rgba(34,37,46,0.94); }
+.topbar { padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 56px; position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px); background: rgba(255,255,255,0.95); }
 .topbar-left { display: flex; align-items: center; gap: 24px; }
 .topbar h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; color: var(--text-primary); }
 .topbar h1 span { color: var(--accent); }
@@ -49,7 +49,7 @@ body { font-family: var(--font-body); background: var(--bg-root); color: var(--t
 .mode-switcher { display: flex; align-items: center; background: var(--bg-root); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .mode-switcher .mode-btn { padding: 6px 16px; font-size: 12px; font-weight: 500; font-family: var(--font-body); color: var(--text-muted); background: transparent; border: none; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
 .mode-switcher .mode-btn:hover { color: var(--text-secondary); }
-.mode-switcher .mode-btn.active { background: var(--accent); color: var(--bg-root); font-weight: 600; }
+.mode-switcher .mode-btn.active { background: var(--accent); color: #fff; font-weight: 600; }
 
 /* --- Nav Tabs (inline in topbar) --- */
 .topbar-nav { display: flex; align-items: center; gap: 4px; }
@@ -60,8 +60,8 @@ body { font-family: var(--font-body); background: var(--bg-root); color: var(--t
 .topbar-right { display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 .topbar-right button { background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border); padding: 6px 14px; border-radius: var(--radius); cursor: pointer; font-size: 12px; font-family: var(--font-body); font-weight: 500; transition: all 0.15s; }
 .topbar-right button:hover { background: var(--border); color: var(--text-primary); }
-.sync-btn { background: var(--accent) !important; color: var(--bg-root) !important; border: none !important; font-weight: 600 !important; padding: 7px 18px !important; }
-.sync-btn:hover { background: #5aeadb !important; }
+.sync-btn { background: var(--accent) !important; color: #fff !important; border: none !important; font-weight: 600 !important; padding: 7px 18px !important; }
+.sync-btn:hover { background: var(--accent-dim) !important; }
 
 /* --- Layout --- */
 .container { padding: 24px 32px; }
@@ -74,8 +74,8 @@ body { font-family: var(--font-body); background: var(--bg-root); color: var(--t
 /* --- Action Bar --- */
 .action-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
 .action-bar .action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--font-body); transition: all 0.15s; border: none; }
-.action-bar .action-btn.primary { background: var(--accent); color: var(--bg-root); }
-.action-bar .action-btn.primary:hover { background: #5aeadb; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(64,224,208,0.2); }
+.action-bar .action-btn.primary { background: var(--accent); color: #fff; }
+.action-bar .action-btn.primary:hover { background: #16a34a; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(34,197,94,0.2); }
 .action-bar .action-btn.secondary { background: var(--bg-raised); color: var(--text-secondary); border: 1px solid var(--border); }
 .action-bar .action-btn.secondary:hover { border-color: var(--accent-dim); color: var(--accent); }
 .action-bar .action-btn.purple { background: var(--purple); color: #fff; }
@@ -109,7 +109,7 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 /* --- Client Cards --- */
 .clients-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
 .client-card { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius-lg); padding: 18px; cursor: pointer; transition: all 0.2s; }
-.client-card:hover { border-color: var(--border); background: var(--bg-raised); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+.client-card:hover { border-color: var(--border); background: var(--bg-raised); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
 .client-card.has-alert { border-left: 3px solid var(--red); }
 .client-card .cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .client-card .cc-name { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
@@ -127,7 +127,7 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .badge-red { background: var(--red-bg); color: var(--red); }
 
 /* --- Detail Panel --- */
-.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; }
+.detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 100; }
 .detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 940px; max-width: 95vw; background: var(--bg-surface); z-index: 101; overflow-y: auto; padding: 28px; border-left: 1px solid var(--border); }
 .detail-panel .close-btn { position: absolute; top: 16px; right: 20px; background: var(--bg-raised); border: 1px solid var(--border); color: var(--text-muted); width: 32px; height: 32px; border-radius: var(--radius); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
 .detail-panel .close-btn:hover { background: var(--border); color: var(--text-primary); }
@@ -197,7 +197,7 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .sync-item .domain { color: var(--accent); }
 
 /* --- Modals --- */
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 200; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 200; }
 .modal-panel { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px 32px; z-index: 201; width: 500px; max-width: 92vw; box-shadow: 0 24px 48px rgba(0,0,0,0.5); }
 .modal-panel h2 { font-size: 17px; font-weight: 600; margin-bottom: 20px; letter-spacing: -0.2px; }
 .modal-panel label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
@@ -209,8 +209,8 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .modal-panel .btn { padding: 9px 20px; border-radius: var(--radius); cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--font-body); border: none; transition: all 0.15s; }
 .modal-panel .btn-cancel { background: none; color: var(--text-muted); border: 1px solid var(--border); }
 .modal-panel .btn-cancel:hover { color: var(--text-primary); border-color: var(--text-muted); }
-.modal-panel .btn-primary { background: var(--accent); color: var(--bg-root); font-weight: 600; }
-.modal-panel .btn-primary:hover { background: #5aeadb; }
+.modal-panel .btn-primary { background: var(--accent); color: #fff; font-weight: 600; }
+.modal-panel .btn-primary:hover { background: #16a34a; }
 .modal-panel .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .modal-panel .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid #3d1519; font-weight: 600; }
 .modal-panel .btn-danger:hover { background: #3d1519; }
@@ -603,6 +603,72 @@ async function loadOverview() {
     }
 }
 
+function renderClientCards(clients, archivedClients, pausedClients) {
+    return clients.map(cl => {
+        const isPaused = pausedClients.includes(cl.name);
+        const isArchived = archivedClients.includes(cl.name);
+        const hasAlert = cl.smtp_failures > 0 || cl.blocked > 0;
+        const readyBadge = cl.days_until_ready !== null
+            ? (cl.days_until_ready <= 0
+                ? '<span class="badge badge-green">Ready</span>'
+                : '<span class="badge badge-yellow">' + cl.days_until_ready + 'd left</span>')
+            : '';
+        const rotBadge = cl.days_until_rotation !== null && cl.days_until_rotation <= 7
+            ? '<span class="badge badge-red">Rotate soon</span>'
+            : '';
+
+        const healthColor = cl.health_score >= 85 ? 'var(--accent)' : cl.health_score >= 60 ? '#f59e0b' : '#ef4444';
+        const healthBg = cl.health_score >= 85 ? 'var(--accent-bg)' : cl.health_score >= 60 ? 'var(--yellow-bg)' : 'var(--red-bg)';
+
+        return `
+        <div class="client-card ${hasAlert || cl.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${cl.id}, '${cl.name.replace(/'/g, "\\'")}')">
+            <div class="cc-header">
+                <span class="cc-name">${cl.name}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${cl.health_score}</span>
+                    <span class="cc-count">${cl.accounts} accounts</span>
+                </div>
+            </div>
+            ${cl.needs_attention ? '<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
+            <div class="cc-stats">
+                <div class="cc-stat"><span class="label">Healthy</span><span style="color:var(--accent)">${cl.healthy_inboxes}</span></div>
+                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ef4444' : 'var(--accent)'}">${cl.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ef4444' : 'var(--accent)'}">${cl.blocked}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ef4444' : cl.avg_bounce_rate > 1 ? '#f59e0b' : 'var(--accent)') : 'var(--text-muted)'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? 'var(--accent)' : cl.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444') : 'var(--text-muted)'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
+            </div>
+            <div style="margin-top:8px;padding:8px 10px;background:var(--bg-input);border-radius:6px;font-size:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:var(--text-muted);">Target Volume</span>
+                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
+                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
+                        <span style="color:var(--text-muted);">/day</span>
+                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
+                    </div>
+                </div>
+                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? 'var(--accent)' : '#ef4444') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
+            ${cl.batches && cl.batches.length > 1 ? '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">' + cl.batches.map(b => {
+                if (b.status === 'ready') {
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--accent);">&#9679; ' + b.total + ' accounts ready</span><span style="color:var(--text-muted);">since ' + b.warmup_start + '</span></div>';
+                } else {
+                    const pct = Math.round(b.days_done / 14 * 100);
+                    return '<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px;"><span style="color:var(--purple);">&#9679; ' + b.total + ' new accounts warming</span><span>Day ' + b.days_done + '/14</span></div><div style="background:var(--bg-input);border-radius:4px;height:5px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + pct + '%;border-radius:4px;"></div></div></div>';
+                }
+            }).join('') + '</div>' : (cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : '')}
+            <div class="cc-dates">
+                ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
+                ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
+                ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:6px;">
+                <button onclick="event.stopPropagation();archiveClient('${cl.name.replace(/'/g, "\\'")}', ${!isArchived})" style="background:var(--bg-raised);color:var(--text-secondary);border:1px solid var(--border);padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isArchived ? 'Unarchive' : 'Archive'}</button>
+                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? 'var(--yellow-bg)' : 'var(--bg-raised)'};color:${isPaused ? '#f59e0b' : 'var(--text-muted)'};border:1px solid ${isPaused ? '#f59e0b33' : 'var(--border)'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
 function renderOverview() {
     document.getElementById('loading').style.display = 'none';
     const content = document.getElementById('content');
@@ -683,85 +749,31 @@ function renderOverview() {
     `;
 
     // Subtitle + filter bar
-    const totalClients = d.clients.length;
-    const attentionCount = d.clients.filter(c => c.needs_attention).length;
-    const warmingCount = d.clients.filter(c => c.warming > 0).length;
-    const readyCount = d.clients.filter(c => c.days_until_ready !== null && c.days_until_ready <= 0).length;
-    document.getElementById('sl-subtitle').textContent = `${totalClients} clients, ${d.total_accounts} accounts, ${d.in_campaign} in campaigns — ${d.warming} warming`;
+    const archivedClients = d.archived_clients || [];
+    const activeClients = d.clients.filter(cl => !archivedClients.includes(cl.name));
+    const archivedClientData = d.clients.filter(cl => archivedClients.includes(cl.name));
+    const activeCount = activeClients.length;
+    const archivedCount = archivedClientData.length;
+
+    // Store for filtering
+    window._activeClients = activeClients;
+    window._archivedClientData = archivedClientData;
+    window._archivedClients = archivedClients;
+    window._pausedClients = d.paused_clients || [];
+
+    document.getElementById('sl-subtitle').textContent = `${activeCount} active clients, ${d.total_accounts} accounts, ${d.in_campaign} in campaigns`;
 
     const filterBar = document.getElementById('sl-filter-bar');
     filterBar.innerHTML = `
-        <button class="filter-pill active" onclick="filterClients('all')">All <span class="count">${totalClients}</span></button>
-        ${attentionCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'attention\')">Needs Attention <span class="count">' + attentionCount + '</span></button>' : ''}
-        ${warmingCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'warming\')">Warming <span class="count">' + warmingCount + '</span></button>' : ''}
-        ${readyCount > 0 ? '<button class="filter-pill" onclick="filterClients(\'ready\')">Ready <span class="count">' + readyCount + '</span></button>' : ''}
+        <button class="filter-pill active" onclick="filterClients('active')">Active <span class="count">${activeCount}</span></button>
+        <button class="filter-pill" onclick="filterClients('archived')">Archived <span class="count">${archivedCount}</span></button>
     `;
 
     // Client cards
     const pausedClients = d.paused_clients || [];
     const gridEl = document.getElementById('clients-grid');
-    clientsList = d.clients;
-    gridEl.innerHTML = d.clients.map(cl => {
-        const isPaused = pausedClients.includes(cl.name);
-        const hasAlert = cl.smtp_failures > 0 || cl.blocked > 0;
-        const readyBadge = cl.days_until_ready !== null
-            ? (cl.days_until_ready <= 0
-                ? '<span class="badge badge-green">Ready</span>'
-                : '<span class="badge badge-yellow">' + cl.days_until_ready + 'd left</span>')
-            : '';
-        const rotBadge = cl.days_until_rotation !== null && cl.days_until_rotation <= 7
-            ? '<span class="badge badge-red">Rotate soon</span>'
-            : '';
-
-        const healthColor = cl.health_score >= 85 ? '#40E0D0' : cl.health_score >= 60 ? '#f59e0b' : '#ef4444';
-        const healthBg = cl.health_score >= 85 ? '#1a4a3a' : cl.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
-
-        return `
-        <div class="client-card ${hasAlert || cl.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${cl.id}, '${cl.name.replace(/'/g, "\\'")}')">
-            <div class="cc-header">
-                <span class="cc-name">${cl.name}</span>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${cl.health_score}</span>
-                    <span class="cc-count">${cl.accounts} accounts</span>
-                </div>
-            </div>
-            ${cl.needs_attention ? '<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
-            <div class="cc-stats">
-                <div class="cc-stat"><span class="label">Healthy</span><span style="color:var(--accent)">${cl.healthy_inboxes}</span></div>
-                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ef4444' : '#40E0D0'}">${cl.smtp_failures}</span></div>
-                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ef4444' : '#40E0D0'}">${cl.blocked}</span></div>
-                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ef4444' : cl.avg_bounce_rate > 1 ? '#f59e0b' : '#40E0D0') : '#50506a'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
-                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? '#40E0D0' : cl.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444') : '#50506a'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
-            </div>
-            <div style="margin-top:8px;padding:8px 10px;background:var(--bg-input);border-radius:6px;font-size:12px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:var(--text-muted);">Target Volume</span>
-                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
-                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
-                        <span style="color:var(--text-muted);">/day</span>
-                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
-                    </div>
-                </div>
-                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? '#40E0D0' : '#ef4444') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
-            ${cl.batches && cl.batches.length > 1 ? '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">' + cl.batches.map(b => {
-                if (b.status === 'ready') {
-                    return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--accent);">&#9679; ' + b.total + ' accounts ready</span><span style="color:var(--text-muted);">since ' + b.warmup_start + '</span></div>';
-                } else {
-                    const pct = Math.round(b.days_done / 14 * 100);
-                    return '<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px;"><span style="color:var(--purple);">&#9679; ' + b.total + ' new accounts warming</span><span>Day ' + b.days_done + '/14</span></div><div style="background:var(--bg-input);border-radius:4px;height:5px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + pct + '%;border-radius:4px;"></div></div></div>';
-                }
-            }).join('') + '</div>' : (cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : '')}
-            <div class="cc-dates">
-                ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
-                ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
-                ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
-            </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);text-align:right;">
-                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? '#4a3a1a' : '#0a1628'};color:${isPaused ? '#f59e0b' : '#50506a'};border:1px solid ${isPaused ? '#8b7a3a' : '#0f3460'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
-            </div>
-        </div>`;
-    }).join('');
+    clientsList = activeClients;
+    gridEl.innerHTML = renderClientCards(activeClients, archivedClients, pausedClients);
 
     // Populate assign dropdown
     const select = document.getElementById('assign-client-select');
@@ -817,7 +829,7 @@ function renderDetailTable(data, trends) {
     if (trends && !trends.error) {
         const s = trends.summary || {};
         const trendIcon = s.trend === 'up' ? '&#9650;' : s.trend === 'down' ? '&#9660;' : '&#9654;';
-        const trendColor = s.trend === 'up' ? '#40E0D0' : s.trend === 'down' ? '#ef4444' : '#50506a';
+        const trendColor = s.trend === 'up' ? '#22c55e' : s.trend === 'down' ? '#ef4444' : '#9ca3af';
         chartHtml = `<div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <div style="font-size:14px;font-weight:600;">Campaign Performance <span style="font-size:11px;color:#666;font-weight:400;">(7-day rolling avg)</span></div>
@@ -846,7 +858,7 @@ function renderDetailTable(data, trends) {
     let idleHtml = '';
     const idleInboxes = accounts.filter(a => a.warmup_status !== 'ACTIVE' && a.campaign_count === 0 && a.warmup_days !== null && a.warmup_days >= 14);
     if (idleInboxes.length > 0) {
-        idleHtml = `<div style="background:var(--yellow-bg);border:1px solid #8b7a3a;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+        idleHtml = `<div style="background:var(--yellow-bg);border:1px solid #f59e0b33;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
             <div style="font-size:14px;color:var(--yellow);font-weight:600;margin-bottom:6px;">${idleInboxes.length} warmed inbox(es) not in any campaign</div>
             <div style="font-size:13px;color:#ffd9aa;">${idleInboxes.map(a => a.email).join(', ')}</div>
         </div>`;
@@ -857,14 +869,14 @@ function renderDetailTable(data, trends) {
     html += '<thead><tr><th>Email</th><th>Health</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
 
     accounts.forEach(a => {
-        const statusColor = a.warmup_status === 'ACTIVE' ? '#40E0D0' : (a.blocked_reason ? '#ef4444' : '#f59e0b');
+        const statusColor = a.warmup_status === 'ACTIVE' ? '#22c55e' : (a.blocked_reason ? '#ef4444' : '#f59e0b');
         const br = a.bounce_rate !== null ? parseFloat(a.bounce_rate) : null;
         const rr = a.reply_rate !== null ? parseFloat(a.reply_rate) : null;
-        const brColor = br !== null ? (br > 3 ? '#ef4444' : br > 1 ? '#f59e0b' : '#40E0D0') : '#50506a';
-        const rrColor = rr !== null ? (rr > 5 ? '#40E0D0' : rr > 2 ? '#f59e0b' : '#ef4444') : '#50506a';
+        const brColor = br !== null ? (br > 3 ? '#ef4444' : br > 1 ? '#f59e0b' : '#22c55e') : '#9ca3af';
+        const rrColor = rr !== null ? (rr > 5 ? '#22c55e' : rr > 2 ? '#f59e0b' : '#ef4444') : '#9ca3af';
 
-        const healthColor = a.health_score >= 85 ? '#40E0D0' : a.health_score >= 60 ? '#f59e0b' : '#ef4444';
-        const healthBg = a.health_score >= 85 ? '#1a4a3a' : a.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+        const healthColor = a.health_score >= 85 ? '#22c55e' : a.health_score >= 60 ? '#f59e0b' : '#ef4444';
+        const healthBg = a.health_score >= 85 ? '#f0fdf4' : a.health_score >= 60 ? '#fffbeb' : '#fef2f2';
         const rowBg = a.domain_flagged ? 'background:#2a1a1a;' : '';
 
         // Flag icons
@@ -892,7 +904,7 @@ function renderDetailTable(data, trends) {
             <td style="color:${rrColor}">${rr !== null ? rr.toFixed(1) + '%' : '—'}</td>
             <td>${a.health_sent || a.warmup_sent}</td>
             <td>${a.campaign_count}</td>
-            <td style="color:${a.smtp_ok ? '#40E0D0' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+            <td style="color:${a.smtp_ok ? '#22c55e' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
         </tr>`;
     });
     html += '</tbody></table>';
@@ -939,7 +951,7 @@ function renderTrendChart(trends) {
     // Update summary stats
     const s = trends.summary || {};
     const trendIcon = s.trend === 'up' ? '\u25B2' : s.trend === 'down' ? '\u25BC' : '\u25B6';
-    const trendColor = s.trend === 'up' ? '#40E0D0' : s.trend === 'down' ? '#ef4444' : '#50506a';
+    const trendColor = s.trend === 'up' ? '#22c55e' : s.trend === 'down' ? '#ef4444' : '#9ca3af';
     const summaryEl = document.getElementById('trend-summary');
     if (summaryEl) {
         summaryEl.innerHTML = `
@@ -961,11 +973,11 @@ function renderTrendChart(trends) {
             datasets: [{
                 label: 'Reply Rate',
                 data: points.map(d => d.reply_rate),
-                borderColor: '#40E0D0',
+                borderColor: '#22c55e',
                 backgroundColor: 'rgba(64, 224, 208, 0.08)',
                 borderWidth: 2,
                 pointRadius: 3,
-                pointBackgroundColor: '#40E0D0',
+                pointBackgroundColor: '#22c55e',
                 pointHoverRadius: 6,
                 fill: true,
                 tension: 0.3,
@@ -990,11 +1002,11 @@ function renderTrendChart(trends) {
                     display: true,
                     position: 'top',
                     align: 'end',
-                    labels: { color: '#50506a', boxWidth: 12, padding: 12, font: { size: 11 } }
+                    labels: { color: '#9ca3af', boxWidth: 12, padding: 12, font: { size: 11 } }
                 },
                 tooltip: {
                     backgroundColor: '#16213e',
-                    borderColor: '#0f3460',
+                    borderColor: '#e5e7eb',
                     borderWidth: 1,
                     titleColor: '#eee',
                     bodyColor: '#eee',
@@ -1029,8 +1041,8 @@ async function loadTrends(days) {
     // Update zoom button styles
     document.querySelectorAll('.trend-zoom').forEach(btn => {
         const isActive = parseInt(btn.dataset.days) === days;
-        btn.style.color = isActive ? '#40E0D0' : '#50506a';
-        btn.style.borderColor = isActive ? '#40E0D0' : '#0f3460';
+        btn.style.color = isActive ? '#22c55e' : '#9ca3af';
+        btn.style.borderColor = isActive ? '#22c55e' : '#e5e7eb';
     });
     try {
         const resp = await fetch('/api/client/' + currentTrendClientId + '/trends?days=' + days);
@@ -1073,9 +1085,9 @@ function renderUnassigned(accounts) {
             <td><input type="checkbox" class="ua-check" value="${a.id}" onchange="updateAssignBtn()"></td>
             <td>${a.email}</td>
             <td>${a.domain}</td>
-            <td style="color:${a.warmup_status === 'ACTIVE' ? '#40E0D0' : '#f59e0b'}">${a.warmup_status}</td>
+            <td style="color:${a.warmup_status === 'ACTIVE' ? '#22c55e' : '#f59e0b'}">${a.warmup_status}</td>
             <td>${a.warmup_reputation}</td>
-            <td style="color:${a.smtp_ok ? '#40E0D0' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+            <td style="color:${a.smtp_ok ? '#22c55e' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
         </tr>
     `).join('');
 }
@@ -1144,8 +1156,8 @@ function renderGenericGroups(groups) {
     const grid = document.getElementById('generic-grid');
     grid.innerHTML = groups.map(g => {
         const isReady = g.status === 'ready';
-        const statusColor = isReady ? '#40E0D0' : '#8b5cf6';
-        const statusBg = isReady ? '#1a4a3a' : '#2a1a4a';
+        const statusColor = isReady ? '#22c55e' : '#8b5cf6';
+        const statusBg = isReady ? '#f0fdf4' : '#f5f3ff';
         const statusLabel = isReady ? 'Ready' : g.days_left + 'd left';
         const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
 
@@ -1163,15 +1175,15 @@ function renderGenericGroups(groups) {
                 <div class="cc-stat"><span class="label">Capacity</span><span>${g.daily_capacity}/day</span></div>
                 <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
                 <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
-                <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#40E0D0' : g.health_score >= 60 ? '#f59e0b' : '#ef4444'}">${g.health_score}</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#40E0D0'}">${g.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#22c55e' : g.health_score >= 60 ? '#f59e0b' : '#ef4444'}">${g.health_score}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#22c55e'}">${g.smtp_failures}</span></div>
             </div>
             <div style="margin-top:10px;">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;">
                     <span>Warmup Progress</span><span>${progressPct}%</span>
                 </div>
                 <div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;">
-                    <div style="background:${isReady ? '#40E0D0' : '#8b5cf6'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
+                    <div style="background:${isReady ? '#22c55e' : '#8b5cf6'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
                 </div>
             </div>`;
 
@@ -1208,8 +1220,8 @@ async function loadAcquisition() {
 function renderAcquisitionGroups(groups) {
     const grid = document.getElementById('acquisition-grid');
     grid.innerHTML = groups.map(g => {
-        const healthColor = g.health_score >= 85 ? '#40E0D0' : g.health_score >= 60 ? '#f59e0b' : '#ef4444';
-        const healthBg = g.health_score >= 85 ? '#1a4a3a' : g.health_score >= 60 ? '#4a3a1a' : '#4a1a1a';
+        const healthColor = g.health_score >= 85 ? '#22c55e' : g.health_score >= 60 ? '#f59e0b' : '#ef4444';
+        const healthBg = g.health_score >= 85 ? '#f0fdf4' : g.health_score >= 60 ? '#fffbeb' : '#fef2f2';
         return `
         <div class="client-card ${g.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${g.id}, '${g.name.replace(/'/g, "\\'")}')">
             <div class="cc-header">
@@ -1223,10 +1235,10 @@ function renderAcquisitionGroups(groups) {
             <div class="cc-stats">
                 <div class="cc-stat"><span class="label">In Campaign</span><span>${g.in_campaign}</span></div>
                 <div class="cc-stat"><span class="label">Warming</span><span>${g.warming}</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#40E0D0'}">${g.smtp_failures}</span></div>
+                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#22c55e'}">${g.smtp_failures}</span></div>
                 <div class="cc-stat"><span class="label">Domains</span><span>${g.total_domains}</span></div>
-                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ef4444' : g.avg_bounce_rate > 1 ? '#f59e0b' : '#40E0D0'}">${g.avg_bounce_rate}%</span></div>
-                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#40E0D0' : g.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444'}">${g.avg_reply_rate}%</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ef4444' : g.avg_bounce_rate > 1 ? '#f59e0b' : '#22c55e'}">${g.avg_bounce_rate}%</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#22c55e' : g.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444'}">${g.avg_reply_rate}%</span></div>
             </div>
         </div>`;
     }).join('');
@@ -1291,17 +1303,20 @@ function switchTab(tab) {
 function filterClients(filter) {
     document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
     event.target.closest('.filter-pill').classList.add('active');
-    const cards = document.querySelectorAll('#clients-grid .client-card');
-    const d = overviewData;
-    cards.forEach((card, i) => {
-        const cl = d.clients[i];
-        if (!cl) return;
-        let show = true;
-        if (filter === 'attention') show = cl.needs_attention;
-        else if (filter === 'warming') show = cl.warming > 0;
-        else if (filter === 'ready') show = cl.days_until_ready !== null && cl.days_until_ready <= 0;
-        card.style.display = show ? '' : 'none';
-    });
+
+    const gridEl = document.getElementById('clients-grid');
+    const archivedClients = window._archivedClients || [];
+    const pausedClients = window._pausedClients || [];
+
+    let clients;
+    if (filter === 'archived') {
+        clients = window._archivedClientData || [];
+    } else {
+        clients = window._activeClients || [];
+    }
+
+    clientsList = clients;
+    gridEl.innerHTML = renderClientCards(clients, archivedClients, pausedClients);
 }
 
 // --- ZapMail ---
@@ -1364,7 +1379,7 @@ function renderZapmail() {
                             <td>${dm.mailbox_count}</td>
                             <td>${dm.created}</td>
                             <td>${dm.next_renewal || '?'} ${renewBadge}</td>
-                            <td style="color:${dm.status === 'ACTIVE' ? '#40E0D0' : '#ef4444'}">${dm.status}</td>
+                            <td style="color:${dm.status === 'ACTIVE' ? '#22c55e' : '#ef4444'}">${dm.status}</td>
                         </tr>`;
                     }).join('')}
                     </tbody>
@@ -1457,15 +1472,15 @@ function renderDomains() {
         html += '<table class="zm-domain-table"><thead><tr><th>Domain</th><th>Status</th><th>Expires</th><th>Days Left</th><th>Auto-Renew</th></tr></thead><tbody>';
         domains.forEach(dm => {
             const daysLeft = dm.days_until_expiry;
-            const daysColor = daysLeft === null ? '#50506a' : (daysLeft <= 7 ? '#ef4444' : (daysLeft <= 30 ? '#f59e0b' : '#40E0D0'));
-            const renewColor = dm.auto_renew ? '#40E0D0' : '#f59e0b';
+            const daysColor = daysLeft === null ? '#9ca3af' : (daysLeft <= 7 ? '#ef4444' : (daysLeft <= 30 ? '#f59e0b' : '#22c55e'));
+            const renewColor = dm.auto_renew ? '#22c55e' : '#f59e0b';
             const canToggle = dm.registrar === 'porkbun';
             const toggleBtn = canToggle
                 ? `<button onclick="toggleAutoRenew('${dm.domain}','${dm.registrar}',${!dm.auto_renew},this)" style="background:none;border:1px solid ${renewColor};color:${renewColor};padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;">${dm.auto_renew ? 'ON' : 'OFF'}</button>`
                 : `<span style="color:${renewColor}" title="${dm.registrar} doesn't support API toggle">${dm.auto_renew ? 'ON' : 'OFF'}</span>`;
             html += `<tr>
                 <td>${dm.domain}</td>
-                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#40E0D0' : '#f59e0b'}">${dm.status}</td>
+                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#22c55e' : '#f59e0b'}">${dm.status}</td>
                 <td>${dm.expires || '?'}</td>
                 <td style="color:${daysColor}">${daysLeft !== null ? daysLeft + 'd' : '?'}</td>
                 <td>${toggleBtn}</td>
@@ -1491,8 +1506,8 @@ async function toggleAutoRenew(domain, registrar, enabled, btn) {
         const result = await resp.json();
         if (result.success) {
             btn.textContent = enabled ? 'ON' : 'OFF';
-            btn.style.color = enabled ? '#40E0D0' : '#f59e0b';
-            btn.style.borderColor = enabled ? '#40E0D0' : '#f59e0b';
+            btn.style.color = enabled ? '#22c55e' : '#f59e0b';
+            btn.style.borderColor = enabled ? '#22c55e' : '#f59e0b';
             btn.disabled = false;
             btn.onclick = () => toggleAutoRenew(domain, registrar, !enabled, btn);
         } else {
@@ -1571,7 +1586,7 @@ async function loadWallet() {
         const el = document.getElementById('wallet-balance');
         const num = parseFloat(balance);
         el.textContent = '$' + (isNaN(num) ? '?' : num.toFixed(2));
-        el.style.color = num < 50 ? '#ef4444' : num < 150 ? '#f59e0b' : '#40E0D0';
+        el.style.color = num < 50 ? '#ef4444' : num < 150 ? '#f59e0b' : '#22c55e';
     } catch(e) { console.error('Wallet error:', e); }
 }
 
@@ -1594,9 +1609,9 @@ async function toggleMonitor(clientName, currentlyPaused) {
     const newPaused = !currentlyPaused;
     const btn = event.target;
     btn.textContent = newPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
-    btn.style.background = newPaused ? '#4a3a1a' : '#0a1628';
-    btn.style.color = newPaused ? '#f59e0b' : '#50506a';
-    btn.style.borderColor = newPaused ? '#8b7a3a' : '#0f3460';
+    btn.style.background = newPaused ? '#fffbeb' : '#f3f4f6';
+    btn.style.color = newPaused ? '#f59e0b' : '#9ca3af';
+    btn.style.borderColor = newPaused ? '#f59e0b33' : '#e5e7eb';
     btn.disabled = true;
     try {
         const resp = await fetch('/api/client/pause-monitor', {
@@ -1607,15 +1622,15 @@ async function toggleMonitor(clientName, currentlyPaused) {
         const result = await resp.json();
         if (result.error) {
             btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
-            btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
-            btn.style.color = currentlyPaused ? '#f59e0b' : '#50506a';
-            btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
+            btn.style.background = currentlyPaused ? '#fffbeb' : '#f3f4f6';
+            btn.style.color = currentlyPaused ? '#f59e0b' : '#9ca3af';
+            btn.style.borderColor = currentlyPaused ? '#f59e0b33' : '#e5e7eb';
         }
     } catch(e) {
         btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
-        btn.style.background = currentlyPaused ? '#4a3a1a' : '#0a1628';
-        btn.style.color = currentlyPaused ? '#f59e0b' : '#50506a';
-        btn.style.borderColor = currentlyPaused ? '#8b7a3a' : '#0f3460';
+        btn.style.background = currentlyPaused ? '#fffbeb' : '#f3f4f6';
+        btn.style.color = currentlyPaused ? '#f59e0b' : '#9ca3af';
+        btn.style.borderColor = currentlyPaused ? '#f59e0b33' : '#e5e7eb';
     }
     btn.disabled = false;
 }
@@ -1682,6 +1697,26 @@ async function swapAll() {
     btn.textContent = 'Swap All Clients';
 }
 
+async function archiveClient(clientName, archive) {
+    const action = archive ? 'Archive' : 'Unarchive';
+    if (!confirm(action + ' ' + clientName + '? ' + (archive ? 'This will pause monitoring and hide from active view.' : 'This will restore to active view.'))) return;
+    try {
+        const resp = await fetch('/api/client/archive', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName, archived: archive}),
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            loadOverview();
+        } else {
+            alert('Failed: ' + (result.error || 'Unknown error'));
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+    }
+}
+
 function toggleGenericMode() {
     const isGeneric = document.getElementById('nc-generic').checked;
     document.getElementById('nc-forwarding-section').style.display = isGeneric ? 'none' : 'block';
@@ -1702,7 +1737,7 @@ async function loadInventoryPreview() {
             return;
         }
         el.textContent = count + ' domains available in inventory';
-        el.style.color = count < 5 ? '#ef4444' : '#40E0D0';
+        el.style.color = count < 5 ? '#ef4444' : '#22c55e';
 
         const alertEl = document.getElementById('inventory-alert');
         if (count < 5) {
@@ -1788,7 +1823,7 @@ async function loadAcqInventory() {
         const data = await resp.json();
         const count = data.available_count ?? 0;
         el.textContent = count + ' domains available in inventory';
-        el.style.color = count < 5 ? '#ef4444' : '#40E0D0';
+        el.style.color = count < 5 ? '#ef4444' : '#22c55e';
     } catch(e) {
         el.textContent = 'Could not load inventory';
         el.style.color = '#ef4444';
@@ -1884,7 +1919,7 @@ function renderPipelines() {
 
     let html = '';
     pipelines.forEach(p => {
-        const statusColor = p.status === 'complete' ? '#40E0D0' : p.status === 'error' ? '#ef4444' : p.status === 'awaiting_removal' ? '#f59e0b' : '#8b5cf6';
+        const statusColor = p.status === 'complete' ? '#22c55e' : p.status === 'error' ? '#ef4444' : p.status === 'awaiting_removal' ? '#f59e0b' : '#8b5cf6';
         const statusLabel = p.status === 'awaiting_removal' ? 'Awaiting Removal' : p.status.charAt(0).toUpperCase() + p.status.slice(1);
 
         var stepSuffix = '';
@@ -1906,7 +1941,7 @@ function renderPipelines() {
             html += '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">';
             allSteps.forEach(function(s, i) {
                 var color, textColor;
-                if (i < currentIdx) { color = '#40E0D0'; textColor = '#fff'; }
+                if (i < currentIdx) { color = '#22c55e'; textColor = '#fff'; }
                 else if (i === currentIdx) { color = p.status === 'error' ? '#ef4444' : '#8b5cf6'; textColor = '#fff'; }
                 else { color = '#333'; textColor = '#666'; }
                 var label = (stepLabels[s] || s) + (i === currentIdx ? stepSuffix : '');
@@ -2235,8 +2270,8 @@ function handleAssignEvent(evt) {
         label.style.color = '#eee';
     } else if (evt.status === 'done') {
         icon.innerHTML = '✓';
-        icon.style.color = '#40E0D0';
-        label.style.color = '#40E0D0';
+        icon.style.color = '#22c55e';
+        label.style.color = '#22c55e';
     } else if (evt.status === 'error') {
         icon.innerHTML = '✗';
         icon.style.color = '#ef4444';
@@ -2366,7 +2401,7 @@ function handleDeleteEvent(evt) {
         icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
         label.style.color = '#eee';
     } else if (evt.status === 'done') {
-        icon.innerHTML = '✓'; icon.style.color = '#40E0D0'; label.style.color = '#40E0D0';
+        icon.innerHTML = '✓'; icon.style.color = '#22c55e'; label.style.color = '#22c55e';
         if (evt.message) label.textContent += ' — ' + evt.message;
     } else if (evt.status === 'error') {
         icon.innerHTML = '✗'; icon.style.color = '#ef4444'; label.style.color = '#ef4444';
@@ -2515,7 +2550,7 @@ function handleTransitionEvent(evt) {
         icon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
         label.style.color = '#eee';
     } else if (evt.status === 'done') {
-        icon.innerHTML = '✓'; icon.style.color = '#40E0D0'; label.style.color = '#40E0D0';
+        icon.innerHTML = '✓'; icon.style.color = '#22c55e'; label.style.color = '#22c55e';
     } else if (evt.status === 'error') {
         icon.innerHTML = '✗'; icon.style.color = '#ef4444'; label.style.color = '#ef4444';
         for (let i = evt.step + 1; i <= 6; i++) {
