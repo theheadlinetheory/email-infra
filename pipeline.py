@@ -47,7 +47,6 @@ from setup import (
 )
 from zapmail_ops import (
     zm_update_mailboxes,
-    zm_remove_on_renewal,
     zm_retry_failed_mailboxes,
     zm_get_export_status,
     zm_verify_nameservers,
@@ -821,25 +820,23 @@ def step_check_campaigns(pipeline):
     return True
 
 
-def step_remove_old(pipeline):
-    """Schedule old ZapMail mailboxes for removal at renewal and record renewal dates.
+REMOVAL_BUFFER_DAYS = 2  # Delete mailboxes this many days BEFORE Zapmail renewal
 
-    Does NOT delete SmartLead accounts yet — that happens automatically
-    when the renewal date passes (handled by the monitor cleanup job).
+def step_remove_old(pipeline):
+    """Record old domains for deletion 2 days before their Zapmail renewal date.
+
+    Does NOT delete immediately or use remove-on-renewal. Instead, the monitor
+    cleanup job checks daily and deletes both Zapmail mailboxes and SmartLead
+    accounts when the removal_date arrives (renewal - 2 days).
     """
     old_domains = pipeline.get("old_domains", [])
 
     # Get subscription data to find renewal dates
-    from zapmail_ops import zm_get_subscriptions, zm_get_subscription_mailboxes
+    from zapmail_ops import zm_get_subscriptions
     subs = zm_get_subscriptions()
     sub_list = subs.get("data", []) if isinstance(subs, dict) else []
 
     for old_domain in old_domains:
-        mailbox_ids = old_domain.get("mailbox_ids", [])
-        if mailbox_ids:
-            zm_remove_on_renewal(mailbox_ids)
-            log.info(f"[CLEANUP] Scheduled removal at renewal for {old_domain.get('domain')}")
-
         # Find renewal date for this domain's subscription
         domain_name = old_domain.get("domain", "")
         for sub in sub_list:
@@ -849,12 +846,36 @@ def step_remove_old(pipeline):
                 old_domain["subscription_id"] = sub.get("id")
                 break
 
+        # Calculate removal date: 2 days before renewal
+        renewal_str = old_domain.get("renewal_date", "")
+        removal_date = ""
+        if renewal_str:
+            try:
+                renewal_dt = datetime.fromisoformat(renewal_str.replace("Z", "+00:00").replace("+00:00", ""))
+                removal_dt = renewal_dt - timedelta(days=REMOVAL_BUFFER_DAYS)
+                removal_date = removal_dt.isoformat()
+            except Exception:
+                removal_date = renewal_str  # Fallback to renewal date if parsing fails
+
+        log.info(f"[CLEANUP] Scheduled deletion of {domain_name} for {removal_date} (renewal: {renewal_str})")
+
     # Save pending deletions to Supabase
     for old_domain in old_domains:
+        renewal_str = old_domain.get("renewal_date", "")
+        removal_date = ""
+        if renewal_str:
+            try:
+                renewal_dt = datetime.fromisoformat(renewal_str.replace("Z", "+00:00").replace("+00:00", ""))
+                removal_date = (renewal_dt - timedelta(days=REMOVAL_BUFFER_DAYS)).isoformat()
+            except Exception:
+                removal_date = renewal_str
+
         store.add_pending_deletion({
             "domain": old_domain.get("domain", ""),
             "smartlead_account_ids": old_domain.get("smartlead_account_ids", []),
+            "mailbox_ids": old_domain.get("mailbox_ids", []),
             "renewal_date": old_domain.get("renewal_date", ""),
+            "removal_date": removal_date,
             "client_name": pipeline.get("client_name", ""),
             "pipeline_id": pipeline["id"],
             "scheduled_at": datetime.now().isoformat(),
@@ -1195,7 +1216,10 @@ def _run_weekly_placement_tests():
 
 
 def _run_pending_deletions():
-    """Delete SmartLead accounts whose Zapmail renewal date has passed."""
+    """Delete Zapmail mailboxes and SmartLead accounts when removal_date arrives.
+
+    removal_date = renewal_date - 2 days, so we delete before Zapmail charges renewal.
+    """
     pending = store.get_pending_deletions()
     if not pending:
         return
@@ -1203,23 +1227,34 @@ def _run_pending_deletions():
     now = datetime.now()
 
     for entry in pending:
-        renewal = entry.get("renewal_date", "")
-        if not renewal:
+        # Use removal_date (2 days before renewal); fall back to renewal_date for old records
+        target_date = entry.get("removal_date") or entry.get("renewal_date", "")
+        if not target_date:
             continue
 
         try:
-            renewal_dt = datetime.fromisoformat(renewal.replace("Z", "+00:00").replace("+00:00", ""))
+            target_dt = datetime.fromisoformat(target_date.replace("Z", "+00:00").replace("+00:00", ""))
         except Exception:
             try:
-                renewal_dt = datetime.strptime(renewal[:10], "%Y-%m-%d")
+                target_dt = datetime.strptime(target_date[:10], "%Y-%m-%d")
             except Exception:
                 continue
 
-        if now < renewal_dt:
+        if now < target_dt:
             continue
 
-        # Renewal has passed — delete from SmartLead
         domain = entry.get("domain", "")
+
+        # Step 1: Delete Zapmail mailboxes first (before renewal charges)
+        mailbox_ids = entry.get("mailbox_ids", [])
+        if isinstance(mailbox_ids, str):
+            mailbox_ids = json.loads(mailbox_ids)
+        if mailbox_ids:
+            from zapmail_ops import zm_delete_mailboxes
+            result = zm_delete_mailboxes(mailbox_ids)
+            log.info(f"[CLEANUP] Deleted Zapmail mailboxes for {domain}: {result}")
+
+        # Step 2: Delete SmartLead accounts
         account_ids = entry.get("smartlead_account_ids", [])
         if isinstance(account_ids, str):
             account_ids = json.loads(account_ids)
@@ -1238,6 +1273,8 @@ def _run_pending_deletions():
             "domain": domain,
             "client_name": entry.get("client_name", ""),
             "account_ids": account_ids,
+            "mailbox_ids": mailbox_ids,
+            "removal_date": target_date,
         })
         log.info(f"[CLEANUP] Finished deleting {domain} for {entry.get('client_name')}")
 
