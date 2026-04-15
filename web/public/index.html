@@ -2030,7 +2030,10 @@ async function openAssignModal(pipelineId, groupName) {
     }
 }
 
+let assignmentInProgress = false;
+
 function closeAssignModal() {
+    if (assignmentInProgress) return; // Don't close while assignment is running
     document.getElementById('assign-overlay').style.display = 'none';
     document.getElementById('assign-modal').style.display = 'none';
 }
@@ -2060,6 +2063,7 @@ function startAssignment() {
     const fwd = document.getElementById('ac-forwarding').value.trim();
 
     // Switch to progress view
+    assignmentInProgress = true;
     document.getElementById('assign-form').style.display = 'none';
     document.getElementById('assign-progress').style.display = 'block';
     document.getElementById('ac-progress-client').textContent = clientName;
@@ -2104,6 +2108,7 @@ function startAssignment() {
         }
         read();
     }).catch(err => {
+        assignmentInProgress = false;
         document.getElementById('ac-result').style.display = 'block';
         document.getElementById('ac-result').innerHTML = `<div style="color:var(--red);">Connection error: ${err.message}</div>
             <button onclick="closeAssignModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
@@ -2112,12 +2117,14 @@ function startAssignment() {
 
 function handleAssignEvent(evt) {
     if (evt.status === 'complete') {
+        assignmentInProgress = false;
         document.getElementById('ac-result').style.display = 'block';
         document.getElementById('ac-result').innerHTML = `<div style="color:var(--accent);font-weight:600;margin-bottom:8px;">Assignment complete!</div>
-            <button onclick="closeAssignModal();loadPipelines();" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
+            <button onclick="closeAssignModal();loadOverview();" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:600;">Done</button>`;
         return;
     }
     if (evt.step === 0 && evt.status === 'error') {
+        assignmentInProgress = false;
         document.getElementById('ac-result').style.display = 'block';
         document.getElementById('ac-result').innerHTML = `<div style="color:var(--red);">${evt.message}</div>
             <button onclick="closeAssignModal()" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;margin-top:8px;">Close</button>`;
