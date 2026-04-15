@@ -2394,17 +2394,42 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         return
 
     # ── Step 2: SmartLead tags ──
+    # Required format: [Zapmail, ClientName, WarmupStartDate] — always all 3
     yield event(2, "running")
     try:
         all_tags = sl_get_all_tags()
-        # Find client tag (create if needed)
+
+        # 1. Find/create client tag
         client_tag_id = sl_find_or_create_tag(client_name, existing_tags=all_tags)
-        # Find the generic tag to remove
-        generic_tag_id = None
+
+        # 2. Find Zapmail tag (ID 262254)
+        zapmail_tag_id = None
         for tag_name, tag_data in all_tags.items():
-            if tag_name.lower().strip() == original_name.lower().strip():
-                generic_tag_id = tag_data["id"]
+            if tag_name.lower().strip() == "zapmail":
+                zapmail_tag_id = tag_data["id"]
                 break
+
+        # 3. Find warmup start date tag from pipeline config
+        warmup_date = pipeline.get("infrastructure", {}).get("warmup_start_date", "")
+        date_tag_id = None
+        if warmup_date:
+            # Convert "2026-03-28" to "3/28/26" format for tag lookup
+            from datetime import datetime as dt
+            try:
+                d = dt.strptime(warmup_date, "%Y-%m-%d")
+                date_tag_name = f"{d.month}/{d.day}/{d.strftime('%y')}"
+            except ValueError:
+                date_tag_name = warmup_date
+            date_tag_id = sl_find_or_create_tag(date_tag_name, existing_tags=all_tags)
+
+        # Build the required 3-tag list
+        required_tags = []
+        if zapmail_tag_id:
+            required_tags.append(zapmail_tag_id)
+        if client_tag_id:
+            required_tags.append(client_tag_id)
+        if date_tag_id:
+            required_tags.append(date_tag_id)
 
         # Get all SmartLead accounts for these domains
         our_domains = set(domains)
@@ -2431,15 +2456,9 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
             yield event(2, "error", "No SmartLead accounts found for these domains")
             return
 
-        # For each account, get current tags and replace generic with client
+        # Set all accounts to exactly the 3 required tags
         for acc in our_accounts:
-            acc_id = acc["id"]
-            current_tags = [t["id"] for t in acc.get("tags", [])] if acc.get("tags") else []
-            # Remove generic tag, add client tag
-            new_tags = [t for t in current_tags if t != generic_tag_id]
-            if client_tag_id and client_tag_id not in new_tags:
-                new_tags.append(client_tag_id)
-            sl_tag_account(acc_id, new_tags, client_id=sl_client_id)
+            sl_tag_account(acc["id"], required_tags, client_id=sl_client_id)
 
         yield event(2, "done")
     except Exception as e:
