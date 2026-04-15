@@ -666,6 +666,13 @@ def _compute_overview():
     except Exception:
         paused_clients = []
 
+    # Load archived clients list
+    try:
+        archived_state = store.get_state("archived_clients") or {"clients": []}
+        archived_clients = archived_state.get("clients", [])
+    except Exception:
+        archived_clients = []
+
     # Load target volumes per client
     try:
         target_volumes = store.get_state("target_volumes") or {}
@@ -705,6 +712,7 @@ def _compute_overview():
         "clients": client_summaries,
         "attention_count": attention_count,
         "paused_clients": paused_clients,
+        "archived_clients": archived_clients,
         "idle_inboxes": total_idle,
         "idle_clients": idle_clients,
         "generated_at": datetime.now().isoformat(),
@@ -2824,6 +2832,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json_response({"ok": True, "paused_clients": clients_list})
             except Exception as e:
                 self._json_response({"error": str(e)}, 500)
+        elif path == "/api/client/archive":
+            client_name = body.get("client_name", "")
+            archived = body.get("archived", True)
+            if not client_name:
+                self._error(400, "client_name required")
+                return
+            try:
+                state = store.get_state("archived_clients") or {"clients": []}
+                clients_list = state.get("clients", [])
+                if archived and client_name not in clients_list:
+                    clients_list.append(client_name)
+                    # Also pause monitor when archiving
+                    pause_state = store.get_state("paused_clients") or {"clients": []}
+                    pause_list = pause_state.get("clients", [])
+                    if client_name not in pause_list:
+                        pause_list.append(client_name)
+                        store.set_state("paused_clients", {"clients": pause_list})
+                elif not archived and client_name in clients_list:
+                    clients_list.remove(client_name)
+                store.set_state("archived_clients", {"clients": clients_list})
+                invalidate_cache()
+                self._json_response({"ok": True, "archived_clients": clients_list})
+            except Exception as e:
+                self._json_response({"error": str(e)}, 500)
         elif path == "/api/client/set-target-volume":
             client_name = body.get("client_name", "")
             volume = body.get("target_volume", 0)
@@ -2920,8 +2952,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/rotation/swap-all":
             rotations = store.get_all_rotations()
+            # Skip archived clients
+            try:
+                arch_state = store.get_state("archived_clients") or {"clients": []}
+                arch_set = set(arch_state.get("clients", []))
+            except Exception:
+                arch_set = set()
             results = []
             for rot in rotations:
+                if rot["client_name"] in arch_set:
+                    continue
                 result = swap_client_group(rot["client_name"])
                 results.append(result)
             self._json_response({"results": results})
