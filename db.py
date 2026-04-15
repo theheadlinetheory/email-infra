@@ -119,7 +119,9 @@ def add_pending_deletion(entry: dict) -> None:
     row = {
         "domain": entry.get("domain", ""),
         "smartlead_account_ids": json.dumps(entry.get("smartlead_account_ids", [])),
+        "mailbox_ids": json.dumps(entry.get("mailbox_ids", [])),
         "renewal_date": entry.get("renewal_date", ""),
+        "removal_date": entry.get("removal_date", ""),
         "client_name": entry.get("client_name", ""),
         "pipeline_id": entry.get("pipeline_id", ""),
         "scheduled_at": entry.get("scheduled_at", datetime.now().isoformat()),

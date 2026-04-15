@@ -19,7 +19,9 @@ create table if not exists pending_deletions (
     id bigint generated always as identity primary key,
     domain text not null,
     smartlead_account_ids jsonb not null default '[]',
+    mailbox_ids jsonb not null default '[]',
     renewal_date text not null default '',
+    removal_date text not null default '',
     client_name text not null default '',
     pipeline_id text not null default '',
     scheduled_at timestamptz not null default now()
