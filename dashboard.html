@@ -232,6 +232,10 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
             <button class="nav-tab" onclick="switchTab('pipelines')">Pipelines</button>
             <button class="nav-tab" onclick="switchTab('sync')">Sync Check</button>
         </nav>
+        <div id="inventory-badges" style="display:flex;gap:6px;align-items:center;margin-left:8px;">
+            <span id="inv-client" class="badge badge-green" style="font-size:11px;cursor:default;"></span>
+            <span id="inv-acq" class="badge badge-green" style="font-size:11px;cursor:default;"></span>
+        </div>
     </div>
     <div class="topbar-right">
         <span id="wallet-balance" style="color:var(--accent);font-weight:600;"></span>
@@ -507,6 +511,7 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 
 <script>
 let overviewData = null;
+let inventoryData = null;
 let clientsList = [];
 
 async function loadOverview() {
@@ -515,11 +520,12 @@ async function loadOverview() {
 
     try {
         // Load ALL sections in parallel — show nothing until everything is ready
-        const [overviewResp, unassignedResp, genericResp, acquisitionResp] = await Promise.all([
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp] = await Promise.all([
             fetch('/api/overview'),
             fetch('/api/unassigned').catch(() => null),
             fetch('/api/generic-groups').catch(() => null),
             fetch('/api/acquisition').catch(() => null),
+            fetch('/api/domain-inventory').catch(() => null),
         ]);
 
         const text = await overviewResp.text();
@@ -539,6 +545,9 @@ async function loadOverview() {
         try { if (unassignedResp) unassignedData = await unassignedResp.json(); } catch(e) {}
         try { if (genericResp) genericData = await genericResp.json(); } catch(e) {}
         try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
+        if (inventoryResp && inventoryResp.ok) {
+            try { inventoryData = await inventoryResp.json(); } catch(e) {}
+        }
 
         // Render everything at once — no layout shifts
         renderOverview();
@@ -590,11 +599,29 @@ function renderOverview() {
     const time = new Date(d.generated_at).toLocaleTimeString();
     document.getElementById('last-updated').textContent = 'Updated: ' + time;
 
+    // Inventory badges
+    if (inventoryData) {
+        document.getElementById('inventory-badges').style.display = 'flex';
+        const clientBadge = document.getElementById('inv-client');
+        const acqBadge = document.getElementById('inv-acq');
+        clientBadge.textContent = 'Client: ' + inventoryData.client_available;
+        clientBadge.className = 'badge ' + (inventoryData.client_low ? 'badge-red' : 'badge-green');
+        acqBadge.textContent = 'Acq: ' + inventoryData.acquisition_available;
+        acqBadge.className = 'badge ' + (inventoryData.acquisition_low ? 'badge-red' : 'badge-green');
+    }
+
     // Alert banner
     const alertEl = document.getElementById('alert-banner');
     const attentionClients = d.clients.filter(c => c.needs_attention);
-    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0) {
+    const invLow = inventoryData && (inventoryData.client_low || inventoryData.acquisition_low);
+    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0 || invLow) {
         let html = '<div class="alert-banner"><h3>Alerts</h3>';
+        if (inventoryData && inventoryData.client_low) {
+            html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Client pool has ' + inventoryData.client_available + ' available (need 20+)</div>';
+        }
+        if (inventoryData && inventoryData.acquisition_low) {
+            html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Acquisition pool has ' + inventoryData.acquisition_available + ' available (need 20+)</div>';
+        }
         if (d.idle_inboxes > 0) {
             html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:var(--yellow);">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
         }
