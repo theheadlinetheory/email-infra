@@ -309,6 +309,13 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
                     <tbody id="unassigned-body"></tbody>
                 </table>
             </div>
+            <div id="rotation-section" style="margin-top:28px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h2 class="section-title" style="margin:0;">A/B Rotation</h2>
+                    <button class="action-btn primary" onclick="swapAll()" id="swap-all-btn" style="font-size:12px;">Swap All Clients</button>
+                </div>
+                <div id="rotation-grid" class="clients-grid"></div>
+            </div>
         </div>
 
         <!-- ZapMail Tab -->
@@ -520,12 +527,13 @@ async function loadOverview() {
 
     try {
         // Load ALL sections in parallel — show nothing until everything is ready
-        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp] = await Promise.all([
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp] = await Promise.all([
             fetch('/api/overview'),
             fetch('/api/unassigned').catch(() => null),
             fetch('/api/generic-groups').catch(() => null),
             fetch('/api/acquisition').catch(() => null),
             fetch('/api/domain-inventory').catch(() => null),
+            fetch('/api/rotation/status').catch(() => null),
         ]);
 
         const text = await overviewResp.text();
@@ -547,6 +555,10 @@ async function loadOverview() {
         try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
         if (inventoryResp && inventoryResp.ok) {
             try { inventoryData = await inventoryResp.json(); } catch(e) {}
+        }
+        let rotationData = null;
+        if (rotationResp && rotationResp.ok) {
+            try { rotationData = await rotationResp.json(); } catch(e) {}
         }
 
         // Render everything at once — no layout shifts
@@ -584,6 +596,8 @@ async function loadOverview() {
         } else {
             document.getElementById('acquisition-section').style.display = 'none';
         }
+
+        renderRotation(rotationData);
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
     }
@@ -1218,6 +1232,40 @@ function renderAcquisitionGroups(groups) {
     }).join('');
 }
 
+function renderRotation(data) {
+    const grid = document.getElementById('rotation-grid');
+    const section = document.getElementById('rotation-section');
+    if (!data || !data.rotations || data.rotations.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+    let html = '';
+    for (const rot of data.rotations) {
+        const aCount = (rot.group_a_ids || []).length;
+        const bCount = (rot.group_b_ids || []).length;
+        const active = rot.active_group || 'A';
+        const lastSwap = rot.last_swap_date || 'Never';
+        const aBadge = active === 'A' ? 'badge-green' : 'badge-muted';
+        const bBadge = active === 'B' ? 'badge-green' : 'badge-muted';
+        html += '<div class="client-card">';
+        html += '<div class="client-header">';
+        html += '<h3 class="client-name">' + rot.client_name + '</h3>';
+        html += '<span class="badge ' + (active === 'A' ? 'badge-green' : 'badge-blue') + '">Group ' + active + ' Active</span>';
+        html += '</div>';
+        html += '<div class="client-stats">';
+        html += '<div class="stat"><span class="stat-value ' + aBadge + '">' + aCount + '</span><span class="stat-label">Group A</span></div>';
+        html += '<div class="stat"><span class="stat-value ' + bBadge + '">' + bCount + '</span><span class="stat-label">Group B</span></div>';
+        html += '<div class="stat"><span class="stat-value">' + lastSwap + '</span><span class="stat-label">Last Swap</span></div>';
+        html += '</div>';
+        html += '<div style="margin-top:8px;text-align:right;">';
+        html += '<button class="action-btn secondary" style="font-size:11px;" onclick="swapClient(\'' + rot.client_name.replace(/'/g, "\\'") + '\')">Swap to Group ' + (active === 'A' ? 'B' : 'A') + '</button>';
+        html += '</div>';
+        html += '</div>';
+    }
+    grid.innerHTML = html;
+}
+
 // --- Tab switching ---
 let currentMode = 'fulfillment';
 
@@ -1585,6 +1633,53 @@ async function setTargetVolume(clientName, value) {
             loadOverview();
         }
     } catch(e) {}
+}
+
+async function swapClient(clientName) {
+    if (!confirm('Swap ' + clientName + ' to the other group? This will update all their campaigns.')) return;
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = 'Swapping...';
+    try {
+        const resp = await fetch('/api/rotation/swap', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName}),
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            alert('Swapped ' + clientName + ' to Group ' + result.new_group + '.\n' + result.campaigns_updated + ' campaigns updated.');
+            loadOverview();
+        } else {
+            alert('Swap failed: ' + (result.error || 'Unknown error'));
+        }
+    } catch(e) {
+        alert('Swap error: ' + e.message);
+    }
+    btn.disabled = false;
+}
+
+async function swapAll() {
+    if (!confirm('Swap ALL clients to their other group? This affects all campaigns.')) return;
+    const btn = document.getElementById('swap-all-btn');
+    btn.disabled = true;
+    btn.textContent = 'Swapping All...';
+    try {
+        const resp = await fetch('/api/rotation/swap-all', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({}),
+        });
+        const result = await resp.json();
+        const ok = (result.results || []).filter(r => r.ok).length;
+        const fail = (result.results || []).filter(r => r.error).length;
+        alert('Swap All complete: ' + ok + ' succeeded, ' + fail + ' failed.');
+        loadOverview();
+    } catch(e) {
+        alert('Swap All error: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Swap All Clients';
 }
 
 function toggleGenericMode() {
