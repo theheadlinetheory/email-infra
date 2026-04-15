@@ -29,6 +29,16 @@ create table if not exists pending_deletions (
 
 create index if not exists idx_pending_domain on pending_deletions (domain);
 
+-- A/B rotation state per client
+create table if not exists client_rotations (
+    client_name text primary key,
+    group_a_ids jsonb not null default '[]',
+    group_b_ids jsonb not null default '[]',
+    active_group text not null default 'A',
+    last_swap_date text not null default '',
+    created_at timestamptz not null default now()
+);
+
 -- Client configs (replaces clients/*.json)
 create table if not exists client_configs (
     id text primary key,
@@ -62,3 +72,4 @@ alter table pending_deletions disable row level security;
 alter table client_configs disable row level security;
 alter table monitor_log disable row level security;
 alter table state disable row level security;
+alter table client_rotations disable row level security;
