@@ -2559,6 +2559,107 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
     yield event(0, "complete")
 
 
+# ---------------------------------------------------------------------------
+# A/B Rotation
+# ---------------------------------------------------------------------------
+
+def swap_client_group(client_name):
+    """Swap a client's active group in all their campaigns.
+
+    1. Read rotation record
+    2. Find campaigns with outgoing accounts
+    3. Add incoming accounts, remove outgoing accounts
+    4. Update rotation record
+    Returns dict with results.
+    """
+    rotation = store.get_rotation(client_name)
+    if not rotation:
+        return {"error": f"No rotation record for '{client_name}'"}
+
+    active = rotation["active_group"]
+    a_ids = rotation["group_a_ids"]
+    b_ids = rotation["group_b_ids"]
+    if isinstance(a_ids, str):
+        a_ids = json.loads(a_ids)
+    if isinstance(b_ids, str):
+        b_ids = json.loads(b_ids)
+
+    if active == "A":
+        outgoing_ids, incoming_ids, new_active = set(a_ids), b_ids, "B"
+    else:
+        outgoing_ids, incoming_ids, new_active = set(b_ids), a_ids, "A"
+
+    if not incoming_ids:
+        return {"error": f"Group {new_active} has no accounts — cannot swap"}
+
+    # Find all campaigns
+    r = requests.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
+    all_campaigns = r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
+    active_campaigns = [c for c in all_campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
+
+    # Find campaigns containing outgoing accounts
+    campaigns_updated = []
+    for camp in active_campaigns:
+        cr = requests.get(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+            timeout=30,
+        )
+        if cr.status_code != 200:
+            continue
+        camp_accounts = cr.json() if isinstance(cr.json(), list) else []
+        camp_account_ids = {ca["id"] for ca in camp_accounts}
+        if camp_account_ids & outgoing_ids:
+            campaigns_updated.append({"id": camp["id"], "name": camp.get("name", "")})
+        time.sleep(0.2)
+
+    if not campaigns_updated:
+        return {"error": f"No campaigns found with Group {active} accounts for {client_name}"}
+
+    # Add incoming accounts to campaigns
+    for camp in campaigns_updated:
+        requests.post(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+            json={"email_account_ids": incoming_ids},
+            timeout=30,
+        )
+        time.sleep(0.3)
+
+    # Remove outgoing accounts from campaigns
+    for camp in campaigns_updated:
+        for old_id in outgoing_ids:
+            requests.delete(
+                f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts/{old_id}?api_key={SMARTLEAD_KEY}",
+                timeout=30,
+            )
+            time.sleep(0.3)
+
+    # Update rotation record
+    today = datetime.now().strftime("%Y-%m-%d")
+    store.update_rotation_swap(client_name, new_active, today)
+
+    return {
+        "ok": True,
+        "client_name": client_name,
+        "previous_group": active,
+        "new_group": new_active,
+        "campaigns_updated": len(campaigns_updated),
+        "campaign_names": [c["name"] for c in campaigns_updated],
+        "accounts_added": len(incoming_ids),
+        "accounts_removed": len(outgoing_ids),
+    }
+
+
+def api_rotation_status():
+    """GET /api/rotation/status — return all rotation records."""
+    rotations = store.get_all_rotations()
+    for r in rotations:
+        if isinstance(r.get("group_a_ids"), str):
+            r["group_a_ids"] = json.loads(r["group_a_ids"])
+        if isinstance(r.get("group_b_ids"), str):
+            r["group_b_ids"] = json.loads(r["group_b_ids"])
+    return {"rotations": rotations}
+
+
 # --- HTTP Server ---
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -2642,6 +2743,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_generic_groups())
                 elif path == "/api/clients/list":
                     self._json_response(api_clients_list())
+                elif path == "/api/rotation/status":
+                    self._json_response(api_rotation_status())
                 elif path == "/api/debug/supabase":
                     self._json_response(api_debug_supabase())
                 else:
@@ -2808,6 +2911,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             result = api_remove_from_all_campaigns(body)
             invalidate_cache()
             self._json_response(result)
+        elif path == "/api/rotation/swap":
+            client_name = body.get("client_name", "")
+            if not client_name:
+                self._error(400, "client_name required")
+                return
+            result = swap_client_group(client_name)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/rotation/swap-all":
+            rotations = store.get_all_rotations()
+            results = []
+            for rot in rotations:
+                result = swap_client_group(rot["client_name"])
+                results.append(result)
+            self._json_response({"results": results})
         else:
             self._error(404, "Not found")
 
