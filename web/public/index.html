@@ -1268,7 +1268,7 @@ function renderGenericGroups(groups) {
         const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
 
         let html = `
-        <div class="client-card" style="position:relative;">
+        <div class="client-card" style="position:relative;cursor:pointer;" onclick="openDetail(${g.client_id}, '${g.name.replace(/'/g, "\\'")}')">
             <div class="cc-header">
                 <span class="cc-name">${g.name}</span>
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -1291,15 +1291,11 @@ function renderGenericGroups(groups) {
                 <div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;">
                     <div style="background:${isReady ? '#22c55e' : '#8b5cf6'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
                 </div>
-            </div>`;
-
-        if (isReady) {
-            html += `<div style="margin-top:12px;display:flex;justify-content:flex-end;">
-                <button onclick="event.stopPropagation();openAssignModal('${g.pipeline_id || ''}','${g.name.replace(/'/g, "\\'")}')" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
-            </div>`;
-        }
-
-        html += '</div>';
+            </div>
+            <div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                <button onclick="event.stopPropagation();openAssignModal('${g.pipeline_id || ''}','${g.name.replace(/'/g, "\\'")}')" style="background:${isReady ? 'var(--purple)' : 'var(--bg-raised)'};color:${isReady ? '#fff' : 'var(--text-secondary)'};border:1px solid ${isReady ? 'var(--purple)' : 'var(--border)'};padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>
+            </div>
+        </div>`;
         return html;
     }).join('');
 }
