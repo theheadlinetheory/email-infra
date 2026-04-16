@@ -30,7 +30,7 @@ from zapmail_ops import (
     zm_get_placement_results, zm_get_placement_eligible_mailboxes,
     zm_run_placement_test, zm_get_placement_credits,
 )
-from sheets import get_available_domains, get_acquisition_domains, get_all_master_domains, write_range, setup_client_tab
+from sheets import get_available_domains, get_acquisition_domains, get_all_master_domains, write_range, setup_client_tab, get_service as get_sheets_service, SHEET_ID, MASTER_TAB
 from setup import (
     sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
     zm_list_domain_tags, zm_create_domain_tag, zm_assign_domain_tag,
@@ -38,6 +38,7 @@ from setup import (
     SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API,
     sl_internal_headers as setup_sl_internal_headers,
     calculate_infra, find_existing_config,
+    Spaceship, SPACESHIP_API, SPACESHIP_KEY, SPACESHIP_SECRET,
 )
 import db as store
 import pipeline_engine
@@ -843,6 +844,112 @@ def start_sync_thread():
 def invalidate_cache():
     """Force an immediate re-sync (call after mutations like delete/add)."""
     threading.Thread(target=_sync_smartlead_data, daemon=True, name="cache-invalidate").start()
+
+
+# --- Spaceship → Sheet sync ---
+
+_SPACESHIP_SYNC_INTERVAL = 6 * 3600  # 6 hours
+
+def sync_spaceship_to_sheet():
+    """Add any Spaceship domains missing from the Google Sheet."""
+    try:
+        if not Spaceship.is_configured():
+            return
+
+        # Get all Spaceship domains
+        all_ss = []
+        skip = 0
+        ss_headers = Spaceship._headers()
+        while True:
+            r = requests.get(f"{SPACESHIP_API}/domains",
+                             headers=ss_headers, params={"take": 100, "skip": skip}, timeout=30)
+            items = r.json().get("items", [])
+            if not items:
+                break
+            all_ss.extend(items)
+            skip += 100
+            if len(items) < 100:
+                break
+
+        ss_map = {d["name"]: d for d in all_ss}
+
+        # Get sheet domains
+        _, sheet_domains = get_all_master_domains()
+        sheet_names = set(d["domain"].lower().strip() for d in sheet_domains)
+
+        # Find missing
+        missing = sorted(set(ss_map.keys()) - sheet_names)
+        if not missing:
+            print(f"[spaceship-sync] Sheet is up to date ({len(ss_map)} Spaceship domains)")
+            return
+
+        # Check Zapmail for status
+        try:
+            zm_domains = zm_list_domains()
+            zm_names = set(d.get("domain", "") for d in zm_domains)
+        except Exception:
+            zm_names = set()
+
+        # Build rows
+        rows = []
+        for domain in missing:
+            ss_data = ss_map[domain]
+            in_zapmail = domain in zm_names
+            is_branded = "headlinetheory" in domain
+
+            status = "In use" if in_zapmail else "Available"
+            designation = "Acquisition" if is_branded else "Client"
+
+            purchase_date = ""
+            created = ss_data.get("createdAt", "")
+            if created:
+                try:
+                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    purchase_date = dt.strftime("%m/%d/%y")
+                except Exception:
+                    pass
+
+            renewal_date = ""
+            expires = ss_data.get("expiresAt", "")
+            if expires:
+                try:
+                    dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+                    renewal_date = dt.strftime("%m/%d/%y")
+                except Exception:
+                    pass
+
+            rows.append([domain, status, "Spaceship", "", purchase_date, renewal_date, designation, ""])
+
+        # Append to sheet
+        service = get_sheets_service()
+        service.spreadsheets().values().append(
+            spreadsheetId=SHEET_ID,
+            range=f"{MASTER_TAB}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": rows},
+        ).execute()
+
+        print(f"[spaceship-sync] Added {len(rows)} domains to sheet "
+              f"({sum(1 for r in rows if r[1] == 'Available')} available, "
+              f"{sum(1 for r in rows if r[1] == 'In use')} in use)")
+
+    except Exception as e:
+        print(f"[spaceship-sync] Error: {e}")
+
+
+def _spaceship_sync_loop():
+    """Background loop that syncs Spaceship → Sheet periodically."""
+    time.sleep(30)  # Let main sync finish first
+    while True:
+        sync_spaceship_to_sheet()
+        time.sleep(_SPACESHIP_SYNC_INTERVAL)
+
+
+def start_spaceship_sync_thread():
+    t = threading.Thread(target=_spaceship_sync_loop, daemon=True, name="spaceship-sync")
+    t.start()
+    return t
 
 
 # --- API endpoint logic (cache-first) ---
@@ -3168,6 +3275,9 @@ def main():
     # Start background SmartLead → Supabase sync (every 2 minutes)
     start_sync_thread()
     print("SmartLead background sync started (every 2 minutes)")
+
+    start_spaceship_sync_thread()
+    print("Spaceship → Sheet sync started (every 6 hours)")
 
     # Resume any interrupted setup pipelines
     pipeline_engine.resume_running_pipelines()
