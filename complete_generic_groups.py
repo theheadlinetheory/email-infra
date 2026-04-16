@@ -119,9 +119,16 @@ def wait_for_active(state):
         return
 
     log("Step 1: Waiting for all mailboxes to reach ACTIVE status...")
-    max_polls = 120  # 120 × 30s = 60 minutes max
-    for poll in range(max_polls):
-        all_zm = zm_list_domains()
+    log("  (Will poll every 5 min indefinitely — survives laptop sleep)")
+    poll = 0
+    while True:
+        poll += 1
+        try:
+            all_zm = zm_list_domains()
+        except Exception as e:
+            log(f"  Poll {poll}: API error ({e}), retrying in 5 min...")
+            time.sleep(300)
+            continue
         zm_by_name = {d.get("domain", ""): d for d in all_zm}
 
         active = 0
@@ -136,7 +143,7 @@ def wait_for_active(state):
                         active += 1
                     mb_ids.append(m["id"])
 
-        log(f"  Poll {poll + 1}: {active}/{total} ACTIVE")
+        log(f"  Poll {poll}: {active}/{total} ACTIVE")
 
         if active == total and total > 0:
             state["mailbox_ids"] = mb_ids
@@ -145,12 +152,7 @@ def wait_for_active(state):
             log(f"  All {total} mailboxes ACTIVE!")
             return
 
-        time.sleep(30)
-
-    log("WARNING: Not all ACTIVE after 60 min — proceeding anyway", "WARN")
-    state["mailbox_ids"] = mb_ids
-    save_state(state)
-    mark_done(state, "mailboxes_active")
+        time.sleep(300)  # 5 minutes between checks
 
 
 # ── Step 2: Export to SmartLead ──
