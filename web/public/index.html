@@ -126,6 +126,30 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
 .badge-red { background: var(--red-bg); color: var(--red); }
 
+.pill-stepper{display:flex;align-items:center;gap:0;margin:10px 0 6px;}
+.pill-step{display:flex;align-items:center;font-size:11px;font-weight:500;padding:4px 10px;border-radius:14px;white-space:nowrap;}
+.pill-step.completed{background:var(--accent-bg);color:var(--accent);}
+.pill-step.running{background:var(--accent-bg);color:var(--accent);animation:pulse-pill 1.5s ease-in-out infinite;}
+.pill-step.pending{background:var(--bg-input);color:var(--text-muted);}
+.pill-step.failed{background:#fef2f2;color:var(--red);}
+.pill-connector{width:20px;height:2px;flex-shrink:0;}
+.pill-connector.done{background:var(--accent);}
+.pill-connector.pending{background:var(--border);}
+.pill-icon{margin-right:4px;font-size:12px;}
+@keyframes pulse-pill{0%,100%{opacity:1;}50%{opacity:.6;}}
+.pipeline-status-line{font-size:12px;color:var(--text-secondary);margin-top:4px;}
+.pipeline-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center;}
+.pipeline-modal{background:var(--bg-surface);border-radius:12px;padding:28px;width:520px;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.15);}
+.pipeline-modal h3{margin:0 0 18px;font-size:17px;font-weight:600;color:var(--text-primary);}
+.pipeline-modal label{display:block;font-size:12px;font-weight:500;color:var(--text-secondary);margin:12px 0 4px;}
+.pipeline-modal input,.pipeline-modal textarea,.pipeline-modal select{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary);font-size:13px;font-family:var(--font-body);box-sizing:border-box;}
+.pipeline-modal textarea{min-height:120px;resize:vertical;}
+.type-pills{display:flex;gap:8px;margin:8px 0 12px;}
+.type-pill{padding:6px 16px;border-radius:20px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:var(--bg-input);color:var(--text-secondary);transition:all .15s;}
+.type-pill.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent);}
+.pipeline-modal .btn-start{margin-top:18px;width:100%;padding:10px;background:var(--accent);color:white;border:none;border-radius:var(--radius);font-size:13px;font-weight:600;cursor:pointer;}
+.pipeline-modal .btn-start:hover{opacity:0.9;}
+
 /* --- Detail Panel --- */
 .detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 100; }
 .detail-panel { position: fixed; right: 0; top: 0; bottom: 0; width: 940px; max-width: 95vw; background: var(--bg-surface); z-index: 101; overflow-y: auto; padding: 28px; border-left: 1px solid var(--border); }
@@ -278,6 +302,14 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
                 <h2 class="section-title">Generic Groups</h2>
                 <div class="summary-row" id="generic-stats"></div>
                 <div class="clients-grid" id="generic-grid"></div>
+            </div>
+
+            <div id="setup-pipeline-section" style="display:none;margin-top:28px;">
+                <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                    <h2 style="font-size:16px;font-weight:600;color:var(--text-primary);margin:0;">Active Pipelines</h2>
+                    <button onclick="openNewPipelineModal()" class="btn-accent" style="font-size:12px;padding:6px 14px;border-radius:20px;background:var(--accent);color:white;border:none;cursor:pointer;font-weight:600;">+ New Pipeline</button>
+                </div>
+                <div class="clients-grid" id="setup-pipeline-grid"></div>
             </div>
 
             <div id="acquisition-section" style="display:none;margin-top:28px;">
@@ -527,13 +559,14 @@ async function loadOverview() {
 
     try {
         // Load ALL sections in parallel — show nothing until everything is ready
-        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp] = await Promise.all([
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp] = await Promise.all([
             fetch('/api/overview'),
             fetch('/api/unassigned').catch(() => null),
             fetch('/api/generic-groups').catch(() => null),
             fetch('/api/acquisition').catch(() => null),
             fetch('/api/domain-inventory').catch(() => null),
             fetch('/api/rotation/status').catch(() => null),
+            fetch('/api/setup-pipelines').catch(() => null),
         ]);
 
         const text = await overviewResp.text();
@@ -595,6 +628,17 @@ async function loadOverview() {
             renderAcquisitionGroups(acquisitionData.groups);
         } else {
             document.getElementById('acquisition-section').style.display = 'none';
+        }
+
+        let setupPipelineData = null;
+        try { if (setupPipelineResp) setupPipelineData = await setupPipelineResp.json(); } catch(e) {}
+
+        if (setupPipelineData && setupPipelineData.pipelines && setupPipelineData.pipelines.length > 0) {
+            renderSetupPipelines(setupPipelineData.pipelines);
+            const hasRunning = setupPipelineData.pipelines.some(p => p.status === 'running');
+            if (hasRunning && !setupPipelinePollInterval) {
+                setupPipelinePollInterval = setInterval(loadSetupPipelines, 5000);
+            }
         }
 
         renderRotation(rotationData);
@@ -1242,6 +1286,194 @@ function renderAcquisitionGroups(groups) {
             </div>
         </div>`;
     }).join('');
+}
+
+// --- Setup Pipeline UI ---
+
+function renderSetupPipelineSteps(steps) {
+    return steps.map((s, i) => {
+        const icon = s.status === 'completed' ? '&#10003;' :
+                     s.status === 'running' ? '&#9679;' :
+                     s.status === 'failed' ? '&#10007;' : '&#9675;';
+        const cls = s.status || 'pending';
+        const connector = i < steps.length - 1
+            ? '<div class="pill-connector ' + (s.status === 'completed' ? 'done' : 'pending') + '"></div>'
+            : '';
+        const shortName = s.name.replace('Connect Domains', 'Connect')
+            .replace('Create Inboxes', 'Inboxes')
+            .replace('Profile Photos', 'Photos')
+            .replace('SmartLead Export', 'Export')
+            .replace('Tag & Assign', 'Tag')
+            .replace('Enable Warmup', 'Warmup');
+        return '<span class="pill-step ' + cls + '"><span class="pill-icon">' + icon + '</span>' + shortName + '</span>' + connector;
+    }).join('');
+}
+
+function setupPipelineStatusLine(p) {
+    if (p.status === 'completed') return 'Complete';
+    if (p.status === 'failed') {
+        const failed = p.steps.find(s => s.status === 'failed');
+        return failed ? 'Failed: ' + (failed.error || failed.name) : 'Failed';
+    }
+    const running = p.steps.find(s => s.status === 'running');
+    if (running) return running.name + '... ' + running.progress + '/' + running.total;
+    return p.status;
+}
+
+function renderSetupPipelines(pipelines) {
+    const grid = document.getElementById('setup-pipeline-grid');
+    if (!pipelines || !pipelines.length) {
+        document.getElementById('setup-pipeline-section').style.display = 'none';
+        return;
+    }
+    document.getElementById('setup-pipeline-section').style.display = '';
+    grid.innerHTML = pipelines.map(p => {
+        const statusLine = setupPipelineStatusLine(p);
+        const retryBtn = p.status === 'failed'
+            ? '<button onclick="event.stopPropagation();retrySetupPipeline(\'' + p.id + '\')" style="margin-top:8px;font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--red);color:var(--red);background:transparent;cursor:pointer;">Retry</button>'
+            : '';
+        return '<div class="client-card" onclick="showSetupPipelineDetail(\'' + p.id + '\')" style="cursor:pointer;">' +
+            '<div class="cc-header"><span class="cc-name">' + p.name + '</span>' +
+            '<span class="badge" style="background:' + (p.status === 'completed' ? 'var(--accent-bg)' : p.status === 'failed' ? '#fef2f2' : 'var(--accent-bg)') + ';color:' + (p.status === 'completed' ? 'var(--accent)' : p.status === 'failed' ? 'var(--red)' : 'var(--accent)') + ';">' + p.type + '</span></div>' +
+            '<div class="pill-stepper">' + renderSetupPipelineSteps(p.steps) + '</div>' +
+            '<div class="pipeline-status-line">' + statusLine + '</div>' +
+            retryBtn +
+        '</div>';
+    }).join('');
+}
+
+let newSetupPipelineType = 'generic';
+
+async function openNewPipelineModal() {
+    newSetupPipelineType = 'generic';
+    let suggestedName = 'Generic A';
+    try {
+        const resp = await fetch('/api/next-generic-name');
+        const data = await resp.json();
+        suggestedName = data.name || 'Generic A';
+    } catch(e) {}
+
+    const overlay = document.createElement('div');
+    overlay.className = 'pipeline-modal-overlay';
+    overlay.id = 'setup-pipeline-modal';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = '<div class="pipeline-modal">' +
+        '<h3>New Infrastructure Pipeline</h3>' +
+        '<label>Type</label>' +
+        '<div class="type-pills">' +
+            '<span class="type-pill active" onclick="selectSetupPipelineType(\'generic\',this)" data-type="generic">Generic Group</span>' +
+            '<span class="type-pill" onclick="selectSetupPipelineType(\'client\',this)" data-type="client">Client</span>' +
+            '<span class="type-pill" onclick="selectSetupPipelineType(\'acquisition\',this)" data-type="acquisition">Acquisition</span>' +
+        '</div>' +
+        '<label>Name</label>' +
+        '<input type="text" id="setup-pipeline-name" value="' + suggestedName + '" placeholder="Generic A">' +
+        '<label>Domains (one per line)</label>' +
+        '<textarea id="setup-pipeline-domains" placeholder="domain1.info&#10;domain2.info&#10;domain3.info"></textarea>' +
+        '<label>Sender</label>' +
+        '<select id="setup-pipeline-sender">' +
+            '<option value="sean_reynolds">Sean Reynolds</option>' +
+            '<option value="aidan_hutchinson">Aidan Hutchinson</option>' +
+            '<option value="lars_matthys">Lars Matthys</option>' +
+        '</select>' +
+        '<button class="btn-start" onclick="startSetupPipeline()">Start Pipeline</button>' +
+    '</div>';
+    document.body.appendChild(overlay);
+}
+
+function selectSetupPipelineType(type, el) {
+    newSetupPipelineType = type;
+    document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    if (type === 'generic') {
+        fetch('/api/next-generic-name').then(r => r.json()).then(d => {
+            document.getElementById('setup-pipeline-name').value = d.name || '';
+        }).catch(() => {});
+    } else {
+        document.getElementById('setup-pipeline-name').value = '';
+        document.getElementById('setup-pipeline-name').placeholder = type === 'client' ? 'Client Name' : 'Group Name';
+    }
+    var sel = document.getElementById('setup-pipeline-sender');
+    sel.value = type === 'acquisition' ? 'aidan_hutchinson' : 'sean_reynolds';
+}
+
+async function startSetupPipeline() {
+    const name = document.getElementById('setup-pipeline-name').value.trim();
+    const domains = document.getElementById('setup-pipeline-domains').value.trim();
+    const sender = document.getElementById('setup-pipeline-sender').value;
+    if (!name || !domains) { alert('Name and domains are required'); return; }
+    try {
+        const resp = await fetch('/api/setup-pipeline/create', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ type: newSetupPipelineType, name: name, domains: domains, sender: sender })
+        });
+        const data = await resp.json();
+        if (data.error) { alert('Error: ' + data.error); return; }
+        document.getElementById('setup-pipeline-modal').remove();
+        loadSetupPipelines();
+    } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function retrySetupPipeline(id) {
+    await fetch('/api/setup-pipeline/retry', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ pipeline_id: id })
+    });
+    loadSetupPipelines();
+}
+
+function showSetupPipelineDetail(id) {
+    fetch('/api/setup-pipeline/' + id).then(r => r.json()).then(p => {
+        if (p.error) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'pipeline-modal-overlay';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+        const stepsHtml = p.steps.map(s => {
+            const icon = s.status === 'completed' ? '&#10003;' :
+                         s.status === 'running' ? '&#9679;' :
+                         s.status === 'failed' ? '&#10007;' : '&#9675;';
+            const color = s.status === 'completed' ? 'var(--accent)' :
+                          s.status === 'running' ? 'var(--accent)' :
+                          s.status === 'failed' ? 'var(--red)' : 'var(--text-muted)';
+            const timing = s.completed_at && s.started_at
+                ? Math.round((new Date(s.completed_at) - new Date(s.started_at)) / 1000) + 's'
+                : s.status === 'running' ? 'running...' : '';
+            const errorLine = s.error ? '<div style="color:var(--red);font-size:11px;margin-top:4px;">' + s.error + '</div>' : '';
+            const retryBtn = s.status === 'failed'
+                ? '<button onclick="retrySetupPipeline(\'' + p.id + '\');this.closest(\'.pipeline-modal-overlay\').remove();" style="margin-top:4px;font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--red);color:var(--red);background:transparent;cursor:pointer;">Retry</button>'
+                : '';
+            return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light);">' +
+                '<span style="color:' + color + ';font-size:14px;width:20px;text-align:center;">' + icon + '</span>' +
+                '<span style="flex:1;font-size:13px;color:var(--text-primary);">' + s.name + '</span>' +
+                '<span style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);">' + s.progress + '/' + s.total + '</span>' +
+                '<span style="font-size:11px;color:var(--text-muted);width:60px;text-align:right;">' + timing + '</span>' +
+            '</div>' + errorLine + retryBtn;
+        }).join('');
+        overlay.innerHTML = '<div class="pipeline-modal">' +
+            '<h3>' + p.name + ' <span style="font-size:12px;font-weight:400;color:var(--text-muted);">' + p.type + '</span></h3>' +
+            '<div class="pill-stepper" style="margin-bottom:16px;">' + renderSetupPipelineSteps(p.steps) + '</div>' +
+            stepsHtml +
+        '</div>';
+        document.body.appendChild(overlay);
+    });
+}
+
+let setupPipelinePollInterval = null;
+
+async function loadSetupPipelines() {
+    try {
+        const resp = await fetch('/api/setup-pipelines');
+        const data = await resp.json();
+        renderSetupPipelines(data.pipelines || []);
+        const hasRunning = (data.pipelines || []).some(p => p.status === 'running');
+        if (hasRunning && !setupPipelinePollInterval) {
+            setupPipelinePollInterval = setInterval(loadSetupPipelines, 5000);
+        } else if (!hasRunning && setupPipelinePollInterval) {
+            clearInterval(setupPipelinePollInterval);
+            setupPipelinePollInterval = null;
+        }
+    } catch(e) { console.error('Setup pipeline load error:', e); }
 }
 
 function renderRotation(data) {
