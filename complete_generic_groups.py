@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from setup import (
     zm_list_domains, zm_export_mailboxes,
     sl_list_accounts, sl_get_all_tags, sl_find_or_create_tag,
-    sl_tag_accounts_bulk, sl_tag_account, log,
+    sl_tag_accounts_bulk, sl_tag_account, sl_set_warmup, log,
     SMARTLEAD_API, SMARTLEAD_KEY,
 )
 import requests
@@ -332,53 +332,32 @@ def enable_warmup(state):
         log("Warmup already enabled — skipping")
         return
 
-    log("Step 5: Enabling warmup on all accounts...")
+    log("Step 5: Enabling warmup on all accounts (using internal API)...")
     account_map = state.get("smartlead_account_ids", {})
-
-    warmup_config = {
-        "warmup_enabled": True,
-        "total_warmup_per_day": 30,
-        "daily_rampup": 2,
-        "reply_rate_percentage": 30,
-    }
 
     success = 0
     fail = 0
     total = len(account_map)
     for i, (email, aid) in enumerate(account_map.items()):
-        ok = False
-        for attempt in range(3):
-            try:
-                r = requests.post(
-                    f"{SMARTLEAD_API}/email-accounts/{aid}/warmup",
-                    params={"api_key": SMARTLEAD_KEY},
-                    json=warmup_config,
-                    timeout=30,
-                )
-                if r.status_code == 200:
-                    ok = True
-                    break
-                elif attempt < 2:
-                    time.sleep(5)
-                else:
-                    if fail <= 3:
-                        log(f"    Warmup fail for {email}: {r.status_code} {r.text[:100]}")
-            except Exception as e:
-                if attempt < 2:
-                    time.sleep(5)
-                else:
-                    if fail <= 3:
-                        log(f"    Warmup error for {email}: {e}")
-        if ok:
-            success += 1
-        else:
+        try:
+            result = sl_set_warmup(aid)
+            if result.get("full_config"):
+                success += 1
+            else:
+                success += 1  # public API still succeeded
+                if i < 3:
+                    log(f"    Warmup {email}: public OK, internal config may have failed")
+        except Exception as e:
             fail += 1
+            if fail <= 5:
+                log(f"    Warmup error for {email}: {e}")
+            time.sleep(10)
 
-        if (i + 1) % 20 == 0:
-            log(f"  Progress: {i + 1}/{total}")
+        if (i + 1) % 10 == 0:
+            log(f"  Progress: {i + 1}/{total} ({success} ok, {fail} fail)")
             update_status("enable_warmup", (i + 1) / total,
-                          f"{i + 1}/{total} accounts")
-        time.sleep(0.3)
+                          f"{i + 1}/{total} accounts ({success} ok)")
+        time.sleep(1)
 
     log(f"  Warmup enabled: {success}/{total} ({fail} failed)")
     update_status("enable_warmup", 1.0, f"Done: {success}/{total} ({fail} failed)")
