@@ -278,6 +278,17 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 /* --- Section headers --- */
 h2.section-title{font-family:var(--font-display);}
 .pipeline-modal h3{font-family:var(--font-display);}
+
+/* --- Generic Setup Tracker --- */
+.generic-tracker-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;display:flex;flex-direction:column;gap:16px;}
+.generic-tracker-steps{display:flex;gap:8px;flex-wrap:wrap;}
+.generic-tracker-step{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:500;font-family:var(--font-body);background:var(--bg-raised);color:var(--text-muted);border:1px solid var(--border-light);transition:all .2s;}
+.generic-tracker-step.done{background:var(--accent-bg);color:var(--accent);border-color:var(--accent);}
+.generic-tracker-step.active{background:var(--purple-bg);color:var(--purple);border-color:var(--purple);animation:pulse-border 2s ease-in-out infinite;}
+@keyframes pulse-border{0%,100%{opacity:1;}50%{opacity:.6;}}
+.generic-tracker-bar{height:8px;background:var(--bg-raised);border-radius:4px;overflow:hidden;}
+.generic-tracker-bar-fill{height:100%;background:var(--accent);border-radius:4px;transition:width .5s ease;min-width:0;}
+.generic-tracker-detail{font-size:13px;color:var(--text-secondary);font-family:var(--font-mono);}
 </style>
 </head>
 <body>
@@ -351,6 +362,11 @@ h2.section-title{font-family:var(--font-display);}
                     <button onclick="openNewPipelineModal()" class="btn-accent" style="font-size:12px;padding:6px 14px;border-radius:20px;background:var(--accent);color:white;border:none;cursor:pointer;font-weight:600;">+ New Pipeline</button>
                 </div>
                 <div class="clients-grid" id="setup-pipeline-grid"></div>
+            </div>
+
+            <div id="generic-setup-tracker" style="display:none;margin-top:28px;">
+                <h2 class="section-title" style="margin-bottom:14px;">Generic Group Setup</h2>
+                <div id="generic-setup-content"></div>
             </div>
 
             <div id="acquisition-section" style="display:none;margin-top:28px;">
@@ -600,7 +616,7 @@ async function loadOverview() {
 
     try {
         // Load ALL sections in parallel — show nothing until everything is ready
-        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp] = await Promise.all([
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp, genericSetupResp] = await Promise.all([
             fetch('/api/overview'),
             fetch('/api/unassigned').catch(() => null),
             fetch('/api/generic-groups').catch(() => null),
@@ -608,6 +624,7 @@ async function loadOverview() {
             fetch('/api/domain-inventory').catch(() => null),
             fetch('/api/rotation/status').catch(() => null),
             fetch('/api/setup-pipelines').catch(() => null),
+            fetch('/api/generic-groups-status').catch(() => null),
         ]);
 
         const text = await overviewResp.text();
@@ -683,6 +700,10 @@ async function loadOverview() {
         }
 
         renderRotation(rotationData);
+
+        let genericSetupData = null;
+        try { if (genericSetupResp) genericSetupData = await genericSetupResp.json(); } catch(e) {}
+        if (genericSetupData) renderGenericSetupTracker(genericSetupData);
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
     }
@@ -2875,6 +2896,89 @@ loadWallet();
 // Auto-refresh every 5 minutes
 setInterval(loadOverview, 5 * 60 * 1000);
 setInterval(loadWallet, 5 * 60 * 1000);
+// ── Generic Group Setup Tracker ──
+const GENERIC_STEP_LABELS = {
+    wait_active: 'Mailboxes Active',
+    smartlead_export: 'SmartLead Export',
+    smartlead_verify: 'Verify Accounts',
+    tag_assign: 'Tag & Assign',
+    enable_warmup: 'Enable Warmup',
+    complete: 'Complete'
+};
+const GENERIC_STEP_ORDER = ['wait_active', 'smartlead_export', 'smartlead_verify', 'tag_assign', 'enable_warmup', 'complete'];
+const GENERIC_COMPLETED_MAP = {
+    mailboxes_active: 'wait_active',
+    smartlead_export: 'smartlead_export',
+    smartlead_verified: 'smartlead_verify',
+    tagged: 'tag_assign',
+    warmup_enabled: 'enable_warmup'
+};
+
+let genericTrackerInterval = null;
+
+async function loadGenericSetupStatus() {
+    try {
+        const resp = await fetch('/api/generic-groups-status');
+        const data = await resp.json();
+        renderGenericSetupTracker(data);
+    } catch (e) {
+        console.error('Generic setup status error:', e);
+    }
+}
+
+function renderGenericSetupTracker(data) {
+    const section = document.getElementById('generic-setup-tracker');
+    const content = document.getElementById('generic-setup-content');
+    if (!data || (!data.running && data.step === 'unknown')) {
+        section.style.display = 'none';
+        if (genericTrackerInterval) { clearInterval(genericTrackerInterval); genericTrackerInterval = null; }
+        return;
+    }
+
+    section.style.display = 'block';
+    const completedSteps = (data.completed_steps || []).map(s => GENERIC_COMPLETED_MAP[s]).filter(Boolean);
+    const currentStep = data.step || 'unknown';
+    const progress = Math.round((data.progress || 0) * 100);
+
+    let stepsHtml = GENERIC_STEP_ORDER.map(step => {
+        let cls = '';
+        if (completedSteps.includes(step) || (step === 'complete' && data.step === 'complete')) cls = 'done';
+        else if (step === currentStep) cls = 'active';
+        const icon = cls === 'done' ? '\u2713' : (cls === 'active' ? '\u25CF' : '\u25CB');
+        return '<span class="generic-tracker-step ' + cls + '">' + icon + ' ' + GENERIC_STEP_LABELS[step] + '</span>';
+    }).join('');
+
+    const isComplete = data.step === 'complete';
+    const barPct = isComplete ? 100 : progress;
+    const detail = data.detail || '';
+    const updatedAt = data.updated_at ? new Date(data.updated_at).toLocaleTimeString() : '';
+
+    content.innerHTML = '<div class="generic-tracker-card">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="font-weight:600;font-family:var(--font-display);font-size:14px;">' +
+                'Generic F / G / H / I' +
+                (isComplete ? ' <span style="color:var(--accent);">\u2714 Complete</span>' : '') +
+            '</span>' +
+            '<span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">' +
+                (updatedAt ? 'Updated ' + updatedAt : '') +
+            '</span>' +
+        '</div>' +
+        '<div class="generic-tracker-steps">' + stepsHtml + '</div>' +
+        (isComplete ? '' :
+            '<div class="generic-tracker-bar"><div class="generic-tracker-bar-fill" style="width:' + barPct + '%;"></div></div>' +
+            '<div class="generic-tracker-detail">' + detail + (barPct > 0 ? ' (' + barPct + '%)' : '') + '</div>'
+        ) +
+    '</div>';
+
+    // Auto-poll if running
+    if (data.running && !genericTrackerInterval) {
+        genericTrackerInterval = setInterval(loadGenericSetupStatus, 10000);
+    } else if (!data.running && genericTrackerInterval) {
+        clearInterval(genericTrackerInterval);
+        genericTrackerInterval = null;
+    }
+}
+
 // ── Dark Mode ──
 function initTheme() {
     const saved = localStorage.getItem('tht-theme');

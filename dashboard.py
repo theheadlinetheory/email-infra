@@ -2855,6 +2855,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response({"name": next_generic_name()})
                 elif path == "/api/supabase-config":
                     self._json_response({"url": store.SUPABASE_URL, "key": store.SUPABASE_KEY})
+                elif path == "/api/generic-groups-status":
+                    status_file = os.path.join(os.path.dirname(__file__), "generic_groups_status.json")
+                    state_file = os.path.join(os.path.dirname(__file__), "generic_groups_state.json")
+                    result = {"running": False, "step": "unknown", "progress": 0, "detail": "", "completed_steps": []}
+                    if os.path.exists(state_file):
+                        with open(state_file) as f:
+                            state = json.load(f)
+                        result["completed_steps"] = state.get("completed_steps", [])
+                    if os.path.exists(status_file):
+                        with open(status_file) as f:
+                            status = json.load(f)
+                        result.update(status)
+                        result["running"] = status.get("step") != "complete"
+                    self._json_response(result)
                 else:
                     self._error(404, "Not found")
             except Exception as e:

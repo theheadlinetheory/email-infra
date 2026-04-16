@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from setup import (
     zm_list_domains, zm_export_mailboxes,
     sl_list_accounts, sl_get_all_tags, sl_find_or_create_tag,
-    sl_tag_accounts_bulk, log,
+    sl_tag_accounts_bulk, sl_tag_account, log,
     SMARTLEAD_API, SMARTLEAD_KEY,
 )
 import requests
@@ -33,6 +33,7 @@ import requests
 # ── Config ──
 STATE_FILE = os.path.join(os.path.dirname(__file__), "generic_groups_state.json")
 SETUP_FILE = os.path.join(os.path.dirname(__file__), "generic_groups_setup.json")
+STATUS_FILE = os.path.join(os.path.dirname(__file__), "generic_groups_status.json")
 
 GROUPS = {
     "Generic F": {
@@ -112,6 +113,19 @@ def mark_done(state, step):
     save_state(state)
 
 
+def update_status(step_name, progress, detail=""):
+    """Write a dashboard-readable status file."""
+    status = {
+        "step": step_name,
+        "progress": progress,
+        "detail": detail,
+        "updated_at": datetime.now().isoformat(),
+        "groups": list(GROUPS.keys()),
+    }
+    with open(STATUS_FILE, "w") as f:
+        json.dump(status, f, indent=2)
+
+
 # ── Step 1: Wait for all mailboxes to be ACTIVE ──
 def wait_for_active(state):
     if step_done(state, "mailboxes_active"):
@@ -144,6 +158,8 @@ def wait_for_active(state):
                     mb_ids.append(m["id"])
 
         log(f"  Poll {poll}: {active}/{total} ACTIVE")
+        update_status("wait_active", active / total if total > 0 else 0,
+                      f"{active}/{total} mailboxes ACTIVE")
 
         if active == total and total > 0:
             state["mailbox_ids"] = mb_ids
@@ -178,8 +194,10 @@ def export_to_smartlead(state):
     result = zm_export_mailboxes(apps=["SMARTLEAD"], mailbox_ids=mb_ids)
     log(f"  Export result: {str(result)[:300]}")
 
+    update_status("smartlead_export", 0.5, "Export sent, waiting 3 min for processing...")
     log("  Waiting 3 minutes for export to process...")
     time.sleep(180)
+    update_status("smartlead_export", 1.0, "Export complete")
     mark_done(state, "smartlead_export")
 
 
@@ -215,6 +233,8 @@ def verify_smartlead_accounts(state):
             offset += 100
 
         log(f"  Attempt {attempt + 1}: found {len(found)}/{expected} accounts")
+        update_status("smartlead_verify", len(found) / expected if expected > 0 else 0,
+                      f"Found {len(found)}/{expected} accounts (attempt {attempt + 1})")
 
         if len(found) >= expected:
             state["smartlead_account_ids"] = found
@@ -242,6 +262,20 @@ def verify_smartlead_accounts(state):
 
 
 # ── Step 4: Tag accounts and assign to clients ──
+def _tag_single_with_retry(account_id, tag_ids, client_id, max_retries=3):
+    """Tag a single account with retries on timeout."""
+    for attempt in range(max_retries):
+        try:
+            result = sl_tag_account(account_id, tag_ids, client_id)
+            return result.get("ok", False)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(5 * (attempt + 1))
+            else:
+                log(f"    Tag failed after {max_retries} retries for {account_id}: {e}", "WARN")
+                return False
+
+
 def tag_and_assign(state):
     if step_done(state, "tagged"):
         log("Tagging already done — skipping")
@@ -252,6 +286,9 @@ def tag_and_assign(state):
     if not account_map:
         log("  No SmartLead account IDs — cannot tag", "ERROR")
         return
+
+    total_accounts = len(account_map)
+    tagged_so_far = 0
 
     for group_name, group_cfg in GROUPS.items():
         group_domains = set(group_cfg["domains"])
@@ -268,19 +305,23 @@ def tag_and_assign(state):
         client_id = group_cfg["client_id"]
 
         log(f"  {group_name}: tagging {len(group_account_ids)} accounts, client_id={client_id}")
-        success, fail = sl_tag_accounts_bulk(group_account_ids, tag_ids, client_id=client_id)
-        log(f"    Tagged: {success} success, {fail} failed")
+        success = 0
+        fail = 0
+        for i, aid in enumerate(group_account_ids):
+            ok = _tag_single_with_retry(aid, tag_ids, client_id)
+            if ok:
+                success += 1
+            else:
+                fail += 1
+            tagged_so_far += 1
+            if (i + 1) % 10 == 0:
+                update_status("tag_assign", tagged_so_far / total_accounts,
+                              f"{group_name}: {i+1}/{len(group_account_ids)}")
+            time.sleep(0.5)
 
-        if fail > 0:
-            # Retry failures individually
-            log(f"    Retrying {fail} failed accounts one by one...")
-            time.sleep(2)
-            for aid in group_account_ids:
-                try:
-                    sl_tag_accounts_bulk([aid], tag_ids, client_id=client_id)
-                except Exception:
-                    pass
-                time.sleep(0.3)
+        log(f"    Tagged: {success} success, {fail} failed")
+        update_status("tag_assign", tagged_so_far / total_accounts,
+                      f"{group_name}: done ({success} ok, {fail} fail)")
 
     mark_done(state, "tagged")
 
@@ -305,29 +346,42 @@ def enable_warmup(state):
     fail = 0
     total = len(account_map)
     for i, (email, aid) in enumerate(account_map.items()):
-        try:
-            r = requests.post(
-                f"{SMARTLEAD_API}/email-accounts/{aid}/warmup",
-                params={"api_key": SMARTLEAD_KEY},
-                json=warmup_config,
-                timeout=15,
-            )
-            if r.status_code == 200:
-                success += 1
-            else:
-                fail += 1
-                if fail <= 3:
-                    log(f"    Warmup fail for {email}: {r.status_code} {r.text[:100]}")
-        except Exception as e:
+        ok = False
+        for attempt in range(3):
+            try:
+                r = requests.post(
+                    f"{SMARTLEAD_API}/email-accounts/{aid}/warmup",
+                    params={"api_key": SMARTLEAD_KEY},
+                    json=warmup_config,
+                    timeout=30,
+                )
+                if r.status_code == 200:
+                    ok = True
+                    break
+                elif attempt < 2:
+                    time.sleep(5)
+                else:
+                    if fail <= 3:
+                        log(f"    Warmup fail for {email}: {r.status_code} {r.text[:100]}")
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(5)
+                else:
+                    if fail <= 3:
+                        log(f"    Warmup error for {email}: {e}")
+        if ok:
+            success += 1
+        else:
             fail += 1
-            if fail <= 3:
-                log(f"    Warmup error for {email}: {e}")
 
         if (i + 1) % 20 == 0:
             log(f"  Progress: {i + 1}/{total}")
+            update_status("enable_warmup", (i + 1) / total,
+                          f"{i + 1}/{total} accounts")
         time.sleep(0.3)
 
     log(f"  Warmup enabled: {success}/{total} ({fail} failed)")
+    update_status("enable_warmup", 1.0, f"Done: {success}/{total} ({fail} failed)")
     mark_done(state, "warmup_enabled")
 
 
@@ -346,6 +400,7 @@ def main():
     tag_and_assign(state)
     enable_warmup(state)
 
+    update_status("complete", 1.0, "All 4 generic groups set up!")
     log("")
     log("=" * 60)
     log("COMPLETE — All 4 generic groups set up!")
