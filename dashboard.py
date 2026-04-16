@@ -40,6 +40,7 @@ from setup import (
     calculate_infra, find_existing_config,
 )
 import db as store
+import pipeline_engine
 
 SCRIPT_DIR = Path(__file__).parent
 ENV_PATH = SCRIPT_DIR / ".env"
@@ -2668,6 +2669,91 @@ def api_rotation_status():
     return {"rotations": rotations}
 
 
+def build_pipeline_config(body: dict) -> dict:
+    """Build a pipeline config dict from the POST body."""
+    pipeline_type = body.get("type", "generic")
+    name = body.get("name", "")
+    domains = [d.strip() for d in body.get("domains", "").split("\n") if d.strip()]
+    sender = body.get("sender", "sean_reynolds")
+
+    # Resolve tags
+    existing_tags = sl_get_all_tags()
+    zapmail_tag = sl_find_or_create_tag("Zapmail", existing_tags=existing_tags)
+    date_str = datetime.now().strftime("%-m/%-d/%y")
+    date_tag = sl_find_or_create_tag(date_str, existing_tags=existing_tags)
+    group_tag = sl_find_or_create_tag(name, existing_tags=existing_tags)
+
+    tag_ids = {"zapmail": zapmail_tag, "date": date_tag, "group": group_tag}
+
+    # Resolve or create SmartLead client
+    sl_client_id = body.get("smartlead_client_id")
+    if not sl_client_id:
+        try:
+            sl_clients = requests.get(
+                f"{SMARTLEAD_API}/client", params={"api_key": SMARTLEAD_KEY}, timeout=30
+            ).json()
+            name_lower = name.lower().strip()
+            for c in sl_clients:
+                cn = c["name"].lower().strip()
+                if cn == name_lower or name_lower in cn or cn in name_lower:
+                    sl_client_id = c["id"]
+                    break
+            if not sl_client_id:
+                slug = name.lower().replace("'", "").replace(" ", "").replace("&", "")
+                cr = requests.post(
+                    f"{SMARTLEAD_API}/client/save",
+                    params={"api_key": SMARTLEAD_KEY},
+                    json={"name": name, "email": f"tht.{slug}.client@gmail.com",
+                          "password": "THTclient2026!"},
+                    timeout=30,
+                )
+                if cr.status_code == 201:
+                    sl_client_id = cr.json().get("clientId")
+        except Exception as e:
+            print(f"[PIPELINE] SmartLead client lookup failed: {e}")
+
+    photo_url = pipeline_engine.PHOTO_URLS.get(sender, pipeline_engine.PROFILE_PHOTO_URL)
+
+    return {
+        "domains": domains,
+        "sender": sender,
+        "group_name": name,
+        "smartlead_client_id": sl_client_id,
+        "tag_ids": tag_ids,
+        "mailbox_ids": [],
+        "smartlead_account_ids": {},
+        "profile_photo_url": photo_url,
+    }
+
+
+def next_generic_name() -> str:
+    """Return the next available 'Generic X' name."""
+    # Check existing SmartLead clients
+    try:
+        sl_clients = requests.get(
+            f"{SMARTLEAD_API}/client", params={"api_key": SMARTLEAD_KEY}, timeout=30
+        ).json()
+    except Exception:
+        sl_clients = []
+    used = set()
+    for c in sl_clients:
+        n = c.get("name", "")
+        if n.lower().startswith("generic ") and len(n) > 8:
+            used.add(n.split(" ")[-1].upper())
+
+    # Also check active pipelines
+    active = store.list_setup_pipelines()
+    for p in active:
+        n = p.get("name", "")
+        if n.lower().startswith("generic ") and len(n) > 8:
+            used.add(n.split(" ")[-1].upper())
+
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        if letter not in used:
+            return f"Generic {letter}"
+    return "Generic Z2"
+
+
 # --- HTTP Server ---
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -2755,6 +2841,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_rotation_status())
                 elif path == "/api/debug/supabase":
                     self._json_response(api_debug_supabase())
+                elif path == "/api/setup-pipelines":
+                    pipelines = store.list_setup_pipelines()
+                    self._json_response({"pipelines": pipelines})
+                elif path.startswith("/api/setup-pipeline/"):
+                    pid = path.split("/")[-1]
+                    p = store.get_setup_pipeline(pid)
+                    if p:
+                        self._json_response(p)
+                    else:
+                        self._json_response({"error": "not found"}, 404)
+                elif path == "/api/next-generic-name":
+                    self._json_response({"name": next_generic_name()})
                 else:
                     self._error(404, "Not found")
             except Exception as e:
@@ -2965,6 +3063,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 result = swap_client_group(rot["client_name"])
                 results.append(result)
             self._json_response({"results": results})
+        elif path == "/api/setup-pipeline/create":
+            try:
+                config = build_pipeline_config(body)
+                pid = pipeline_engine.create_and_start(
+                    body.get("name", ""), body.get("type", "generic"), config
+                )
+                self._json_response({"id": pid, "status": "running"})
+            except Exception as e:
+                self._json_response({"error": str(e)}, 500)
+        elif path == "/api/setup-pipeline/retry":
+            pid = body.get("pipeline_id", "")
+            ok = pipeline_engine.retry_failed_step(pid)
+            self._json_response({"ok": ok})
         else:
             self._error(404, "Not found")
 
@@ -3041,6 +3152,10 @@ def main():
     # Start background SmartLead → Supabase sync (every 2 minutes)
     start_sync_thread()
     print("SmartLead background sync started (every 2 minutes)")
+
+    # Resume any interrupted setup pipelines
+    pipeline_engine.resume_running_pipelines()
+    print("Setup pipeline resume check complete")
 
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}")
