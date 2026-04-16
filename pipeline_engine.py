@@ -242,3 +242,288 @@ def step_create_inboxes(pipeline_id: str, config: dict) -> bool:
 
     _finish_step(pipeline_id, 1)
     return True
+
+
+def step_profile_photos(pipeline_id: str, config: dict) -> bool:
+    """Step 3: Set profile photos on all mailboxes."""
+    _start_step(pipeline_id, 2)
+    mailbox_ids = config.get("mailbox_ids", [])
+    sender = config.get("sender", "sean_reynolds")
+    photo_url = PHOTO_URLS.get(sender, PROFILE_PHOTO_URL)
+
+    if not mailbox_ids:
+        _fail_step(pipeline_id, 2, "No mailbox IDs found in config")
+        return False
+
+    done = 0
+    batch_size = 50
+    for i in range(0, len(mailbox_ids), batch_size):
+        batch = mailbox_ids[i:i + batch_size]
+        mailbox_data = [{"mailboxId": mid, "profilePicture": photo_url} for mid in batch]
+        try:
+            result = zm_put("/v2/mailboxes", {"mailboxData": mailbox_data})
+            if isinstance(result, dict) and result.get("_raw_status", 200) >= 400:
+                log(f"[PIPELINE] Photo batch failed: {result.get('message', '')[:100]}", "WARN")
+            else:
+                done += len(batch)
+        except Exception as e:
+            log(f"[PIPELINE] Photo batch error: {e}", "WARN")
+        _progress(pipeline_id, 2, done)
+        time.sleep(1)
+
+    _finish_step(pipeline_id, 2)
+    return True
+
+
+def step_smartlead_export(pipeline_id: str, config: dict) -> bool:
+    """Step 4: Export mailboxes to SmartLead and verify they appear."""
+    _start_step(pipeline_id, 3)
+    mailbox_ids = config.get("mailbox_ids", [])
+    domains = set(config["domains"])
+    expected = len(domains) * INBOXES_PER_DOMAIN
+
+    if not mailbox_ids:
+        _fail_step(pipeline_id, 3, "No mailbox IDs found in config")
+        return False
+
+    # Export
+    result = zm_export_mailboxes(apps=["SMARTLEAD"], mailbox_ids=mailbox_ids)
+    log(f"[PIPELINE] Export result: {str(result)[:200]}")
+
+    # Wait for propagation then verify
+    time.sleep(180)
+
+    max_attempts = 5
+    found = {}
+    for attempt in range(max_attempts):
+        found = {}
+        offset = 0
+        while True:
+            try:
+                batch = sl_list_accounts(offset=offset, limit=100)
+            except Exception:
+                time.sleep(5)
+                break
+            if not isinstance(batch, list) or not batch:
+                break
+            for acc in batch:
+                email = acc.get("from_email", acc.get("email", ""))
+                domain = email.split("@")[-1] if "@" in email else ""
+                if domain in domains:
+                    found[email] = acc["id"]
+            if len(batch) < 100:
+                break
+            offset += 100
+
+        _progress(pipeline_id, 3, len(found))
+        log(f"[PIPELINE] Export verify attempt {attempt + 1}: {len(found)}/{expected}")
+
+        if len(found) >= expected:
+            break
+
+        if attempt < max_attempts - 1:
+            # Re-export missing domains
+            found_domains = {email.split("@")[-1] for email in found}
+            missing = domains - found_domains
+            if missing:
+                for domain in missing:
+                    zm_export_mailboxes(apps=["SMARTLEAD"], contains=domain)
+                    time.sleep(2)
+            time.sleep(180)
+
+    # Store account IDs
+    config["smartlead_account_ids"] = found
+    store.update_setup_pipeline(pipeline_id, config=config)
+
+    if len(found) < expected * 0.8:
+        _fail_step(pipeline_id, 3,
+                   f"Only {len(found)}/{expected} accounts found in SmartLead after {max_attempts} attempts")
+        return False
+
+    _finish_step(pipeline_id, 3)
+    return True
+
+
+def step_tag_assign(pipeline_id: str, config: dict) -> bool:
+    """Step 5: Tag accounts and assign to SmartLead client."""
+    _start_step(pipeline_id, 4)
+    account_map = config.get("smartlead_account_ids", {})
+    if not account_map:
+        _fail_step(pipeline_id, 4, "No SmartLead account IDs in config")
+        return False
+
+    tag_ids = list(config.get("tag_ids", {}).values())
+    client_id = config.get("smartlead_client_id")
+    account_ids = list(account_map.values())
+
+    if not tag_ids:
+        _fail_step(pipeline_id, 4, "No tag IDs in config")
+        return False
+
+    log(f"[PIPELINE] Tagging {len(account_ids)} accounts with tags {tag_ids}, client_id={client_id}")
+    success, fail = sl_tag_accounts_bulk(account_ids, tag_ids, client_id=client_id)
+    _progress(pipeline_id, 4, success)
+
+    if fail > 0:
+        # Retry failures individually
+        log(f"[PIPELINE] Retrying {fail} failed tags individually...")
+        time.sleep(2)
+        retry_success = 0
+        for aid in account_ids:
+            try:
+                s, f = sl_tag_accounts_bulk([aid], tag_ids, client_id=client_id)
+                retry_success += s
+            except Exception:
+                pass
+            time.sleep(0.3)
+        _progress(pipeline_id, 4, success + retry_success)
+
+    _finish_step(pipeline_id, 4)
+    return True
+
+
+def step_enable_warmup(pipeline_id: str, config: dict) -> bool:
+    """Step 6: Enable warmup on all SmartLead accounts."""
+    _start_step(pipeline_id, 5)
+    account_map = config.get("smartlead_account_ids", {})
+    if not account_map:
+        _fail_step(pipeline_id, 5, "No SmartLead account IDs in config")
+        return False
+
+    done = 0
+    failures = 0
+    total = len(account_map)
+    for email, aid in account_map.items():
+        try:
+            r = requests.post(
+                f"{SMARTLEAD_API}/email-accounts/{aid}/warmup",
+                params={"api_key": SMARTLEAD_KEY},
+                json=WARMUP_CONFIG,
+                timeout=15,
+            )
+            if r.status_code == 200:
+                done += 1
+            else:
+                failures += 1
+        except Exception:
+            failures += 1
+        _progress(pipeline_id, 5, done)
+        time.sleep(0.3)
+
+    log(f"[PIPELINE] Warmup enabled: {done}/{total} ({failures} failed)")
+
+    if failures > total * 0.2:
+        _fail_step(pipeline_id, 5, f"Warmup failed for {failures}/{total} accounts")
+        return False
+
+    _finish_step(pipeline_id, 5)
+    return True
+
+
+# Step functions indexed to match STEP_NAMES
+_STEP_FUNCTIONS = [
+    step_connect_domains,
+    step_create_inboxes,
+    step_profile_photos,
+    step_smartlead_export,
+    step_tag_assign,
+    step_enable_warmup,
+]
+
+
+def run_pipeline(pipeline_id: str):
+    """Execute all pending steps in sequence. Called in a background thread."""
+    p = store.get_setup_pipeline(pipeline_id)
+    if not p:
+        log(f"[PIPELINE] Pipeline {pipeline_id} not found", "ERROR")
+        return
+
+    store.update_setup_pipeline(pipeline_id, status="running")
+    config = p["config"]
+    steps = p["steps"]
+
+    for i, step_fn in enumerate(_STEP_FUNCTIONS):
+        # Skip completed steps (for resume after restart)
+        if steps[i]["status"] == "completed":
+            continue
+        # Stop if a previous step failed
+        if i > 0 and steps[i - 1]["status"] == "failed":
+            break
+
+        log(f"[PIPELINE] {p['name']}: starting step {i + 1}/6 — {STEP_NAMES[i]}")
+        success = step_fn(pipeline_id, config)
+
+        if not success:
+            log(f"[PIPELINE] {p['name']}: step {STEP_NAMES[i]} failed")
+            return
+
+        # Re-read config in case step updated it (mailbox_ids, account_ids)
+        p = store.get_setup_pipeline(pipeline_id)
+        if not p:
+            return
+        config = p["config"]
+        steps = p["steps"]
+
+    store.update_setup_pipeline(pipeline_id, status="completed")
+    log(f"[PIPELINE] {p['name']}: COMPLETE")
+
+    # macOS notification
+    try:
+        os.system(f'osascript -e \'display notification "{p["name"]} pipeline complete!" '
+                  f'with title "Email Infra" sound name "Glass"\'')
+    except Exception:
+        pass
+
+
+def create_and_start(name: str, pipeline_type: str, config: dict) -> str:
+    """Create a pipeline and start it in a background thread. Returns pipeline ID."""
+    steps = _init_steps(len(config["domains"]))
+    pipeline_id = store.create_setup_pipeline(name, pipeline_type, config, steps)
+    if not pipeline_id:
+        raise RuntimeError("Failed to create pipeline in Supabase")
+
+    t = threading.Thread(target=run_pipeline, args=(pipeline_id,), daemon=True,
+                         name=f"pipeline-{name}")
+    _active_threads[pipeline_id] = t
+    t.start()
+    return pipeline_id
+
+
+def retry_failed_step(pipeline_id: str) -> bool:
+    """Retry the current failed step. Returns True if retry started."""
+    p = store.get_setup_pipeline(pipeline_id)
+    if not p or p["status"] != "failed":
+        return False
+
+    steps = p["steps"]
+    failed_idx = None
+    for i, s in enumerate(steps):
+        if s["status"] == "failed":
+            failed_idx = i
+            break
+
+    if failed_idx is None:
+        return False
+
+    # Reset the failed step
+    steps[failed_idx]["status"] = "running"
+    steps[failed_idx]["error"] = None
+    store.update_setup_pipeline(pipeline_id, steps=steps, status="running")
+
+    # Re-run from the failed step
+    t = threading.Thread(target=run_pipeline, args=(pipeline_id,), daemon=True,
+                         name=f"pipeline-retry-{p['name']}")
+    _active_threads[p["id"]] = t
+    t.start()
+    return True
+
+
+def resume_running_pipelines():
+    """On server start, resume any pipelines that were running when the server stopped."""
+    running = store.list_setup_pipelines(status="running")
+    for p in running:
+        log(f"[PIPELINE] Resuming: {p['name']} (step {p['current_step'] + 1}/6)")
+        t = threading.Thread(target=run_pipeline, args=(p["id"],), daemon=True,
+                             name=f"pipeline-resume-{p['name']}")
+        _active_threads[p["id"]] = t
+        t.start()

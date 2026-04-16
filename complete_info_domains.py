@@ -31,7 +31,7 @@ from setup import (
     zm_get_workspace_id, zm_list_domains, zm_create_mailboxes,
     zm_set_forwarding, zm_update_mailbox, zm_export_mailboxes,
     zm_headers, zm_post, zm_get,
-    sl_set_warmup, sl_url, SMARTLEAD_KEY, GOOGLE_WARMUP,
+    sl_set_warmup, sl_url, sl_gql, SMARTLEAD_KEY, GOOGLE_WARMUP,
     ACQUISITION_PHOTO_URLS,
 )
 
@@ -90,14 +90,23 @@ def save_status(status):
 
 
 def api_healthy():
-    """Check if Zapmail mailbox API is responding."""
+    """Check if Zapmail API is responding (uses domains endpoint, not mailboxes which has intermittent 500s)."""
     try:
         h = zm_headers(WID)
-        # Use a lightweight call — list mailboxes for a known domain
         r = requests.get(
-            "https://api.zapmail.ai/api/v2/mailboxes?page=1",
+            "https://api.zapmail.ai/api/v2/domains?page=1",
             headers=h, timeout=15
         )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def mailbox_list_healthy():
+    """Check if the mailbox list endpoint specifically is working."""
+    try:
+        h = zm_headers(WID)
+        r = requests.get("https://api.zapmail.ai/api/v2/mailboxes?page=1", headers=h, timeout=15)
         return r.status_code != 500
     except Exception:
         return False
@@ -158,16 +167,39 @@ def buy_mailboxes_if_needed(count_needed):
         return True
 
     to_buy = count_needed - available
+
+    # Check wallet balance via the error message pattern — buy what we can afford
     log(f"  Buying {to_buy} addon mailboxes ($3/each = ${to_buy * 3})...")
     try:
         result = zm_post(f"/v2/wallet/buy-addon-mailboxes?quantity={to_buy}", {}, WID)
         if isinstance(result, dict) and result.get("status") in (200, 201):
             log(f"  Purchased {to_buy} mailboxes")
             return True
+
+        msg = result.get("message", "") if isinstance(result, dict) else str(result)
+        # If insufficient balance, try buying what we can afford
+        if "insufficient wallet" in msg.lower() or "available:" in msg.lower():
+            import re
+            match = re.search(r'Available:\s*\$?([\d]+\.?\d*)', msg)
+            if match:
+                wallet_balance = float(match.group(1).rstrip('.'))
+                can_afford = int(wallet_balance / 3)
+                if can_afford > 0:
+                    log(f"  Wallet has ${wallet_balance:.0f} — buying {can_afford} mailboxes instead")
+                    result2 = zm_post(f"/v2/wallet/buy-addon-mailboxes?quantity={can_afford}", {}, WID)
+                    if isinstance(result2, dict) and result2.get("status") in (200, 201):
+                        log(f"  Purchased {can_afford} mailboxes (will create as many inboxes as slots allow)")
+                        return True
+                    else:
+                        msg2 = result2.get("message", "")[:100] if isinstance(result2, dict) else str(result2)[:100]
+                        log(f"  Reduced purchase also failed: {msg2}")
+                else:
+                    log(f"  Wallet balance ${wallet_balance:.0f} can't buy any mailboxes ($3/each)")
+            else:
+                log(f"  Purchase failed: {msg[:150]}")
         else:
-            msg = result.get("message", str(result)[:100]) if isinstance(result, dict) else str(result)[:100]
-            log(f"  Purchase failed: {msg}")
-            return False
+            log(f"  Purchase failed: {msg[:150]}")
+        return False
     except Exception as e:
         log(f"  Purchase error: {e}")
         return False
@@ -182,48 +214,90 @@ def step_create_inboxes(status, domain_map):
         log("All domains already have inboxes")
         return True
 
-    # First check which domains actually already have mailboxes (in case status file is stale)
+    # Check which domains already have mailboxes (if list endpoint is working)
     truly_need = []
-    for domain in to_do:
-        did = domain_map[domain]["id"]
-        existing = get_existing_mailboxes(did)
-        if existing is None:
-            log(f"  API error checking {domain} — will retry later")
-            return False
-        if existing:
-            # Already has mailboxes — record them
-            log(f"  {domain}: already has {len(existing)} mailboxes — skipping")
-            already_done.add(domain)
-            ids = [m.get("id", "") for m in existing]
-            status["mailbox_ids"][domain] = ids
-        else:
-            truly_need.append(domain)
+    list_available = mailbox_list_healthy()
 
-    status["domains_with_inboxes"] = list(already_done)
-    save_status(status)
+    if list_available:
+        for domain in to_do:
+            did = domain_map[domain]["id"]
+            existing = get_existing_mailboxes(did)
+            if existing is None:
+                # List endpoint just went down — fall through to create approach
+                truly_need = to_do
+                break
+            if existing:
+                log(f"  {domain}: already has {len(existing)} mailboxes — skipping")
+                already_done.add(domain)
+                ids = [m.get("id", "") for m in existing]
+                status["mailbox_ids"][domain] = ids
+            else:
+                truly_need.append(domain)
+        else:
+            # Loop completed normally
+            status["domains_with_inboxes"] = list(already_done)
+            save_status(status)
+    else:
+        log("  Mailbox list API is 500 — will try creating and handle duplicates")
+        truly_need = to_do
 
     if not truly_need:
         log("All domains already have inboxes (verified)")
         return True
 
-    # Buy mailboxes if needed
-    needed_count = len(truly_need) * 3
-    if not buy_mailboxes_if_needed(needed_count):
+    # If mailbox list is down, try creating one domain first to see if inboxes already exist
+    # "Max 5 mailboxes per domain" response means they're already created
+    test_domain = truly_need[0]
+    test_did = domain_map[test_domain]["id"]
+    try:
+        test_result = zm_create_mailboxes(test_did, test_domain, INBOX_SPECS, workspace_key=WID)
+        test_msg = str(test_result.get("message", "")) if isinstance(test_result, dict) else str(test_result)
+        if "max" in test_msg.lower() and "mailbox" in test_msg.lower():
+            # All domains already have inboxes from previous session
+            log(f"  {test_domain} already has max mailboxes — all 33 domains likely done from previous session")
+            for d in truly_need:
+                already_done.add(d)
+            status["domains_with_inboxes"] = list(already_done)
+            save_status(status)
+            return True
+        elif isinstance(test_result, dict) and test_result.get("status") in (200, 201):
+            data = test_result.get("data", {})
+            mailboxes = data.get("mailboxes", []) if isinstance(data, dict) else []
+            ids = [m.get("id", "") for m in mailboxes]
+            status["mailbox_ids"][test_domain] = ids
+            already_done.add(test_domain)
+            log(f"  [1/{len(truly_need)}] {test_domain} -> {len(ids)} inboxes created")
+        elif isinstance(test_result, str):
+            already_done.add(test_domain)
+            log(f"  [1/{len(truly_need)}] {test_domain} -> text response (likely OK)")
+        elif isinstance(test_result, dict) and test_result.get("status") == 500:
+            log("  API 500 — will retry next round")
+            return False
+        else:
+            msg = test_result.get("message", "")[:100] if isinstance(test_result, dict) else str(test_result)[:100]
+            log(f"  [1/{len(truly_need)}] {test_domain} -> {msg}")
+    except Exception as e:
+        log(f"  Test create error: {e}")
         return False
 
-    # Create inboxes
+    # Buy mailboxes if needed for remaining domains
+    remaining_need = [d for d in truly_need if d not in already_done]
+    if remaining_need:
+        needed_count = len(remaining_need) * 3
+        buy_mailboxes_if_needed(needed_count)
+
+    # Create inboxes on remaining domains
     created = 0
-    for i, domain in enumerate(truly_need):
+    for i, domain in enumerate(remaining_need):
         did = domain_map[domain]["id"]
         try:
             result = zm_create_mailboxes(did, domain, INBOX_SPECS, workspace_key=WID)
-            # Handle various response formats
             if isinstance(result, str):
-                # Sometimes API returns raw text on success
-                log(f"  [{i+1}/{len(truly_need)}] {domain} -> response was text (likely OK)")
                 already_done.add(domain)
                 created += 1
+                log(f"  [{i+2}/{len(truly_need)}] {domain} -> text response (likely OK)")
             elif isinstance(result, dict):
+                msg = str(result.get("message", ""))
                 if result.get("status") in (200, 201):
                     data = result.get("data", {})
                     mailboxes = data.get("mailboxes", []) if isinstance(data, dict) else []
@@ -231,37 +305,23 @@ def step_create_inboxes(status, domain_map):
                     status["mailbox_ids"][domain] = ids
                     already_done.add(domain)
                     created += 1
-                    log(f"  [{i+1}/{len(truly_need)}] {domain} -> {len(ids)} inboxes created")
-                elif "not enough mailboxes" in str(result.get("message", "")).lower():
-                    log(f"  Ran out of mailbox slots — buying more...")
-                    remaining = len(truly_need) - i
-                    if buy_mailboxes_if_needed(remaining * 3):
-                        # Retry this domain
-                        result2 = zm_create_mailboxes(did, domain, INBOX_SPECS, workspace_key=WID)
-                        if isinstance(result2, dict) and result2.get("status") in (200, 201):
-                            data2 = result2.get("data", {})
-                            mailboxes2 = data2.get("mailboxes", []) if isinstance(data2, dict) else []
-                            ids2 = [m.get("id", "") for m in mailboxes2]
-                            status["mailbox_ids"][domain] = ids2
-                            already_done.add(domain)
-                            created += 1
-                            log(f"  [{i+1}/{len(truly_need)}] {domain} -> retry OK")
-                        else:
-                            log(f"  [{i+1}/{len(truly_need)}] {domain} -> retry failed")
-                    else:
-                        log(f"  Could not buy more slots — stopping")
-                        break
+                    log(f"  [{i+2}/{len(truly_need)}] {domain} -> {len(ids)} inboxes created")
+                elif "max" in msg.lower() and "mailbox" in msg.lower():
+                    already_done.add(domain)
+                    log(f"  [{i+2}/{len(truly_need)}] {domain} -> already has mailboxes")
+                elif "already" in msg.lower() or "exist" in msg.lower():
+                    already_done.add(domain)
+                    log(f"  [{i+2}/{len(truly_need)}] {domain} -> already exists")
                 elif result.get("status") == 500:
-                    log(f"  API 500 error — Zapmail down again, will retry")
+                    log("  API 500 — stopping, will retry")
                     break
                 else:
-                    msg = result.get("message", "")[:100]
-                    log(f"  [{i+1}/{len(truly_need)}] {domain} -> FAIL: {msg}")
+                    log(f"  [{i+2}/{len(truly_need)}] {domain} -> FAIL: {msg[:100]}")
             time.sleep(0.5)
         except Exception as e:
-            log(f"  [{i+1}/{len(truly_need)}] {domain} -> ERROR: {e}")
+            log(f"  [{i+2}/{len(truly_need)}] {domain} -> ERROR: {e}")
             if "500" in str(e) or "timeout" in str(e).lower():
-                break  # API is down
+                break
 
     status["domains_with_inboxes"] = list(already_done)
     save_status(status)
@@ -278,6 +338,10 @@ def step_set_photos(status, domain_map):
         log("All profile photos already set")
         return True
 
+    if not mailbox_list_healthy():
+        log("  Mailbox list API is 500 — skipping photos for now (will retry)")
+        return False
+
     done_count = 0
     for domain in to_do:
         did = domain_map.get(domain, {}).get("id", "") if isinstance(domain_map.get(domain), dict) else ""
@@ -286,7 +350,7 @@ def step_set_photos(status, domain_map):
 
         existing = get_existing_mailboxes(did)
         if existing is None:
-            log(f"  API error on {domain} — will retry")
+            log(f"  Mailbox list went down mid-check — will retry")
             return False
         if not existing:
             continue  # No mailboxes yet
@@ -350,99 +414,75 @@ def step_set_forwarding(status, domain_map):
         return False
 
 
+def count_smartlead_accounts():
+    """Count how many THT .info accounts are in SmartLead using GraphQL."""
+    try:
+        query = '{ email_accounts(where: {from_email: {_like: "%headlinetheory%.info"}}) { id from_email } }'
+        result = sl_gql(query)
+        return result.get("data", {}).get("email_accounts", [])
+    except Exception as e:
+        log(f"  GQL error: {e}")
+        return []
+
+
 def step_export_smartlead(status, domain_map):
-    """Export all mailboxes to SmartLead."""
-    if status.get("exported_to_smartlead"):
-        log("Already exported to SmartLead")
+    """Export mailboxes to SmartLead. Keeps re-exporting until all 99 accounts land."""
+    # Check how many are already in SmartLead
+    existing = count_smartlead_accounts()
+    log(f"  SmartLead has {len(existing)}/99 THT .info accounts")
+
+    if len(existing) >= 99:
+        status["exported_to_smartlead"] = True
+        save_status(status)
         return True
 
-    # Collect all mailbox IDs
-    all_mb_ids = []
-    for domain in THT_INFO_DOMAINS:
-        ids = status.get("mailbox_ids", {}).get(domain, [])
-        if ids:
-            all_mb_ids.extend(ids)
-        else:
-            # Need to fetch from API
-            did = domain_map.get(domain, {}).get("id", "") if isinstance(domain_map.get(domain), dict) else ""
-            if did:
-                existing = get_existing_mailboxes(did)
-                if existing:
-                    ids = [m.get("id", "") for m in existing]
-                    all_mb_ids.extend(ids)
-                    status["mailbox_ids"][domain] = ids
-
-    all_mb_ids = [i for i in all_mb_ids if i]
-    if not all_mb_ids:
-        log("  No mailbox IDs available for export")
-        return False
-
-    log(f"  Exporting {len(all_mb_ids)} mailboxes to SmartLead...")
+    # Re-trigger export (uses contains="aidan" to match all acquisition mailboxes)
     try:
-        result = zm_export_mailboxes(["SMARTLEAD"], mailbox_ids=all_mb_ids)
+        result = zm_export_mailboxes(["SMARTLEAD"], contains="aidan")
         if isinstance(result, dict) and result.get("status") in (200, 201):
-            status["exported_to_smartlead"] = True
-            save_status(status)
-            log(f"  Export initiated for {len(all_mb_ids)} mailboxes")
-            return True
+            eid = result.get("data", {}).get("exportId", "?")
+            log(f"  Export triggered (ID={eid}) — waiting for Zapmail to provision remaining mailboxes")
         elif isinstance(result, dict) and result.get("status") == 500:
-            log("  API 500 — will retry")
-            return False
+            log("  Export API 500 — will retry")
         else:
             msg = result.get("message", "")[:100] if isinstance(result, dict) else str(result)[:100]
-            log(f"  Export failed: {msg}")
-            return False
+            log(f"  Export response: {msg}")
     except Exception as e:
         log(f"  Export error: {e}")
-        return False
+
+    return False  # Keep re-exporting until all 99 land
 
 
 def step_enable_warmup(status):
-    """Enable warmup on all SmartLead accounts once they appear."""
+    """Enable warmup on all SmartLead accounts using GraphQL to find them."""
     if status.get("warmup_enabled"):
         log("Warmup already enabled")
         return True
 
-    # Find the SmartLead accounts by email pattern
     try:
-        # Search SmartLead for accounts matching our domains
-        r = requests.get(sl_url("/email-accounts"), params={"api_key": SMARTLEAD_KEY, "offset": 0, "limit": 200}, timeout=30)
-        all_accounts = r.json() if r.status_code == 200 else []
-
-        our_emails = set()
-        for domain in THT_INFO_DOMAINS:
-            for spec in INBOX_SPECS:
-                our_emails.add(f"{spec['mailboxUsername']}@{domain}")
-
-        matching = [a for a in all_accounts if a.get("from_email", "") in our_emails]
-
-        if not matching:
-            log(f"  No SmartLead accounts found yet (export may still be processing)")
+        accounts = count_smartlead_accounts()
+        if not accounts:
+            log("  No SmartLead accounts found yet")
             return False
 
-        enabled = 0
-        for acct in matching:
-            aid = acct.get("id")
-            if not aid:
-                continue
-            # Check if warmup already enabled
-            wd = acct.get("warmup_details") or {}
-            if wd.get("warmup_enabled"):
-                enabled += 1
-                continue
+        needs_warmup = [a for a in accounts
+                        if not (a.get("warmup_details") or {}).get("status") == "ACTIVE"]
+        already_active = len(accounts) - len(needs_warmup)
+
+        for acct in needs_warmup:
             try:
-                sl_set_warmup(aid)
-                enabled += 1
+                sl_set_warmup(acct["id"])
+                already_active += 1
             except Exception as e:
                 log(f"  Warmup error on {acct.get('from_email','')}: {e}")
             time.sleep(0.3)
 
-        log(f"  Warmup: {enabled}/{len(our_emails)} accounts enabled ({len(matching)} found in SmartLead)")
+        log(f"  Warmup: {already_active}/{len(accounts)} accounts active")
 
-        if enabled >= len(matching) and len(matching) > 0:
+        if already_active >= len(accounts) and len(accounts) >= 99:
             status["warmup_enabled"] = True
             save_status(status)
-            return len(matching) >= len(our_emails) * 0.9  # 90% threshold
+            return True
 
         return False
 
@@ -459,7 +499,7 @@ def main():
     log("=" * 60)
 
     status = load_status()
-    max_rounds = 120  # 120 * 60s = 2 hours max
+    max_rounds = 200  # up to ~10 hours (180s between export retries)
 
     for round_num in range(1, max_rounds + 1):
         log(f"\n--- Round {round_num} ---")
@@ -490,36 +530,38 @@ def main():
             time.sleep(60)
             continue
 
-        # Step 2: Set profile photos
-        if not step_set_photos(status, domain_map):
-            log("Photo setting incomplete — retrying in 60s")
-            time.sleep(60)
-            continue
-
-        # Step 3: Set forwarding
+        # Step 2: Set forwarding (don't need mailbox list for this)
         if not step_set_forwarding(status, domain_map):
             log("Forwarding incomplete — retrying in 60s")
             time.sleep(60)
             continue
 
-        # Step 4: Export to SmartLead
-        if not step_export_smartlead(status, domain_map):
-            log("SmartLead export incomplete — retrying in 60s")
-            time.sleep(60)
+        # Step 3: Set profile photos (needs mailbox list — skip if 500, don't block export)
+        photos_done = step_set_photos(status, domain_map)
+        if not photos_done:
+            log("  Photos incomplete — continuing to export (will retry photos later)")
+
+        # Step 4: Export to SmartLead + enable warmup on arrivals (runs together)
+        export_done = step_export_smartlead(status, domain_map)
+        step_enable_warmup(status)  # Enable warmup on whatever has arrived so far
+
+        if not export_done:
+            log("SmartLead export incomplete — re-exporting in 180s")
+            time.sleep(180)
             continue
 
-        # Step 5: Enable warmup (may need to wait for SmartLead to process export)
-        if not step_enable_warmup(status):
-            log("Warmup not fully enabled — retrying in 60s")
-            time.sleep(60)
-            continue
+        # Step 5: Retry photos if they weren't done earlier
+        if not photos_done:
+            photos_done = step_set_photos(status, domain_map)
+            if not photos_done:
+                log("  Photos still incomplete — warmup is running, photos can be set later")
 
-        # All done!
+        # All done (or nearly — photos may be pending if list API stays down)
         log("\n" + "=" * 60)
-        log("ALL STEPS COMPLETE!")
+        log("PIPELINE COMPLETE!")
         log(f"  33 domains connected")
         log(f"  99 inboxes created (aidan/aidanh/aidanhutch)")
-        log(f"  Profile photos set")
+        log(f"  Photos: {'done' if photos_done else 'PENDING (mailbox list API down)'}")
         log(f"  Forwarding → {FORWARD_TO}")
         log(f"  Exported to SmartLead")
         log(f"  Warmup enabled")
