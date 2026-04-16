@@ -2853,6 +2853,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         self._json_response({"error": "not found"}, 404)
                 elif path == "/api/next-generic-name":
                     self._json_response({"name": next_generic_name()})
+                elif path == "/api/supabase-config":
+                    self._json_response({"url": store.SUPABASE_URL, "key": store.SUPABASE_KEY})
                 else:
                     self._error(404, "Not found")
             except Exception as e:
