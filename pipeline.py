@@ -1061,6 +1061,16 @@ def get_flagged_domains_for_client(client_accounts):
 
 def _run_monitor_check():
     """Single monitor check iteration."""
+    # Check if auto-replacement is enabled (disabled by default)
+    try:
+        replacement_state = store.get_state("auto_replacement_enabled")
+        if not replacement_state or not replacement_state.get("enabled", False):
+            log.info("[MONITOR] Auto-replacement is DISABLED — skipping replacement checks")
+            return
+    except Exception:
+        log.info("[MONITOR] Auto-replacement state not found — defaulting to DISABLED")
+        return
+
     all_accounts = _fetch_all_smartlead_accounts()
 
     # Get clients
