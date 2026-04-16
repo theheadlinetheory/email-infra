@@ -329,7 +329,7 @@ def _api_retry(fn, max_retries=3, backoff=10):
         try:
             return fn()
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout) as e:
+                requests.exceptions.Timeout, requests.exceptions.JSONDecodeError) as e:
             if attempt < max_retries:
                 wait = backoff * attempt
                 log(f"  API timeout (attempt {attempt}/{max_retries}), retrying in {wait}s: {e}", "WARN")
