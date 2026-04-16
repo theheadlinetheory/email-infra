@@ -65,6 +65,21 @@ create table if not exists state (
     updated_at timestamptz not null default now()
 );
 
+-- Infrastructure setup pipelines (dashboard-driven)
+create table if not exists setup_pipelines (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    type text not null default 'generic',
+    config jsonb not null default '{}',
+    status text not null default 'pending',
+    current_step int not null default 0,
+    steps jsonb not null default '[]',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_setup_pipelines_status on setup_pipelines (status);
+
 -- Disable RLS on all tables (we use the service_role key which bypasses RLS,
 -- but direct PostgREST calls may still be blocked by default RLS policies)
 alter table pipelines disable row level security;
@@ -73,3 +88,4 @@ alter table client_configs disable row level security;
 alter table monitor_log disable row level security;
 alter table state disable row level security;
 alter table client_rotations disable row level security;
+alter table setup_pipelines disable row level security;

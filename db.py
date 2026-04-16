@@ -178,6 +178,60 @@ def update_rotation_swap(client_name: str, new_active: str, swap_date: str) -> N
 
 
 # ---------------------------------------------------------------------------
+# Setup Pipelines
+# ---------------------------------------------------------------------------
+
+def create_setup_pipeline(name: str, pipeline_type: str, config: dict, steps: list) -> str:
+    """Create a new setup pipeline. Returns the generated UUID."""
+    row = {
+        "name": name, "type": pipeline_type, "config": json.dumps(config),
+        "status": "pending", "current_step": 0, "steps": json.dumps(steps),
+    }
+    result = _request("POST", "/setup_pipelines", json_body=row,
+                      headers={"Prefer": "return=representation"})
+    return result[0]["id"] if result else ""
+
+
+def get_setup_pipeline(pipeline_id: str) -> dict | None:
+    rows = _request("GET", "/setup_pipelines",
+                    params={"select": "*", "id": f"eq.{pipeline_id}"})
+    if rows:
+        r = rows[0]
+        if isinstance(r.get("config"), str):
+            r["config"] = json.loads(r["config"])
+        if isinstance(r.get("steps"), str):
+            r["steps"] = json.loads(r["steps"])
+        return r
+    return None
+
+
+def list_setup_pipelines(status: str = None) -> list[dict]:
+    params = {"select": "*", "order": "created_at.desc", "limit": "50"}
+    if status:
+        params["status"] = f"eq.{status}"
+    rows = _request("GET", "/setup_pipelines", params=params)
+    for r in rows:
+        if isinstance(r.get("config"), str):
+            r["config"] = json.loads(r["config"])
+        if isinstance(r.get("steps"), str):
+            r["steps"] = json.loads(r["steps"])
+    return rows
+
+
+def update_setup_pipeline(pipeline_id: str, **fields) -> None:
+    """Update arbitrary fields on a setup pipeline. JSON-encodes config/steps if present."""
+    body = {}
+    for k, v in fields.items():
+        if k in ("config", "steps") and not isinstance(v, str):
+            body[k] = json.dumps(v)
+        else:
+            body[k] = v
+    body["updated_at"] = "now()"
+    _request("PATCH", "/setup_pipelines",
+             params={"id": f"eq.{pipeline_id}"}, json_body=body)
+
+
+# ---------------------------------------------------------------------------
 # Client Configs
 # ---------------------------------------------------------------------------
 
