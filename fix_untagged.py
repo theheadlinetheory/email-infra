@@ -157,13 +157,27 @@ def classify_tags(tags, client_names):
     """Classify which of the 3 required tags are present.
 
     Returns (has_zapmail, has_client, has_date).
+    Client name matching is fuzzy — "Coastal Lawn Care" matches
+    "Coastal Lawn Care LLC" since one contains the other.
     """
     has_zapmail = any(t["id"] == ZAPMAIL_TAG_ID for t in tags)
-    has_client = any(
-        t["name"] in client_names or "group" in t["name"].lower()
-        for t in tags
-    )
     has_date = any("/" in t["name"] and len(t["name"]) <= 8 for t in tags)
+
+    # Fuzzy client match: tag name contains or is contained by a known client name
+    has_client = False
+    for t in tags:
+        tn = t["name"].lower().strip()
+        if "group" in tn:
+            has_client = True
+            break
+        for cn in client_names:
+            cl = cn.lower().strip()
+            if tn == cl or tn in cl or cl in tn:
+                has_client = True
+                break
+        if has_client:
+            break
+
     return has_zapmail, has_client, has_date
 
 
