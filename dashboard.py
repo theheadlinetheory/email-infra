@@ -82,7 +82,13 @@ def sl_list_accounts(offset=0, limit=100):
         f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}",
         timeout=30,
     )
-    return r.json()
+    if r.status_code != 200 or not r.text.strip():
+        return []
+    try:
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        return []
 
 
 # --- ZapMail API helpers ---
