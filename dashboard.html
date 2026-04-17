@@ -607,6 +607,7 @@ h2.section-title{font-family:var(--font-display);}
 
 <script>
 let overviewData = null;
+let acquisitionDataGlobal = null;
 let inventoryData = null;
 let clientsList = [];
 
@@ -644,7 +645,7 @@ async function loadOverview() {
         try { if (unassignedResp) unassignedData = await unassignedResp.json(); } catch(e) {}
         try { if (genericResp) genericData = await genericResp.json(); } catch(e) {}
         try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
-        window._acquisitionData = acquisitionData;
+        acquisitionDataGlobal = acquisitionData;
         if (inventoryResp && inventoryResp.ok) {
             try { inventoryData = await inventoryResp.json(); } catch(e) {}
         }
@@ -782,11 +783,6 @@ function renderOverview() {
     content.style.display = 'block';
     content.style.animation = 'fadeIn 0.25s ease-out';
 
-    // Apply saved mode button state
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    const savedBtn = document.querySelector(`.mode-btn[onclick="switchMode('${currentMode}')"]`);
-    if (savedBtn) savedBtn.classList.add('active');
-
     const d = overviewData;
     const time = new Date(d.generated_at).toLocaleTimeString();
     document.getElementById('last-updated').textContent = 'Updated: ' + time;
@@ -841,39 +837,6 @@ function renderOverview() {
         alertEl.innerHTML = '';
     }
 
-    // Summary stats — scoped to current mode
-    const summaryEl = document.getElementById('summary-row');
-    if (currentMode === 'fulfillment') {
-        const allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
-        const allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
-        const overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
-        const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
-        const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
-        const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
-        summaryEl.innerHTML = `
-            <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
-            <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
-            <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
-            <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
-        `;
-    } else {
-        const aq = window._acquisitionData;
-        if (aq) {
-            const aqBounce = aq.groups.filter(g => g.avg_bounce_rate > 0).map(g => g.avg_bounce_rate);
-            const aqReply = aq.groups.filter(g => g.avg_reply_rate > 0).map(g => g.avg_reply_rate);
-            const aqOverallBounce = aqBounce.length ? (aqBounce.reduce((a,b) => a+b, 0) / aqBounce.length).toFixed(1) : '—';
-            const aqOverallReply = aqReply.length ? (aqReply.reduce((a,b) => a+b, 0) / aqReply.length).toFixed(1) : '—';
-            const aqBColor = aqOverallBounce !== '—' ? (parseFloat(aqOverallBounce) > 3 ? 'alert' : parseFloat(aqOverallBounce) > 1 ? 'warn' : 'good') : 'good';
-            const aqRColor = aqOverallReply !== '—' ? (parseFloat(aqOverallReply) > 5 ? 'good' : parseFloat(aqOverallReply) > 2 ? 'warn' : 'alert') : 'good';
-            summaryEl.innerHTML = `
-                <div class="stat-card good"><div class="value">${aq.total_accounts}</div><div class="label">Total Accounts</div></div>
-                <div class="stat-card good"><div class="value">${aq.total_groups}</div><div class="label">Active Groups</div></div>
-                <div class="stat-card ${aqBColor}"><div class="value">${aqOverallBounce}${aqOverallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
-                <div class="stat-card ${aqRColor}"><div class="value">${aqOverallReply}${aqOverallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
-            `;
-        }
-    }
-
     // Subtitle + filter bar
     const archivedClients = d.archived_clients || [];
     const activeClients = d.clients.filter(cl => !archivedClients.includes(cl.name));
@@ -910,7 +873,7 @@ function renderOverview() {
     });
     select.value = currentVal;
 
-    switchMode(currentMode);
+    applyModeVisibility(currentMode);
 }
 
 let trendChart = null;
@@ -1592,17 +1555,14 @@ function renderRotation(data) {
 
 // --- Tab switching ---
 let currentMode = localStorage.getItem('dashboardMode') || 'fulfillment';
-let _switchingMode = false;
 
-function switchMode(mode) {
-    currentMode = mode;
-    localStorage.setItem('dashboardMode', mode);
+function applyModeVisibility(mode) {
+    // 1. Button active states
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`.mode-btn[onclick="switchMode('${mode}')"]`).classList.add('active');
 
-    // Fulfillment-only sections
+    // 2. Show/hide fulfillment vs acquisition sections
     const fulfillmentSections = ['clients-grid', 'generic-section', 'rotation-section', 'unassigned-section', 'generic-setup-tracker'];
-    // Acquisition-only sections
     const acquisitionSections = ['acquisition-section'];
 
     if (mode === 'fulfillment') {
@@ -1613,10 +1573,48 @@ function switchMode(mode) {
         acquisitionSections.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
     }
 
-    if (overviewData && !_switchingMode) {
-        _switchingMode = true;
+    // 3. Render scoped summary stats
+    if (!overviewData) return;
+    const d = overviewData;
+    const summaryEl = document.getElementById('summary-row');
+    if (mode === 'fulfillment') {
+        const allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
+        const allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
+        const overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
+        const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
+        const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
+        const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
+        summaryEl.innerHTML = `
+            <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
+            <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
+            <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
+            <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
+        `;
+    } else {
+        const aq = acquisitionDataGlobal;
+        if (aq) {
+            const aqBounce = aq.groups.filter(g => g.avg_bounce_rate > 0).map(g => g.avg_bounce_rate);
+            const aqReply = aq.groups.filter(g => g.avg_reply_rate > 0).map(g => g.avg_reply_rate);
+            const aqOverallBounce = aqBounce.length ? (aqBounce.reduce((a,b) => a+b, 0) / aqBounce.length).toFixed(1) : '—';
+            const aqOverallReply = aqReply.length ? (aqReply.reduce((a,b) => a+b, 0) / aqReply.length).toFixed(1) : '—';
+            const aqBColor = aqOverallBounce !== '—' ? (parseFloat(aqOverallBounce) > 3 ? 'alert' : parseFloat(aqOverallBounce) > 1 ? 'warn' : 'good') : 'good';
+            const aqRColor = aqOverallReply !== '—' ? (parseFloat(aqOverallReply) > 5 ? 'good' : parseFloat(aqOverallReply) > 2 ? 'warn' : 'alert') : 'good';
+            summaryEl.innerHTML = `
+                <div class="stat-card good"><div class="value">${aq.total_accounts}</div><div class="label">Total Accounts</div></div>
+                <div class="stat-card good"><div class="value">${aq.total_groups}</div><div class="label">Active Groups</div></div>
+                <div class="stat-card ${aqBColor}"><div class="value">${aqOverallBounce}${aqOverallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
+                <div class="stat-card ${aqRColor}"><div class="value">${aqOverallReply}${aqOverallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
+            `;
+        }
+    }
+}
+
+function switchMode(mode) {
+    currentMode = mode;
+    localStorage.setItem('dashboardMode', mode);
+    applyModeVisibility(mode);
+    if (overviewData) {
         renderOverview();
-        _switchingMode = false;
     }
 }
 
