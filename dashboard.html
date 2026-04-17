@@ -1755,26 +1755,39 @@ function renderDomains() {
         document.getElementById('dom-alerts').innerHTML = '';
     }
 
-    // Domain tables by registrar
+    // Collect all auto-renew-ON domains for bulk action
+    const allAutoRenewOn = [];
+    for (const domains of Object.values(d.by_registrar)) {
+        domains.forEach(dm => {
+            if (dm.auto_renew) allAutoRenewOn.push({domain: dm.domain, registrar: dm.registrar});
+        });
+    }
+
     let html = '';
+    if (allAutoRenewOn.length > 0) {
+        html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;background:var(--yellow-bg);border:1px solid var(--yellow);border-radius:var(--radius);font-size:13px;">' +
+            '<span style="color:var(--yellow);font-weight:600;">' + allAutoRenewOn.length + ' domains have auto-renew ON</span>' +
+            '<button id="bulk-disable-btn" onclick="bulkDisableAutoRenew()" style="background:var(--red);color:#fff;border:none;padding:6px 16px;border-radius:var(--radius);cursor:pointer;font-weight:600;font-size:12px;">Disable All Auto-Renew</button>' +
+        '</div>';
+    }
+
+    // Domain tables by registrar
     for (const [registrar, domains] of Object.entries(d.by_registrar)) {
-        html += `<h2 class="section-title">${registrar} (${domains.length} domains)</h2>`;
-        html += '<table class="zm-domain-table"><thead><tr><th>Domain</th><th>Status</th><th>Expires</th><th>Days Left</th><th>Auto-Renew</th></tr></thead><tbody>';
+        html += '<h2 class="section-title">' + registrar + ' (' + domains.length + ' domains)</h2>';
+        html += '<table class="zm-domain-table"><thead><tr><th style="width:30px;"><input type="checkbox" onchange="toggleSelectAllDomains(this,\'' + registrar + '\')" title="Select all"></th><th>Domain</th><th>Status</th><th>Expires</th><th>Days Left</th><th>Auto-Renew</th></tr></thead><tbody>';
         domains.forEach(dm => {
             const daysLeft = dm.days_until_expiry;
             const daysColor = daysLeft === null ? '#9ca3af' : (daysLeft <= 7 ? '#ef4444' : (daysLeft <= 30 ? '#f59e0b' : '#22c55e'));
             const renewColor = dm.auto_renew ? '#22c55e' : '#f59e0b';
-            const canToggle = dm.registrar === 'porkbun';
-            const toggleBtn = canToggle
-                ? `<button onclick="toggleAutoRenew('${dm.domain}','${dm.registrar}',${!dm.auto_renew},this)" style="background:none;border:1px solid ${renewColor};color:${renewColor};padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;">${dm.auto_renew ? 'ON' : 'OFF'}</button>`
-                : `<span style="color:${renewColor}" title="${dm.registrar} doesn't support API toggle">${dm.auto_renew ? 'ON' : 'OFF'}</span>`;
-            html += `<tr>
-                <td>${dm.domain}</td>
-                <td style="color:${dm.status === 'ACTIVE' || dm.status === 'registered' ? '#22c55e' : '#f59e0b'}">${dm.status}</td>
-                <td>${dm.expires || '?'}</td>
-                <td style="color:${daysColor}">${daysLeft !== null ? daysLeft + 'd' : '?'}</td>
-                <td>${toggleBtn}</td>
-            </tr>`;
+            const toggleBtn = '<button onclick="toggleAutoRenew(\'' + dm.domain + '\',\'' + dm.registrar + '\',' + (!dm.auto_renew) + ',this)" style="background:none;border:1px solid ' + renewColor + ';color:' + renewColor + ';padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;">' + (dm.auto_renew ? 'ON' : 'OFF') + '</button>';
+            html += '<tr>' +
+                '<td><input type="checkbox" class="dom-select" data-domain="' + dm.domain + '" data-registrar="' + dm.registrar + '" data-autorenew="' + dm.auto_renew + '"></td>' +
+                '<td>' + dm.domain + '</td>' +
+                '<td style="color:' + (dm.status === 'ACTIVE' || dm.status === 'registered' ? '#22c55e' : '#f59e0b') + '">' + dm.status + '</td>' +
+                '<td>' + (dm.expires || '?') + '</td>' +
+                '<td style="color:' + daysColor + '">' + (daysLeft !== null ? daysLeft + 'd' : '?') + '</td>' +
+                '<td>' + toggleBtn + '</td>' +
+            '</tr>';
         });
         html += '</tbody></table>';
     }
@@ -1782,9 +1795,6 @@ function renderDomains() {
 }
 
 async function toggleAutoRenew(domain, registrar, enabled, btn) {
-    const action = enabled ? 'enable' : 'disable';
-    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} auto-renew for ${domain}?`)) return;
-
     btn.disabled = true;
     btn.textContent = '...';
     try {
@@ -1800,15 +1810,51 @@ async function toggleAutoRenew(domain, registrar, enabled, btn) {
             btn.style.borderColor = enabled ? '#22c55e' : '#f59e0b';
             btn.disabled = false;
             btn.onclick = () => toggleAutoRenew(domain, registrar, !enabled, btn);
+            showToast(`Auto-renew ${enabled ? 'enabled' : 'disabled'} for ${domain}`, 'success');
         } else {
-            alert('Failed: ' + result.message);
+            showToast('Failed: ' + result.message, 'error');
             btn.textContent = enabled ? 'OFF' : 'ON';
             btn.disabled = false;
         }
     } catch (err) {
-        alert('Error: ' + err.message);
+        showToast('Error: ' + err.message, 'error');
         btn.textContent = enabled ? 'OFF' : 'ON';
         btn.disabled = false;
+    }
+}
+
+function toggleSelectAllDomains(checkbox, registrar) {
+    document.querySelectorAll('.dom-select').forEach(cb => {
+        if (cb.dataset.registrar === registrar) cb.checked = checkbox.checked;
+    });
+}
+
+async function bulkDisableAutoRenew() {
+    const domains = [];
+    document.querySelectorAll('.dom-select').forEach(cb => {
+        if (cb.dataset.autorenew === 'true') {
+            domains.push({domain: cb.dataset.domain, registrar: cb.dataset.registrar});
+        }
+    });
+    if (!domains.length) { showToast('No domains with auto-renew ON', 'warn'); return; }
+
+    const btn = document.getElementById('bulk-disable-btn');
+    btn.disabled = true;
+    btn.textContent = `Disabling ${domains.length} domains...`;
+
+    try {
+        const resp = await fetch('/api/domains/bulk-auto-renew', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domains: domains.map(d => ({domain: d.domain, registrar: d.registrar})), enabled: false})
+        });
+        const result = await resp.json();
+        showToast(`Disabled: ${result.success} succeeded, ${result.failed} failed`, result.failed ? 'warn' : 'success', 5000);
+        loadDomains();
+    } catch (err) {
+        showToast('Bulk disable error: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Disable All Auto-Renew';
     }
 }
 

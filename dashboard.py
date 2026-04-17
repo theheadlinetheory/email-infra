@@ -200,6 +200,19 @@ def porkbun_set_auto_renew(domain, enabled):
     return {"success": data.get("status") == "SUCCESS", "message": data.get("message", "")}
 
 
+def spaceship_set_auto_renew(domain, enabled):
+    """Toggle auto-renew on a Spaceship domain."""
+    r = requests.put(
+        f"{SPACESHIP_API}/domains/{domain}/autorenew",
+        headers=Spaceship._headers(),
+        json={"isEnabled": enabled},
+        timeout=15,
+    )
+    if r.status_code in (200, 204):
+        return {"success": True, "message": f"Auto-renew {'enabled' if enabled else 'disabled'}"}
+    return {"success": False, "message": r.text[:200]}
+
+
 # --- SmartLead API helpers ---
 
 _clients_cache = {"data": None, "time": 0}
@@ -2992,15 +3005,49 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(result)
         elif path == "/api/domains/auto-renew":
             domain = body.get("domain", "")
-            registrar = body.get("registrar", "")
+            registrar = body.get("registrar", "").lower()
             enabled = body.get("enabled", False)
             if not domain or not registrar:
                 self._error(400, "domain and registrar required")
                 return
             if registrar == "porkbun":
                 result = porkbun_set_auto_renew(domain, enabled)
+            elif registrar == "spaceship":
+                result = spaceship_set_auto_renew(domain, enabled)
             else:
                 result = {"success": False, "message": f"{registrar} auto-renew toggle not supported via API"}
+            self._json_response(result)
+        elif path == "/api/domains/bulk-auto-renew":
+            domains = body.get("domains", [])
+            enabled = body.get("enabled", False)
+            if not domains:
+                self._error(400, "domains list required")
+                return
+            def _bulk_toggle():
+                results = {"success": 0, "failed": 0, "errors": []}
+                for d in domains:
+                    name = d.get("domain", "")
+                    reg = d.get("registrar", "").lower()
+                    try:
+                        if reg == "spaceship":
+                            r = spaceship_set_auto_renew(name, enabled)
+                        elif reg == "porkbun":
+                            r = porkbun_set_auto_renew(name, enabled)
+                        else:
+                            r = {"success": False, "message": "unsupported"}
+                        if r["success"]:
+                            results["success"] += 1
+                        else:
+                            results["failed"] += 1
+                            if len(results["errors"]) < 5:
+                                results["errors"].append(f"{name}: {r.get('message','')}")
+                    except Exception as e:
+                        results["failed"] += 1
+                        if len(results["errors"]) < 5:
+                            results["errors"].append(f"{name}: {e}")
+                    time.sleep(0.5)
+                return results
+            result = _bulk_toggle()
             self._json_response(result)
         elif path == "/api/pipeline/new-client":
             result = api_pipeline_new_client(body)
