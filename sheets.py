@@ -4,7 +4,7 @@ Reads/writes the THT Domains master sheet and client tabs.
 
 Sheet ID: 1oQZh0NnvJPtbgsBqQq-Fy6kbw_UG3Bo-zzdVeEtfMVc
 Master tab: "THT Domains " (note trailing space)
-Columns: Domains | Status | Provider | Notes | Purchase Date | Renewal date | Designation | Inbox
+Columns: Domain | Status | Provider | Client | Pool
 """
 
 from google.oauth2.credentials import Credentials
@@ -95,7 +95,7 @@ def create_tab(tab_name):
 
 def get_all_master_domains():
     """Read all domains from the master THT Domains tab."""
-    rows = read_range(MASTER_TAB, "A1:H")
+    rows = read_range(MASTER_TAB, "A1:E")
     if not rows:
         return [], []
 
@@ -106,18 +106,15 @@ def get_all_master_domains():
             "domain": row[0] if len(row) > 0 else "",
             "status": row[1] if len(row) > 1 else "",
             "provider": row[2] if len(row) > 2 else "",
-            "notes": row[3] if len(row) > 3 else "",
-            "purchase_date": row[4] if len(row) > 4 else "",
-            "renewal_date": row[5] if len(row) > 5 else "",
-            "designation": row[6] if len(row) > 6 else "",
-            "inbox": row[7] if len(row) > 7 else "",
+            "client": row[3] if len(row) > 3 else "",
+            "pool": row[4] if len(row) > 4 else "",
             "row_number": i  # actual row number in the sheet
         })
     return headers, domains
 
 
 def get_available_domains(exclude_keywords=None):
-    """Get all available generic domains (excludes headlinetheory, etc.)."""
+    """Get all available client-pool domains."""
     if exclude_keywords is None:
         exclude_keywords = EXCLUDED_KEYWORDS
 
@@ -126,7 +123,9 @@ def get_available_domains(exclude_keywords=None):
     for d in all_domains:
         if d["status"].lower().strip() != "available":
             continue
-        # Exclude branded domains
+        # Use Pool column if set, otherwise fall back to keyword check
+        if d.get("pool", "").lower() == "acquisition":
+            continue
         domain_lower = d["domain"].lower()
         if any(kw in domain_lower for kw in exclude_keywords):
             continue
@@ -135,7 +134,7 @@ def get_available_domains(exclude_keywords=None):
 
 
 def get_acquisition_domains(exclude_keywords=None):
-    """Get available domains that ARE headlinetheory domains (for acquisition infrastructure)."""
+    """Get available domains in the acquisition pool."""
     if exclude_keywords is None:
         exclude_keywords = EXCLUDED_KEYWORDS
     _, domains = get_all_master_domains()
@@ -143,9 +142,10 @@ def get_acquisition_domains(exclude_keywords=None):
     for d in domains:
         if d["status"].lower().strip() != "available":
             continue
-        domain_lower = d["domain"].lower()
-        # INCLUDE only domains matching excluded keywords (opposite of client logic)
-        if any(kw in domain_lower for kw in exclude_keywords):
+        # Use Pool column if set, otherwise fall back to keyword check
+        if d.get("pool", "").lower() == "acquisition":
+            available.append(d)
+        elif any(kw in d["domain"].lower() for kw in exclude_keywords):
             available.append(d)
     return available
 
@@ -155,15 +155,11 @@ def claim_domains(domains_to_claim, client_name):
 
     domains_to_claim: list of domain dicts with 'domain' and 'row_number' keys
     """
-    service = get_service()
-    today = datetime.now().strftime("%m/%d/%y")
-    requests_batch = []
-
     for d in domains_to_claim:
         row = d["row_number"]
-        # Update Status (col B) to "In use" and Notes (col D) to client name
+        # Update Status (col B) to "In use" and Client (col D) to client name
         write_range(MASTER_TAB, f"B{row}", [["In use"]])
-        write_range(MASTER_TAB, f"D{row}", [[f"{client_name}"]])
+        write_range(MASTER_TAB, f"D{row}", [[client_name]])
 
     return domains_to_claim
 
@@ -179,7 +175,7 @@ def mark_domains_in_use_batch(domains_with_rows, client_name):
             "values": [["In use"]]
         })
         batch_data.append({
-            "range": f"{MASTER_TAB}!D{row}",
+            "range": f"{MASTER_TAB}!D{row}",  # Client column
             "values": [[client_name]]
         })
 
@@ -233,25 +229,33 @@ def add_domains_to_existing_client_tab(client_name, domains):
 # ─── REPORTING ───
 
 def get_domain_summary():
-    """Get a summary of domain counts by status and provider."""
+    """Get a summary of domain counts by status, provider, and pool."""
     _, all_domains = get_all_master_domains()
     from collections import Counter
 
     statuses = Counter()
     providers = Counter()
-    available_generic = 0
+    pools = Counter()
+    available_client = 0
+    available_acquisition = 0
 
     for d in all_domains:
         statuses[d["status"]] += 1
         if d["provider"]:
             providers[d["provider"]] += 1
+        pool = d.get("pool", "Client")
+        pools[pool] += 1
         if d["status"].lower().strip() == "available":
-            if not any(kw in d["domain"].lower() for kw in EXCLUDED_KEYWORDS):
-                available_generic += 1
+            if pool == "Acquisition" or any(kw in d["domain"].lower() for kw in EXCLUDED_KEYWORDS):
+                available_acquisition += 1
+            else:
+                available_client += 1
 
     return {
         "total": len(all_domains),
         "by_status": dict(statuses),
         "by_provider": dict(providers),
-        "available_for_clients": available_generic
+        "by_pool": dict(pools),
+        "available_for_clients": available_client,
+        "available_for_acquisition": available_acquisition,
     }

@@ -831,6 +831,11 @@ def _sync_loop():
             _sync_smartlead_data()
         except Exception as e:
             print(f"[sync] Loop error: {e}")
+        # Also sync Spaceship → Sheet on each cycle
+        try:
+            sync_spaceship_to_sheet()
+        except Exception as e:
+            print(f"[sync] Spaceship sync error: {e}")
         time.sleep(_SYNC_INTERVAL)
 
 
@@ -848,10 +853,20 @@ def invalidate_cache():
 
 # --- Spaceship → Sheet sync ---
 
-_SPACESHIP_SYNC_INTERVAL = 6 * 3600  # 6 hours
+_last_spaceship_sync = 0
+_SPACESHIP_MIN_INTERVAL = 60  # Don't sync more than once per minute
 
 def sync_spaceship_to_sheet():
-    """Add any Spaceship domains missing from the Google Sheet."""
+    """Add any Spaceship domains missing from the Google Sheet.
+
+    Runs on every dashboard sync/load. Debounced to once per minute minimum.
+    """
+    global _last_spaceship_sync
+    now = time.time()
+    if now - _last_spaceship_sync < _SPACESHIP_MIN_INTERVAL:
+        return
+    _last_spaceship_sync = now
+
     try:
         if not Spaceship.is_configured():
             return
@@ -880,7 +895,6 @@ def sync_spaceship_to_sheet():
         # Find missing
         missing = sorted(set(ss_map.keys()) - sheet_names)
         if not missing:
-            print(f"[spaceship-sync] Sheet is up to date ({len(ss_map)} Spaceship domains)")
             return
 
         # Check Zapmail for status
@@ -890,35 +904,16 @@ def sync_spaceship_to_sheet():
         except Exception:
             zm_names = set()
 
-        # Build rows
+        # Build rows: Domain | Status | Provider | Client | Pool
         rows = []
         for domain in missing:
-            ss_data = ss_map[domain]
             in_zapmail = domain in zm_names
             is_branded = "headlinetheory" in domain
 
             status = "In use" if in_zapmail else "Available"
-            designation = "Acquisition" if is_branded else "Client"
+            pool = "Acquisition" if is_branded else "Client"
 
-            purchase_date = ""
-            created = ss_data.get("createdAt", "")
-            if created:
-                try:
-                    dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    purchase_date = dt.strftime("%m/%d/%y")
-                except Exception:
-                    pass
-
-            renewal_date = ""
-            expires = ss_data.get("expiresAt", "")
-            if expires:
-                try:
-                    dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
-                    renewal_date = dt.strftime("%m/%d/%y")
-                except Exception:
-                    pass
-
-            rows.append([domain, status, "Spaceship", "", purchase_date, renewal_date, designation, ""])
+            rows.append([domain, status, "Spaceship", "", pool])
 
         # Append to sheet
         service = get_sheets_service()
@@ -936,20 +931,6 @@ def sync_spaceship_to_sheet():
 
     except Exception as e:
         print(f"[spaceship-sync] Error: {e}")
-
-
-def _spaceship_sync_loop():
-    """Background loop that syncs Spaceship → Sheet periodically."""
-    time.sleep(30)  # Let main sync finish first
-    while True:
-        sync_spaceship_to_sheet()
-        time.sleep(_SPACESHIP_SYNC_INTERVAL)
-
-
-def start_spaceship_sync_thread():
-    t = threading.Thread(target=_spaceship_sync_loop, daemon=True, name="spaceship-sync")
-    t.start()
-    return t
 
 
 # --- API endpoint logic (cache-first) ---
@@ -3274,10 +3255,7 @@ def main():
 
     # Start background SmartLead → Supabase sync (every 2 minutes)
     start_sync_thread()
-    print("SmartLead background sync started (every 2 minutes)")
-
-    start_spaceship_sync_thread()
-    print("Spaceship → Sheet sync started (every 6 hours)")
+    print("SmartLead + Spaceship background sync started (every 2 minutes)")
 
     # Resume any interrupted setup pipelines
     pipeline_engine.resume_running_pipelines()
