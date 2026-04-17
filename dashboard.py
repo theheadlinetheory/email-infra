@@ -1096,12 +1096,25 @@ def _load_sr_groups():
     return None
 
 
+def _warmup_days(account, now_dt):
+    """Return number of days since warmup started for an account."""
+    wc = (account.get("warmup_details") or {}).get("warmup_created_at", "")
+    if not wc:
+        return 999
+    try:
+        d = datetime.strptime(wc[:10], "%Y-%m-%d")
+        return (now_dt - d).days
+    except (ValueError, TypeError):
+        return 999
+
+
 def _compute_group_stats(group_name, group_id, accounts, health):
     """Compute health/performance stats for a list of accounts."""
     cl_scores = []
     warming = 0
     in_campaign = 0
     smtp_fail = 0
+    blocked = 0
     cl_sent = 0
     cl_bounced = 0
     cl_replied = 0
@@ -1140,6 +1153,51 @@ def _compute_group_stats(group_name, group_id, accounts, health):
             in_campaign += 1
         if not acc.get("is_smtp_success"):
             smtp_fail += 1
+        warmup_status = (acc.get("warmup_details") or {}).get("status")
+        if warmup_status is not None and warmup_status != "ACTIVE":
+            blocked += 1
+
+    now_dt = datetime.now()
+
+    # Batch warmup computation — group accounts by warmup start date (3-day buckets)
+    _batch_buckets = {}
+    for a in accounts:
+        wd = a.get("warmup_details") or {}
+        wc = wd.get("warmup_created_at", "")
+        if not wc:
+            continue
+        try:
+            d = datetime.strptime(wc[:10], "%Y-%m-%d")
+            bucket = (d - datetime(2020, 1, 1)).days // 3
+            if bucket not in _batch_buckets:
+                _batch_buckets[bucket] = {"date": d, "total": 0, "ready": 0, "warming": 0}
+            _batch_buckets[bucket]["total"] += 1
+            if (now_dt - d).days >= 14 or a.get("campaign_count", 0) > 0:
+                _batch_buckets[bucket]["ready"] += 1
+            else:
+                _batch_buckets[bucket]["warming"] += 1
+        except (ValueError, TypeError):
+            pass
+
+    batches = []
+    for bucket in sorted(_batch_buckets.keys()):
+        b = _batch_buckets[bucket]
+        days_since = (now_dt - b["date"]).days
+        batches.append({
+            "warmup_start": b["date"].strftime("%Y-%m-%d"),
+            "total": b["total"],
+            "ready": b["ready"],
+            "warming": b["warming"],
+            "days_done": min(14, days_since),
+            "status": "ready" if days_since >= 14 else "warming",
+        })
+
+    # Daily capacity — production-ready accounts minus failures
+    production = sum(1 for a in accounts
+                     if (a.get("campaign_count", 0) or 0) > 0
+                     or _warmup_days(a, now_dt) >= 14)
+    healthy = max(0, production - min(smtp_fail, production) - min(blocked, production))
+    daily_capacity = healthy * 15
 
     avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 100
     avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 2) if cl_bounce_rates else 0
@@ -1163,6 +1221,9 @@ def _compute_group_stats(group_name, group_id, accounts, health):
         "flagged_domains": len(flagged_domains),
         "flagged_pct": round(len(flagged_domains) / total_domains * 100) if total_domains else 0,
         "needs_attention": len(flagged_domains) / total_domains >= 0.15 if total_domains else False,
+        "blocked": blocked,
+        "daily_capacity": daily_capacity,
+        "batches": batches,
     }
 
 
