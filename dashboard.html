@@ -1972,51 +1972,6 @@ function closeNewClientForm() {
     document.getElementById('new-client-form').style.display = 'none';
 }
 
-async function toggleMonitor(clientName, currentlyPaused) {
-    const newPaused = !currentlyPaused;
-    const btn = event.target;
-    btn.textContent = newPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
-    btn.style.background = newPaused ? '#fffbeb' : '#f3f4f6';
-    btn.style.color = newPaused ? '#f59e0b' : '#9ca3af';
-    btn.style.borderColor = newPaused ? '#f59e0b33' : '#e5e7eb';
-    btn.disabled = true;
-    try {
-        const resp = await fetch('/api/client/pause-monitor', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({client_name: clientName, paused: newPaused})
-        });
-        const result = await resp.json();
-        if (result.error) {
-            btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
-            btn.style.background = currentlyPaused ? '#fffbeb' : '#f3f4f6';
-            btn.style.color = currentlyPaused ? '#f59e0b' : '#9ca3af';
-            btn.style.borderColor = currentlyPaused ? '#f59e0b33' : '#e5e7eb';
-        }
-    } catch(e) {
-        btn.textContent = currentlyPaused ? 'Monitoring Paused' : 'Auto-Replace: On';
-        btn.style.background = currentlyPaused ? '#fffbeb' : '#f3f4f6';
-        btn.style.color = currentlyPaused ? '#f59e0b' : '#9ca3af';
-        btn.style.borderColor = currentlyPaused ? '#f59e0b33' : '#e5e7eb';
-    }
-    btn.disabled = false;
-}
-
-async function setTargetVolume(clientName, value) {
-    const vol = parseInt(value) || 0;
-    try {
-        const resp = await fetch('/api/client/set-target-volume', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({client_name: clientName, target_volume: vol})
-        });
-        const result = await resp.json();
-        if (!result.error) {
-            loadOverview();
-        }
-    } catch(e) {}
-}
-
 async function swapClient(clientName) {
     if (!confirm('Swap ' + clientName + ' to the other group? This will update all their campaigns.')) return;
     const btn = event.target;
@@ -2062,26 +2017,6 @@ async function swapAll() {
     }
     btn.disabled = false;
     btn.textContent = 'Swap All Clients';
-}
-
-async function archiveClient(clientName, archive) {
-    const action = archive ? 'Archive' : 'Unarchive';
-    if (!confirm(action + ' ' + clientName + '? ' + (archive ? 'This will pause monitoring and hide from active view.' : 'This will restore to active view.'))) return;
-    try {
-        const resp = await fetch('/api/client/archive', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({client_name: clientName, archived: archive}),
-        });
-        const result = await resp.json();
-        if (result.ok) {
-            loadOverview();
-        } else {
-            alert('Failed: ' + (result.error || 'Unknown error'));
-        }
-    } catch(e) {
-        alert('Error: ' + e.message);
-    }
 }
 
 function toggleGenericMode() {
