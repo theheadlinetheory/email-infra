@@ -1227,6 +1227,16 @@ def _compute_group_stats(group_name, group_id, accounts, health):
     }
 
 
+def api_untagged_count():
+    """Count accounts with no client assignment (proxy for untagged)."""
+    all_accounts = get_all_accounts()
+    no_client = [a for a in all_accounts if not a.get("client_id")]
+    return {
+        "untagged_count": len(no_client),
+        "accounts": [{"id": a["id"], "email": a.get("from_email", "")} for a in no_client[:20]],
+    }
+
+
 def api_acquisition():
     """Acquisition inbox groups with health metrics."""
     clients = get_clients()
@@ -2999,6 +3009,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_placement_tests())
                 elif path == "/api/subscriptions":
                     self._json_response(api_subscriptions())
+                elif path == "/api/untagged-count":
+                    self._json_response(api_untagged_count())
                 elif path == "/api/acquisition":
                     self._json_response(api_acquisition())
                 elif path == "/api/generic-groups":

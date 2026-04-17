@@ -346,6 +346,9 @@ h2.section-title{font-family:var(--font-display);}
             </div>
             <span id="inventory-alert" style="display:none;color:var(--yellow);font-size:12px;font-family:var(--font-mono);"></span>
             <div id="sl-filter-bar" class="filter-bar"></div>
+            <div id="untagged-alert" style="display:none;background:#2d1b0e;border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:16px;justify-content:space-between;align-items:center;">
+                <span style="color:#f59e0b;font-size:13px;" id="untagged-alert-text"></span>
+            </div>
             <div class="summary-row" id="summary-row"></div>
 
             <div class="clients-grid" id="clients-grid"></div>
@@ -617,7 +620,7 @@ async function loadOverview() {
 
     try {
         // Load ALL sections in parallel — show nothing until everything is ready
-        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp, genericSetupResp] = await Promise.all([
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp, genericSetupResp, untaggedResp] = await Promise.all([
             fetch('/api/overview'),
             fetch('/api/unassigned').catch(() => null),
             fetch('/api/generic-groups').catch(() => null),
@@ -626,6 +629,7 @@ async function loadOverview() {
             fetch('/api/rotation/status').catch(() => null),
             fetch('/api/setup-pipelines').catch(() => null),
             fetch('/api/generic-groups-status').catch(() => null),
+            fetch('/api/untagged-count').catch(() => null),
         ]);
 
         const text = await overviewResp.text();
@@ -652,6 +656,19 @@ async function loadOverview() {
         let rotationData = null;
         if (rotationResp && rotationResp.ok) {
             try { rotationData = await rotationResp.json(); } catch(e) {}
+        }
+
+        let untaggedData = null;
+        try { untaggedData = untaggedResp && untaggedResp.ok ? await untaggedResp.json() : null; } catch(e) {}
+
+        // Render untagged alert
+        const untaggedAlert = document.getElementById('untagged-alert');
+        if (untaggedData && untaggedData.untagged_count > 0) {
+            document.getElementById('untagged-alert-text').textContent =
+                '\u26a0 ' + untaggedData.untagged_count + ' accounts have no client assignment and may be missing tags. Run fix_untagged.py to remediate.';
+            untaggedAlert.style.display = 'flex';
+        } else if (untaggedAlert) {
+            untaggedAlert.style.display = 'none';
         }
 
         // Render everything at once — no layout shifts

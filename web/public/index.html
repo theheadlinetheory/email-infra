@@ -346,6 +346,9 @@ h2.section-title{font-family:var(--font-display);}
             </div>
             <span id="inventory-alert" style="display:none;color:var(--yellow);font-size:12px;font-family:var(--font-mono);"></span>
             <div id="sl-filter-bar" class="filter-bar"></div>
+            <div id="untagged-alert" style="display:none;background:#2d1b0e;border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:16px;justify-content:space-between;align-items:center;">
+                <span style="color:#f59e0b;font-size:13px;" id="untagged-alert-text"></span>
+            </div>
             <div class="summary-row" id="summary-row"></div>
 
             <div class="clients-grid" id="clients-grid"></div>
@@ -607,6 +610,7 @@ h2.section-title{font-family:var(--font-display);}
 
 <script>
 let overviewData = null;
+let acquisitionDataGlobal = null;
 let inventoryData = null;
 let clientsList = [];
 
@@ -616,7 +620,7 @@ async function loadOverview() {
 
     try {
         // Load ALL sections in parallel — show nothing until everything is ready
-        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp, genericSetupResp] = await Promise.all([
+        const [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp, genericSetupResp, untaggedResp] = await Promise.all([
             fetch('/api/overview'),
             fetch('/api/unassigned').catch(() => null),
             fetch('/api/generic-groups').catch(() => null),
@@ -625,6 +629,7 @@ async function loadOverview() {
             fetch('/api/rotation/status').catch(() => null),
             fetch('/api/setup-pipelines').catch(() => null),
             fetch('/api/generic-groups-status').catch(() => null),
+            fetch('/api/untagged-count').catch(() => null),
         ]);
 
         const text = await overviewResp.text();
@@ -644,12 +649,26 @@ async function loadOverview() {
         try { if (unassignedResp) unassignedData = await unassignedResp.json(); } catch(e) {}
         try { if (genericResp) genericData = await genericResp.json(); } catch(e) {}
         try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
+        acquisitionDataGlobal = acquisitionData;
         if (inventoryResp && inventoryResp.ok) {
             try { inventoryData = await inventoryResp.json(); } catch(e) {}
         }
         let rotationData = null;
         if (rotationResp && rotationResp.ok) {
             try { rotationData = await rotationResp.json(); } catch(e) {}
+        }
+
+        let untaggedData = null;
+        try { untaggedData = untaggedResp && untaggedResp.ok ? await untaggedResp.json() : null; } catch(e) {}
+
+        // Render untagged alert
+        const untaggedAlert = document.getElementById('untagged-alert');
+        if (untaggedData && untaggedData.untagged_count > 0) {
+            document.getElementById('untagged-alert-text').textContent =
+                '\u26a0 ' + untaggedData.untagged_count + ' accounts have no client assignment and may be missing tags. Run fix_untagged.py to remediate.';
+            untaggedAlert.style.display = 'flex';
+        } else if (untaggedAlert) {
+            untaggedAlert.style.display = 'none';
         }
 
         // Render everything at once — no layout shifts
@@ -709,70 +728,66 @@ async function loadOverview() {
     }
 }
 
-function renderClientCards(clients, archivedClients, pausedClients) {
-    return clients.map(cl => {
-        const isPaused = pausedClients.includes(cl.name);
-        const isArchived = archivedClients.includes(cl.name);
-        const hasAlert = cl.smtp_failures > 0 || cl.blocked > 0;
-        const readyBadge = cl.days_until_ready !== null
-            ? (cl.days_until_ready <= 0
-                ? '<span class="badge badge-green">Ready</span>'
-                : '<span class="badge badge-yellow">' + cl.days_until_ready + 'd left</span>')
-            : '';
-        const rotBadge = cl.days_until_rotation !== null && cl.days_until_rotation <= 7
-            ? '<span class="badge badge-red">Rotate soon</span>'
-            : '';
+function renderCardHTML(item) {
+    const issues = (item.smtp_failures || 0) + (item.blocked || 0);
+    const issuesColor = issues > 0 ? '#ef4444' : 'var(--accent)';
+    const bounceVal = item.avg_bounce_rate !== null && item.avg_bounce_rate !== undefined ? item.avg_bounce_rate + '%' : '—';
+    const bounceColor = item.avg_bounce_rate === null || item.avg_bounce_rate === undefined ? 'var(--text-muted)' : item.avg_bounce_rate > 3 ? '#ef4444' : item.avg_bounce_rate > 1 ? '#f59e0b' : 'var(--accent)';
+    const replyVal = item.avg_reply_rate !== null && item.avg_reply_rate !== undefined ? item.avg_reply_rate + '%' : '—';
+    const replyColor = item.avg_reply_rate === null || item.avg_reply_rate === undefined ? 'var(--text-muted)' : item.avg_reply_rate > 5 ? 'var(--accent)' : item.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444';
 
-        const healthColor = cl.health_score >= 85 ? 'var(--accent)' : cl.health_score >= 60 ? '#f59e0b' : '#ef4444';
-        const healthBg = cl.health_score >= 85 ? 'var(--accent-bg)' : cl.health_score >= 60 ? 'var(--yellow-bg)' : 'var(--red-bg)';
-
-        return `
-        <div class="client-card ${hasAlert || cl.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${cl.id}, '${cl.name.replace(/'/g, "\\'")}')">
-            <div class="cc-header">
-                <span class="cc-name">${cl.name}</span>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${cl.health_score}</span>
-                    <span class="cc-count">${cl.accounts} accounts</span>
-                </div>
-            </div>
-            ${cl.needs_attention ? '<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">' + cl.flagged_domains + '/' + cl.total_domains + ' domains flagged (' + cl.flagged_pct + '%)</div>' : ''}
-            <div class="cc-stats">
-                <div class="cc-stat"><span class="label">Healthy</span><span style="color:var(--accent)">${cl.healthy_inboxes}</span></div>
-                <div class="cc-stat"><span class="label">Capacity</span><span>${cl.daily_capacity}/day</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${cl.smtp_failures > 0 ? '#ef4444' : 'var(--accent)'}">${cl.smtp_failures}</span></div>
-                <div class="cc-stat"><span class="label">Blocked</span><span style="color:${cl.blocked > 0 ? '#ef4444' : 'var(--accent)'}">${cl.blocked}</span></div>
-                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${cl.avg_bounce_rate !== null ? (cl.avg_bounce_rate > 3 ? '#ef4444' : cl.avg_bounce_rate > 1 ? '#f59e0b' : 'var(--accent)') : 'var(--text-muted)'}">${cl.avg_bounce_rate !== null ? cl.avg_bounce_rate + '%' : '—'}</span></div>
-                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${cl.avg_reply_rate !== null ? (cl.avg_reply_rate > 5 ? 'var(--accent)' : cl.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444') : 'var(--text-muted)'}">${cl.avg_reply_rate !== null ? cl.avg_reply_rate + '%' : '—'}</span></div>
-            </div>
-            <div style="margin-top:8px;padding:8px 10px;background:var(--bg-input);border-radius:6px;font-size:12px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:var(--text-muted);">Target Volume</span>
-                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation()">
-                        <input id="tv-${cl.id}" type="number" value="${cl.target_volume || ''}" placeholder="e.g. 750" style="width:70px;background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;text-align:right;" onkeydown="if(event.key==='Enter'){setTargetVolume('${cl.name.replace(/'/g, "\\'")}',this.value)}" />
-                        <span style="color:var(--text-muted);">/day</span>
-                        <button onclick="setTargetVolume('${cl.name.replace(/'/g, "\\'")}',document.getElementById('tv-${cl.id}').value)" style="background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer;">Set</button>
-                    </div>
-                </div>
-                ${cl.target_volume > 0 ? '<div style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;"><span style="color:' + (cl.capacity_status === 'on_track' ? 'var(--accent)' : '#ef4444') + ';">' + (cl.capacity_status === 'on_track' ? 'On Track (' + cl.daily_capacity + '/' + cl.target_volume + ')' : 'Need ' + cl.inboxes_needed + ' more inboxes (' + cl.daily_capacity + '/' + cl.target_volume + ')') + '</span></div>' : ''}</div>
-            ${cl.batches && cl.batches.length > 1 ? '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">' + cl.batches.map(b => {
+    let html = `<div class="client-card ${item.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${item.id}, '${(item.name || '').replace(/'/g, "\\'")}')">`;
+    // Header — name + count only (no health badge)
+    html += `<div class="cc-header"><span class="cc-name">${item.name}</span><span class="cc-count">${item.accounts} accounts</span></div>`;
+    // Alert banner
+    if (item.needs_attention) {
+        html += `<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">${item.flagged_domains}/${item.total_domains} domains flagged (${item.flagged_pct}%)</div>`;
+    }
+    // Stats: Capacity, Issues, Bounce, Reply
+    html += `<div class="cc-stats">`;
+    html += `<div class="cc-stat"><span class="label">Capacity</span><span>${item.daily_capacity || 0}/day</span></div>`;
+    html += `<div class="cc-stat"><span class="label">Issues</span><span style="color:${issuesColor}">${issues}</span></div>`;
+    html += `<div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${bounceColor}">${bounceVal}</span></div>`;
+    html += `<div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${replyColor}">${replyVal}</span></div>`;
+    html += `</div>`;
+    // Batch warmup bars
+    if (item.batches && item.batches.length > 0) {
+        const warmingBatches = item.batches.filter(b => b.status === 'warming');
+        const readyBatches = item.batches.filter(b => b.status === 'ready');
+        if (warmingBatches.length > 0 || readyBatches.length > 1) {
+            html += `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">`;
+            for (const b of item.batches) {
                 if (b.status === 'ready') {
-                    return '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--accent);">&#9679; ' + b.total + ' accounts ready</span><span style="color:var(--text-muted);">since ' + b.warmup_start + '</span></div>';
+                    html += `<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--accent);">&#9679; ${b.total} accounts ready</span><span style="color:var(--text-muted);">since ${b.warmup_start}</span></div>`;
                 } else {
                     const pct = Math.round(b.days_done / 14 * 100);
-                    return '<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px;"><span style="color:var(--purple);">&#9679; ' + b.total + ' new accounts warming</span><span>Day ' + b.days_done + '/14</span></div><div style="background:var(--bg-input);border-radius:4px;height:5px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + pct + '%;border-radius:4px;"></div></div></div>';
+                    html += `<div style="margin-bottom:6px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px;"><span style="color:var(--purple);">&#9679; ${b.total} new accounts warming</span><span>Day ${b.days_done}/14</span></div><div style="background:var(--bg-input);border-radius:4px;height:5px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:${pct}%;border-radius:4px;"></div></div></div>`;
                 }
-            }).join('') + '</div>' : (cl.warming > 0 && cl.warmup_days_done !== null ? '<div style="margin-top:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;"><span>Warmup Progress</span><span>' + cl.warmup_progress + '</span></div><div style="background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;"><div style="background:var(--purple);height:100%;width:' + Math.round(cl.warmup_days_done / 14 * 100) + '%;border-radius:4px;"></div></div></div>' : '')}
-            <div class="cc-dates">
-                ${cl.warmup_start ? '<div class="date-row"><span>Warmup Start</span><span>' + cl.warmup_start + '</span></div>' : ''}
-                ${cl.ready_date ? '<div class="date-row"><span>Ready Date</span><span>' + cl.ready_date + ' ' + readyBadge + '</span></div>' : ''}
-                ${cl.rotation_date ? '<div class="date-row"><span>Rotation Date</span><span>' + cl.rotation_date + ' ' + rotBadge + '</span></div>' : ''}
-            </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:6px;">
-                <button onclick="event.stopPropagation();archiveClient('${cl.name.replace(/'/g, "\\'")}', ${!isArchived})" style="background:var(--bg-raised);color:var(--text-secondary);border:1px solid var(--border);padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isArchived ? 'Unarchive' : 'Archive'}</button>
-                <button onclick="event.stopPropagation();toggleMonitor('${cl.name.replace(/'/g, "\\'")}', ${isPaused})" style="background:${isPaused ? 'var(--yellow-bg)' : 'var(--bg-raised)'};color:${isPaused ? '#f59e0b' : 'var(--text-muted)'};border:1px solid ${isPaused ? '#f59e0b33' : 'var(--border)'};padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;">${isPaused ? 'Monitoring Paused' : 'Auto-Replace: On'}</button>
-            </div>
-        </div>`;
-    }).join('');
+            }
+            html += `</div>`;
+        }
+    }
+    // Footer dates
+    const hasReady = item.ready_date && item.days_until_ready !== null && item.days_until_ready > 0;
+    const hasRotation = !!item.rotation_date;
+    if (hasReady || hasRotation) {
+        html += `<div class="cc-dates">`;
+        if (hasReady) {
+            const readyBadge = item.days_until_ready <= 0 ? '<span class="badge badge-green">Ready</span>' : '<span class="badge badge-yellow">' + item.days_until_ready + 'd left</span>';
+            html += `<div class="date-row"><span>Ready Date</span><span>${item.ready_date} ${readyBadge}</span></div>`;
+        }
+        if (hasRotation) {
+            const rotBadge = item.days_until_rotation !== null && item.days_until_rotation <= 7 ? ' <span class="badge badge-red">Rotate soon</span>' : '';
+            html += `<div class="date-row"><span>Rotation Date</span><span>${item.rotation_date}${rotBadge}</span></div>`;
+        }
+        html += `</div>`;
+    }
+    html += `</div>`;
+    return html;
+}
+
+function renderClientCards(clients, archivedClients, pausedClients) {
+    return clients.map(cl => renderCardHTML(cl)).join('');
 }
 
 function renderOverview() {
@@ -835,25 +850,6 @@ function renderOverview() {
         alertEl.innerHTML = '';
     }
 
-    // Summary stats
-    const summaryEl = document.getElementById('summary-row');
-    // Compute overall avg bounce/reply from all clients
-    const allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
-    const allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
-    const overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
-    const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
-    const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
-    const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
-
-    summaryEl.innerHTML = `
-        <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
-        <div class="stat-card ${d.warming > 0 ? 'warn' : 'good'}"><div class="value">${d.warming}</div><div class="label">In Warmup (14d)</div></div>
-        <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
-        <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
-        <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
-        <div class="stat-card ${d.smtp_failures > 0 ? 'alert' : 'good'}"><div class="value">${d.smtp_failures}</div><div class="label">SMTP Failures</div></div>
-    `;
-
     // Subtitle + filter bar
     const archivedClients = d.archived_clients || [];
     const activeClients = d.clients.filter(cl => !archivedClients.includes(cl.name));
@@ -889,6 +885,8 @@ function renderOverview() {
         select.innerHTML += `<option value="${cl.id}">${cl.name}</option>`;
     });
     select.value = currentVal;
+
+    applyModeVisibility(currentMode);
 }
 
 let trendChart = null;
@@ -1321,29 +1319,7 @@ async function loadAcquisition() {
 
 function renderAcquisitionGroups(groups) {
     const grid = document.getElementById('acquisition-grid');
-    grid.innerHTML = groups.map(g => {
-        const healthColor = g.health_score >= 85 ? '#22c55e' : g.health_score >= 60 ? '#f59e0b' : '#ef4444';
-        const healthBg = g.health_score >= 85 ? '#f0fdf4' : g.health_score >= 60 ? '#fffbeb' : '#fef2f2';
-        return `
-        <div class="client-card ${g.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${g.id}, '${g.name.replace(/'/g, "\\'")}')">
-            <div class="cc-header">
-                <span class="cc-name">${g.name}</span>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span class="badge" style="background:${healthBg};color:${healthColor};font-size:13px;padding:3px 10px;">${g.health_score}</span>
-                    <span class="cc-count">${g.accounts} accounts</span>
-                </div>
-            </div>
-            ${g.needs_attention ? '<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">' + g.flagged_domains + '/' + g.total_domains + ' domains flagged (' + g.flagged_pct + '%)</div>' : ''}
-            <div class="cc-stats">
-                <div class="cc-stat"><span class="label">In Campaign</span><span>${g.in_campaign}</span></div>
-                <div class="cc-stat"><span class="label">Warming</span><span>${g.warming}</span></div>
-                <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#22c55e'}">${g.smtp_failures}</span></div>
-                <div class="cc-stat"><span class="label">Domains</span><span>${g.total_domains}</span></div>
-                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${g.avg_bounce_rate > 3 ? '#ef4444' : g.avg_bounce_rate > 1 ? '#f59e0b' : '#22c55e'}">${g.avg_bounce_rate}%</span></div>
-                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${g.avg_reply_rate > 5 ? '#22c55e' : g.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444'}">${g.avg_reply_rate}%</span></div>
-            </div>
-        </div>`;
-    }).join('');
+    grid.innerHTML = groups.map(g => renderCardHTML(g)).join('');
 }
 
 // --- Setup Pipeline UI ---
@@ -1569,13 +1545,68 @@ function renderRotation(data) {
 }
 
 // --- Tab switching ---
-let currentMode = 'fulfillment';
+let currentMode = localStorage.getItem('dashboardMode') || 'fulfillment';
+
+function applyModeVisibility(mode) {
+    // 1. Button active states
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.mode-btn[onclick="switchMode('${mode}')"]`).classList.add('active');
+
+    // 2. Show/hide fulfillment vs acquisition sections
+    const fulfillmentSections = ['clients-grid', 'generic-section', 'rotation-section', 'unassigned-section', 'generic-setup-tracker'];
+    const acquisitionSections = ['acquisition-section'];
+
+    if (mode === 'fulfillment') {
+        fulfillmentSections.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+        acquisitionSections.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    } else {
+        fulfillmentSections.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+        acquisitionSections.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+    }
+
+    // 3. Render scoped summary stats
+    if (!overviewData) return;
+    const d = overviewData;
+    const summaryEl = document.getElementById('summary-row');
+    if (mode === 'fulfillment') {
+        const allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
+        const allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
+        const overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
+        const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
+        const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
+        const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
+        summaryEl.innerHTML = `
+            <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
+            <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
+            <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
+            <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
+        `;
+    } else {
+        const aq = acquisitionDataGlobal;
+        if (aq) {
+            const aqBounce = aq.groups.filter(g => g.avg_bounce_rate > 0).map(g => g.avg_bounce_rate);
+            const aqReply = aq.groups.filter(g => g.avg_reply_rate > 0).map(g => g.avg_reply_rate);
+            const aqOverallBounce = aqBounce.length ? (aqBounce.reduce((a,b) => a+b, 0) / aqBounce.length).toFixed(1) : '—';
+            const aqOverallReply = aqReply.length ? (aqReply.reduce((a,b) => a+b, 0) / aqReply.length).toFixed(1) : '—';
+            const aqBColor = aqOverallBounce !== '—' ? (parseFloat(aqOverallBounce) > 3 ? 'alert' : parseFloat(aqOverallBounce) > 1 ? 'warn' : 'good') : 'good';
+            const aqRColor = aqOverallReply !== '—' ? (parseFloat(aqOverallReply) > 5 ? 'good' : parseFloat(aqOverallReply) > 2 ? 'warn' : 'alert') : 'good';
+            summaryEl.innerHTML = `
+                <div class="stat-card good"><div class="value">${aq.total_accounts}</div><div class="label">Total Accounts</div></div>
+                <div class="stat-card good"><div class="value">${aq.total_groups}</div><div class="label">Active Groups</div></div>
+                <div class="stat-card ${aqBColor}"><div class="value">${aqOverallBounce}${aqOverallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
+                <div class="stat-card ${aqRColor}"><div class="value">${aqOverallReply}${aqOverallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
+            `;
+        }
+    }
+}
 
 function switchMode(mode) {
     currentMode = mode;
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`.mode-btn[onclick="switchMode('${mode}')"]`).classList.add('active');
-    if (overviewData) renderOverview();
+    localStorage.setItem('dashboardMode', mode);
+    applyModeVisibility(mode);
+    if (overviewData) {
+        renderOverview();
+    }
 }
 
 function switchTab(tab) {
