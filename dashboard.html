@@ -377,6 +377,23 @@ h2.section-title{font-family:var(--font-display);}
                 <div id="acq-conflict-banner"></div>
                 <div class="summary-row" id="acquisition-stats"></div>
                 <div class="clients-grid" id="acquisition-grid"></div>
+                <div id="acq-unassigned-section" style="display:none;margin-top:24px;">
+                    <h3 style="font-size:15px;color:var(--text-primary);margin-bottom:10px;">Unassigned Acquisition Inboxes</h3>
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;" id="acq-unassigned-count"></div>
+                    <table class="unassigned-table">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Sender</th>
+                                <th>Domain</th>
+                                <th>Warmup</th>
+                                <th>Reputation</th>
+                                <th>SMTP</th>
+                            </tr>
+                        </thead>
+                        <tbody id="acq-unassigned-body"></tbody>
+                    </table>
+                </div>
             </div>
 
             <div class="unassigned-section" id="unassigned-section" style="display:none;">
@@ -1342,6 +1359,7 @@ async function loadAcquisition() {
             `;
             renderAcqAlerts(data);
             renderAcquisitionGroups(data.groups);
+            renderAcqUnassigned(data.unassigned_acq || []);
         } else {
             document.getElementById('acquisition-section').style.display = 'none';
         }
@@ -1375,6 +1393,27 @@ function renderAcqAlerts(data) {
         html += '</div>';
     }
     el.innerHTML = html;
+}
+
+function renderAcqUnassigned(accounts) {
+    const section = document.getElementById('acq-unassigned-section');
+    if (!accounts || accounts.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+    document.getElementById('acq-unassigned-count').textContent = accounts.length + ' inbox(es) with Headline Theory domains not assigned to any acquisition group';
+    const tbody = document.getElementById('acq-unassigned-body');
+    tbody.innerHTML = accounts.map(a => `
+        <tr>
+            <td>${a.email}</td>
+            <td>${a.from_name || '—'}</td>
+            <td>${a.domain}</td>
+            <td style="color:${a.warmup_status === 'ACTIVE' ? '#22c55e' : '#f59e0b'}">${a.warmup_status}</td>
+            <td>${a.warmup_reputation}</td>
+            <td style="color:${a.smtp_ok ? '#22c55e' : '#ef4444'}">${a.smtp_ok ? 'OK' : 'FAIL'}</td>
+        </tr>
+    `).join('');
 }
 
 let acqCampaignsCache = null;

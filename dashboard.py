@@ -1370,12 +1370,38 @@ def api_acquisition():
     # Find active acquisition campaigns with no inboxes assigned
     empty_campaigns = _find_empty_acquisition_campaigns()
 
+    # Find unassigned acquisition inboxes (headlinetheory domains not in any acq group)
+    acq_client_ids = {cl["id"] for cl in group_clients}
+    unassigned_acq = []
+    for a in all_accounts:
+        email = a.get("from_email", "")
+        domain = email.split("@")[-1] if "@" in email else ""
+        if "headlinetheory" not in domain:
+            continue
+        name_lower = (a.get("from_name") or email.split("@")[0]).lower()
+        if "aidan" not in name_lower and "lars" not in name_lower:
+            continue
+        if a.get("client_id") and a["client_id"] in acq_client_ids:
+            continue
+        wd = a.get("warmup_details") or {}
+        unassigned_acq.append({
+            "id": a["id"],
+            "email": email,
+            "domain": domain,
+            "from_name": a.get("from_name", ""),
+            "client_id": a.get("client_id"),
+            "warmup_status": wd.get("status", "UNKNOWN"),
+            "warmup_reputation": wd.get("warmup_reputation", "?"),
+            "smtp_ok": a.get("is_smtp_success", False),
+        })
+
     return {
         "groups": groups,
         "total_accounts": total_accounts,
         "total_groups": len(groups),
         "campaign_conflicts": conflicts,
         "empty_campaigns": empty_campaigns,
+        "unassigned_acq": unassigned_acq,
         "generated_at": datetime.now().isoformat(),
     }
 
