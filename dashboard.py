@@ -42,6 +42,7 @@ from setup import (
 )
 import db as store
 import inbox_history
+import marsha
 import pipeline_engine
 
 SCRIPT_DIR = Path(__file__).parent
@@ -3297,7 +3298,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif path == "/api/inbox-history":
                     self._json_response(inbox_history.query_history(params))
                 elif path == "/api/snapshot":
-                    self._json_response(inbox_history.snapshot_inboxes(get_all_accounts()))
+                    self._json_response(marsha.run_snapshot_check(get_all_accounts()))
                 elif path == "/api/setup-pipelines":
                     pipelines = store.list_setup_pipelines()
                     self._json_response({"pipelines": pipelines})
@@ -3672,13 +3673,13 @@ def main():
     pipeline_engine.resume_running_pipelines()
     print("Setup pipeline resume check complete", flush=True)
 
-    # Take initial inbox snapshot for history tracking
-    print("Taking inbox snapshot...", flush=True)
+    # Take initial inbox snapshot via Marsha (posts to Slack if anomalies found)
+    print("Marsha running inbox snapshot...", flush=True)
     try:
-        snap = inbox_history.snapshot_inboxes(get_all_accounts())
-        print(f"Inbox snapshot: {snap.get('accounts', 0)} accounts, {snap.get('diffs', 0)} diffs", flush=True)
+        snap = marsha.run_snapshot_check(get_all_accounts())
+        print(f"Marsha snapshot: {snap.get('accounts', 0)} accounts, {snap.get('diffs', 0)} diffs", flush=True)
     except Exception as e:
-        print(f"Inbox snapshot failed (non-critical): {e}", flush=True)
+        print(f"Marsha snapshot failed (non-critical): {e}", flush=True)
 
     print(f"Binding to {host}:{port}...", flush=True)
     server = HTTPServer((host, port), DashboardHandler)
