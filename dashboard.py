@@ -1289,11 +1289,14 @@ def _enrich_groups_with_campaigns(groups, group_emails):
 
     for g in groups:
         emails = group_emails.get(g["name"], [])
-        # Collect all campaigns this group's accounts are in
+        # Collect only acquisition campaigns (skip client fulfillment campaigns)
         seen = {}  # campaign_id → campaign info
         for email in emails:
             for camp in campaign_details.get(email, []):
-                seen[camp["id"]] = camp
+                # Client campaigns (e.g. "Borja... - DM Matches - client") are legitimate
+                # generic group assignments, not acquisition conflicts
+                if "acquisition" in camp.get("name", "").lower():
+                    seen[camp["id"]] = camp
 
         active = [c for c in seen.values() if c["status"] == "ACTIVE"]
         paused = [c for c in seen.values() if c["status"] == "PAUSED"]
@@ -1503,13 +1506,15 @@ def api_assign_group_campaign(body):
     account_ids = [a["id"] for a in group_accounts]
 
     if action == "assign":
-        # Conflict check: ensure no account is already in another ACTIVE campaign
+        # Conflict check: ensure no account is already in another ACTIVE acquisition campaign
+        # (client fulfillment campaigns are legitimate generic group assignments, not conflicts)
         campaign_details = get_global_campaign_details()
         conflicts = set()
         for a in group_accounts:
             email = a.get("from_email", "")
             for camp in campaign_details.get(email, []):
-                if camp["status"] == "ACTIVE" and camp["id"] != campaign_id:
+                if (camp["status"] == "ACTIVE" and camp["id"] != campaign_id
+                        and "acquisition" in camp.get("name", "").lower()):
                     conflicts.add(camp["name"])
         if conflicts:
             return {
