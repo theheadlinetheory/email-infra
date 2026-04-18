@@ -276,9 +276,11 @@ def get_all_accounts():
     return accounts
 
 
-def assign_accounts_to_client(account_ids, client_id):
+def assign_accounts_to_client(account_ids, client_id, old_client_id=None,
+                               client_name="", old_client_name=""):
     success = 0
     fail = 0
+    history_events = []
     for acc_id in account_ids:
         body = {"id": acc_id, "clientId": client_id}
         r = requests.post(
@@ -289,9 +291,18 @@ def assign_accounts_to_client(account_ids, client_id):
         )
         if r.status_code == 200 and r.json().get("ok"):
             success += 1
+            history_events.append({
+                "account_id": acc_id,
+                "email": "",
+                "event_type": "client_change",
+                "old_value": {"client_id": old_client_id, "client_name": old_client_name},
+                "new_value": {"client_id": client_id, "client_name": client_name},
+            })
         else:
             fail += 1
         time.sleep(0.15)
+    if history_events:
+        store.log_inbox_events(history_events)
     return {"success": success, "fail": fail}
 
 
@@ -1104,6 +1115,80 @@ def api_debug_supabase():
     return info
 
 
+def snapshot_all_inboxes():
+    """Compare current inbox state against last snapshot and log diffs."""
+    accounts = get_all_accounts()
+    if not accounts:
+        return {"error": "No accounts fetched"}
+
+    # Build current state: {account_id: {client_id, email}}
+    current = {}
+    for a in accounts:
+        current[a["id"]] = {
+            "client_id": a.get("client_id"),
+            "email": a.get("from_email", ""),
+        }
+
+    # Load previous snapshot
+    prev = store.get_state("inbox_snapshot") or {}
+    prev_map = prev.get("accounts", {})
+
+    # Find diffs
+    events = []
+    for acc_id_str, cur in current.items():
+        acc_id = int(acc_id_str) if isinstance(acc_id_str, str) else acc_id_str
+        old = prev_map.get(str(acc_id))
+        if old is None:
+            # New account
+            events.append({
+                "account_id": acc_id, "email": cur["email"],
+                "event_type": "snapshot_new",
+                "old_value": None,
+                "new_value": {"client_id": cur["client_id"]},
+                "source": "snapshot",
+            })
+        elif old.get("client_id") != cur["client_id"]:
+            events.append({
+                "account_id": acc_id, "email": cur["email"],
+                "event_type": "client_change",
+                "old_value": {"client_id": old.get("client_id")},
+                "new_value": {"client_id": cur["client_id"]},
+                "source": "snapshot",
+            })
+
+    # Check for deleted accounts
+    for acc_id_str, old in prev_map.items():
+        if int(acc_id_str) not in current:
+            events.append({
+                "account_id": int(acc_id_str), "email": old.get("email", ""),
+                "event_type": "snapshot_deleted",
+                "old_value": {"client_id": old.get("client_id")},
+                "new_value": None,
+                "source": "snapshot",
+            })
+
+    if events:
+        store.log_inbox_events(events)
+
+    # Save current snapshot
+    store.set_state("inbox_snapshot", {
+        "accounts": {str(a_id): v for a_id, v in current.items()},
+        "taken_at": datetime.now().isoformat(),
+        "account_count": len(current),
+    })
+
+    return {"diffs": len(events), "accounts": len(current)}
+
+
+def api_inbox_history(params):
+    """Get inbox history. ?account_id=X for per-inbox, or ?limit=N for global feed."""
+    account_id = params.get("account_id", [None])[0]
+    limit = int(params.get("limit", ["100"])[0])
+    if account_id:
+        return store.get_inbox_history(int(account_id), limit=limit)
+    return store.get_recent_inbox_events(limit=limit)
+
+
 def _load_sr_groups():
     """Load SR group domain mapping from clients/sr_groups.json."""
     sr_path = SCRIPT_DIR / "clients" / "sr_groups.json"
@@ -1529,9 +1614,14 @@ def api_assign_group_campaign(body):
             timeout=60,
         )
         if r.status_code == 200:
-            # Invalidate campaign cache so the dashboard refreshes
             _global_campaign_counts["time"] = 0
             _global_campaign_details["time"] = 0
+            store.log_inbox_events([{
+                "account_id": a["id"], "email": a.get("from_email", ""),
+                "event_type": "campaign_assign",
+                "old_value": None,
+                "new_value": {"campaign_id": campaign_id, "group": group_name},
+            } for a in group_accounts])
             return {"ok": True, "action": "assigned", "accounts": len(account_ids)}
         return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
 
@@ -1545,6 +1635,12 @@ def api_assign_group_campaign(body):
         if r.status_code == 200:
             _global_campaign_counts["time"] = 0
             _global_campaign_details["time"] = 0
+            store.log_inbox_events([{
+                "account_id": a["id"], "email": a.get("from_email", ""),
+                "event_type": "campaign_unassign",
+                "old_value": {"campaign_id": campaign_id, "group": group_name},
+                "new_value": None,
+            } for a in group_accounts])
             return {"ok": True, "action": "unassigned", "accounts": len(account_ids)}
         return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
 
@@ -2504,6 +2600,13 @@ def delete_client_infra_sse(client_id, client_name):
     # ── Step 2: Delete SmartLead accounts ──
     yield event(2, "running")
     try:
+        # Log deletion history before deleting
+        store.log_inbox_events([{
+            "account_id": acc["id"], "email": acc.get("from_email", ""),
+            "event_type": "delete",
+            "old_value": {"client_id": client_id, "client_name": client_name},
+            "new_value": None,
+        } for acc in accounts])
         # Bulk delete via API
         for acc_id in account_ids:
             r = requests.delete(
@@ -3263,6 +3366,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_rotation_status())
                 elif path == "/api/debug/supabase":
                     self._json_response(api_debug_supabase())
+                elif path == "/api/inbox-history":
+                    self._json_response(api_inbox_history(params))
+                elif path == "/api/snapshot":
+                    self._json_response(snapshot_all_inboxes())
                 elif path == "/api/setup-pipelines":
                     pipelines = store.list_setup_pipelines()
                     self._json_response({"pipelines": pipelines})
@@ -3636,6 +3743,14 @@ def main():
     print("Resuming pipelines...", flush=True)
     pipeline_engine.resume_running_pipelines()
     print("Setup pipeline resume check complete", flush=True)
+
+    # Take initial inbox snapshot for history tracking
+    print("Taking inbox snapshot...", flush=True)
+    try:
+        snap = snapshot_all_inboxes()
+        print(f"Inbox snapshot: {snap.get('accounts', 0)} accounts, {snap.get('diffs', 0)} diffs", flush=True)
+    except Exception as e:
+        print(f"Inbox snapshot failed (non-critical): {e}", flush=True)
 
     print(f"Binding to {host}:{port}...", flush=True)
     server = HTTPServer((host, port), DashboardHandler)

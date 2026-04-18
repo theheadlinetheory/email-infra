@@ -330,3 +330,77 @@ def cache_get(key: str):
     if rows:
         return json.loads(rows[0]["data"]), rows[0]["updated_at"]
     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Inbox History (audit log for every inbox state change)
+# ---------------------------------------------------------------------------
+
+def log_inbox_event(account_id: int, email: str, event_type: str,
+                    old_value: dict | None, new_value: dict | None,
+                    source: str = "dashboard") -> None:
+    """Write a single inbox history event."""
+    row = {
+        "account_id": account_id,
+        "email": email,
+        "event_type": event_type,
+        "old_value": json.dumps(old_value, default=str) if old_value else None,
+        "new_value": json.dumps(new_value, default=str) if new_value else None,
+        "source": source,
+    }
+    try:
+        _request("POST", "/inbox_history", json_body=row)
+    except Exception as e:
+        log.warning("Failed to log inbox event for %s: %s", email, e)
+
+
+def log_inbox_events(events: list[dict]) -> None:
+    """Bulk-write inbox history events. Each dict needs: account_id, email,
+    event_type, old_value, new_value, source."""
+    if not events:
+        return
+    rows = []
+    for ev in events:
+        rows.append({
+            "account_id": ev["account_id"],
+            "email": ev.get("email", ""),
+            "event_type": ev["event_type"],
+            "old_value": json.dumps(ev.get("old_value"), default=str) if ev.get("old_value") else None,
+            "new_value": json.dumps(ev.get("new_value"), default=str) if ev.get("new_value") else None,
+            "source": ev.get("source", "dashboard"),
+        })
+    try:
+        _request("POST", "/inbox_history", json_body=rows)
+    except Exception as e:
+        log.warning("Failed to bulk-log %d inbox events: %s", len(rows), e)
+
+
+def get_inbox_history(account_id: int, limit: int = 100) -> list[dict]:
+    """Get history for a specific inbox, newest first."""
+    rows = _request("GET", "/inbox_history", params={
+        "select": "*",
+        "account_id": f"eq.{account_id}",
+        "order": "created_at.desc",
+        "limit": str(limit),
+    })
+    for r in rows:
+        if isinstance(r.get("old_value"), str):
+            r["old_value"] = json.loads(r["old_value"])
+        if isinstance(r.get("new_value"), str):
+            r["new_value"] = json.loads(r["new_value"])
+    return rows
+
+
+def get_recent_inbox_events(limit: int = 200) -> list[dict]:
+    """Get most recent inbox events across all accounts."""
+    rows = _request("GET", "/inbox_history", params={
+        "select": "*",
+        "order": "created_at.desc",
+        "limit": str(limit),
+    })
+    for r in rows:
+        if isinstance(r.get("old_value"), str):
+            r["old_value"] = json.loads(r["old_value"])
+        if isinstance(r.get("new_value"), str):
+            r["new_value"] = json.loads(r["new_value"])
+    return rows
