@@ -9,12 +9,14 @@
  */
 
 import { getServiceClient } from "../_shared/supabase.ts";
+import { slGetAllAccounts, slGetClients, slGetAllTags } from "../_shared/smartlead.ts";
 
 const SLACK_BOT_TOKEN = Deno.env.get("MARSHA_SLACK_BOT_TOKEN") || "";
 const SLACK_SIGNING_SECRET = Deno.env.get("MARSHA_SLACK_SIGNING_SECRET") || "";
 const SLACK_CHANNEL_ID = Deno.env.get("MARSHA_SLACK_CHANNEL") || "C0ATXCU3SR2";
 const AIDAN_SLACK_USER_ID = "U09B2673A4A";
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") || "";
+const CRON_SECRET = Deno.env.get("MARSHA_CRON_SECRET") || "";
 
 const supabase = getServiceClient();
 
@@ -153,6 +155,63 @@ async function gatherInfraContext(text: string): Promise<string> {
       ? JSON.parse(playbookState.data)
       : playbookState.data;
     parts.push(`\n## Playbook Rules\n${pb.rules || "No rules loaded yet."}`);
+  }
+
+  // Decision log (stored in state)
+  const { data: decisionLog } = await supabase
+    .from("state")
+    .select("data")
+    .eq("key", "marsha_decision_log")
+    .single();
+  if (decisionLog?.data) {
+    const dl = typeof decisionLog.data === "string"
+      ? JSON.parse(decisionLog.data)
+      : decisionLog.data;
+    const recent = (dl.entries || []).slice(-10);
+    if (recent.length) {
+      parts.push("\n## Recent Decisions");
+      for (const e of recent) {
+        parts.push(`- ${e.ts} | ${e.summary}`);
+      }
+    }
+  }
+
+  // SmartLead account summary (aggregated, not full dump)
+  try {
+    const [accounts, clients] = await Promise.all([
+      slGetAllAccounts(),
+      slGetClients(),
+    ]);
+    const accts = accounts as Array<Record<string, unknown>>;
+    const clientMap = new Map(
+      (clients as Array<Record<string, unknown>>).map((c) => [c.id, c.name])
+    );
+
+    // Group by client_id
+    const byClient = new Map<string, number>();
+    let warmingUp = 0;
+    let noTags = 0;
+    for (const a of accts) {
+      const cid = String(a.client_id || "unassigned");
+      const name = clientMap.get(a.client_id) || cid;
+      byClient.set(name as string, (byClient.get(name as string) || 0) + 1);
+      if (a.warmup_enabled) warmingUp++;
+      const tags = a.tags as Array<unknown> | undefined;
+      if (!tags?.length) noTags++;
+    }
+
+    parts.push(
+      `\n## SmartLead Summary: ${accts.length} accounts, ${warmingUp} warming up, ${noTags} missing tags`
+    );
+    const sorted = [...byClient.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [name, count] of sorted.slice(0, 15)) {
+      parts.push(`- ${name}: ${count} accounts`);
+    }
+    if (sorted.length > 15) {
+      parts.push(`- ...and ${sorted.length - 15} more clients`);
+    }
+  } catch (err) {
+    parts.push(`\n## SmartLead: unavailable (${(err as Error).message})`);
   }
 
   return parts.length ? parts.join("\n") : "No infrastructure context available.";
@@ -302,10 +361,99 @@ async function saveLearnedRule(rule: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Proactive health check (called by cron or manual trigger)
+// ---------------------------------------------------------------------------
+
+async function runHealthCheck(): Promise<string> {
+  const issues: string[] = [];
+
+  try {
+    const [accounts, clients] = await Promise.all([
+      slGetAllAccounts(),
+      slGetClients(),
+    ]);
+    const accts = accounts as Array<Record<string, unknown>>;
+    const clientMap = new Map(
+      (clients as Array<Record<string, unknown>>).map((c) => [c.id, c.name])
+    );
+
+    // Check for accounts missing tags
+    const noTags = accts.filter(
+      (a) => !(a.tags as Array<unknown>)?.length
+    );
+    if (noTags.length > 0) {
+      issues.push(
+        `:label: ${noTags.length} account(s) missing tags — could cause assignment confusion`
+      );
+    }
+
+    // Check for accounts on wrong/unassigned client
+    const unassigned = accts.filter(
+      (a) => !a.client_id || a.client_id === 0
+    );
+    if (unassigned.length > 0) {
+      issues.push(
+        `:question: ${unassigned.length} account(s) with no client assigned`
+      );
+    }
+
+    // Check for warmup issues
+    const warmupDisabled = accts.filter(
+      (a) => a.warmup_enabled === false && a.client_id
+    );
+    if (warmupDisabled.length > 5) {
+      issues.push(
+        `:snowflake: ${warmupDisabled.length} assigned accounts have warmup disabled`
+      );
+    }
+
+    // All clear
+    if (issues.length === 0) {
+      const msg = `Hey sugar! Just ran my health check — all ${accts.length} accounts across ${clientMap.size} clients looking good. Nothing out of place. :white_check_mark:`;
+      await slackPost("chat.postMessage", {
+        channel: SLACK_CHANNEL_ID,
+        text: msg,
+      });
+      return msg;
+    }
+
+    const msg = [
+      `Hey baby, I ran my check and spotted a few things:\n`,
+      ...issues,
+      `\nMight want to take a look when you get a chance. :eyes:`,
+    ].join("\n");
+
+    await slackPost("chat.postMessage", {
+      channel: SLACK_CHANNEL_ID,
+      text: msg,
+    });
+    return msg;
+  } catch (err) {
+    const errMsg = `Marsha health check error: ${(err as Error).message}`;
+    console.error(errMsg);
+    return errMsg;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (req: Request) => {
+  const url = new URL(req.url);
+
+  // Cron health check: GET /marsha?action=health-check
+  if (req.method === "GET" && url.searchParams.get("action") === "health-check") {
+    const secret = url.searchParams.get("secret") || "";
+    if (CRON_SECRET && secret !== CRON_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    const result = await runHealthCheck();
+    return new Response(JSON.stringify({ ok: true, result }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const body = await req.text();
   const timestamp = req.headers.get("x-slack-request-timestamp") || "";
   const signature = req.headers.get("x-slack-signature") || "";
