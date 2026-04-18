@@ -189,19 +189,18 @@ async function gatherInfraContext(text: string): Promise<string> {
 
     // Group by client_id
     const byClient = new Map<string, number>();
-    let warmingUp = 0;
-    let noTags = 0;
+    let suspended = 0;
+    let smtpFail = 0;
     for (const a of accts) {
       const cid = String(a.client_id || "unassigned");
       const name = clientMap.get(a.client_id) || cid;
       byClient.set(name as string, (byClient.get(name as string) || 0) + 1);
-      if (a.warmup_enabled) warmingUp++;
-      const tags = a.tags as Array<unknown> | undefined;
-      if (!tags?.length) noTags++;
+      if (a.is_suspended) suspended++;
+      if (a.is_smtp_success === false) smtpFail++;
     }
 
     parts.push(
-      `\n## SmartLead Summary: ${accts.length} accounts, ${warmingUp} warming up, ${noTags} missing tags`
+      `\n## SmartLead Summary: ${accts.length} accounts, ${suspended} suspended, ${smtpFail} SMTP failures`
     );
     const sorted = [...byClient.entries()].sort((a, b) => b[1] - a[1]);
     for (const [name, count] of sorted.slice(0, 15)) {
@@ -368,26 +367,24 @@ async function runHealthCheck(): Promise<string> {
   const issues: string[] = [];
 
   try {
-    const [accounts, clients] = await Promise.all([
-      slGetAllAccounts(),
-      slGetClients(),
-    ]);
-    const accts = accounts as Array<Record<string, unknown>>;
-    const clientMap = new Map(
-      (clients as Array<Record<string, unknown>>).map((c) => [c.id, c.name])
-    );
+    // Fetch first page only (100 accounts) to avoid rate limits and timeouts
+    const API = "https://server.smartlead.ai/api/v1";
+    const key = Deno.env.get("SMARTLEAD_API_KEY") || "";
 
-    // Check for accounts missing tags
-    const noTags = accts.filter(
-      (a) => !(a.tags as Array<unknown>)?.length
-    );
-    if (noTags.length > 0) {
-      issues.push(
-        `:label: ${noTags.length} account(s) missing tags — could cause assignment confusion`
-      );
+    const [acctRes, clientRes] = await Promise.all([
+      fetch(`${API}/email-accounts/?api_key=${key}&offset=0&limit=100`),
+      fetch(`${API}/client?api_key=${key}`),
+    ]);
+
+    if (!acctRes.ok || !clientRes.ok) {
+      return `SmartLead API returned ${acctRes.status}/${clientRes.status} — skipping health check.`;
     }
 
-    // Check for accounts on wrong/unassigned client
+    const accts = (await acctRes.json()) as Array<Record<string, unknown>>;
+    const clients = (await clientRes.json()) as Array<Record<string, unknown>>;
+    const clientMap = new Map(clients.map((c) => [c.id, c.name]));
+
+    // Check for accounts with no client assigned
     const unassigned = accts.filter(
       (a) => !a.client_id || a.client_id === 0
     );
@@ -397,19 +394,37 @@ async function runHealthCheck(): Promise<string> {
       );
     }
 
-    // Check for warmup issues
-    const warmupDisabled = accts.filter(
-      (a) => a.warmup_enabled === false && a.client_id
-    );
-    if (warmupDisabled.length > 5) {
+    // Check for suspended accounts
+    const suspended = accts.filter((a) => a.is_suspended);
+    if (suspended.length > 0) {
       issues.push(
-        `:snowflake: ${warmupDisabled.length} assigned accounts have warmup disabled`
+        `:warning: ${suspended.length} account(s) suspended — check SMTP/IMAP connections`
+      );
+    }
+
+    // Check for SMTP/IMAP failures
+    const smtpFail = accts.filter((a) => a.is_smtp_success === false);
+    const imapFail = accts.filter((a) => a.is_imap_success === false);
+    if (smtpFail.length > 0) {
+      issues.push(`:envelope: ${smtpFail.length} account(s) with SMTP failures`);
+    }
+    if (imapFail.length > 0) {
+      issues.push(`:mailbox_with_no_mail: ${imapFail.length} account(s) with IMAP failures`);
+    }
+
+    // Check for accounts with 0 message_per_day (sending disabled)
+    const noSending = accts.filter(
+      (a) => a.client_id && (a.message_per_day === 0 || a.message_per_day === null)
+    );
+    if (noSending.length > 5) {
+      issues.push(
+        `:mute: ${noSending.length} assigned accounts have sending disabled (0 msg/day)`
       );
     }
 
     // All clear
     if (issues.length === 0) {
-      const msg = `Hey sugar! Just ran my health check — all ${accts.length} accounts across ${clientMap.size} clients looking good. Nothing out of place. :white_check_mark:`;
+      const msg = `Hey sugar! Just ran my health check — sampled ${accts.length} accounts across ${clientMap.size} clients, everything looking good. :white_check_mark:`;
       await slackPost("chat.postMessage", {
         channel: SLACK_CHANNEL_ID,
         text: msg,
