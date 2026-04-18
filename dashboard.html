@@ -1494,7 +1494,7 @@ async function assignGroupCampaign(groupClientId, groupName, newCampId, currentC
             await fetch('/api/acquisition/assign-campaign', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({group_client_id: groupClientId, campaign_id: currentCampId, action: 'unassign'})
+                body: JSON.stringify({group_client_id: groupClientId, group_name: groupName, campaign_id: currentCampId, action: 'unassign'})
             });
         } catch (e) {
             alert('Failed to unassign: ' + e.message);
@@ -1512,7 +1512,7 @@ async function assignGroupCampaign(groupClientId, groupName, newCampId, currentC
             const resp = await fetch('/api/acquisition/assign-campaign', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({group_client_id: groupClientId, campaign_id: parseInt(newCampId), action: 'assign'})
+                body: JSON.stringify({group_client_id: groupClientId, group_name: groupName, campaign_id: parseInt(newCampId), action: 'assign'})
             });
             const result = await resp.json();
             if (result.error) {
@@ -1532,7 +1532,7 @@ async function unassignGroupCampaign(groupClientId, groupName, campId, campName)
         const resp = await fetch('/api/acquisition/assign-campaign', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({group_client_id: groupClientId, campaign_id: campId, action: 'unassign'})
+            body: JSON.stringify({group_client_id: groupClientId, group_name: groupName, campaign_id: campId, action: 'unassign'})
         });
         const result = await resp.json();
         if (result.error) {

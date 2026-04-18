@@ -1469,9 +1469,10 @@ def api_acquisition_campaigns():
 def api_assign_group_campaign(body):
     """Assign a group's accounts to a campaign (or unassign from one).
 
-    Body: {group_client_id, campaign_id, action: "assign"|"unassign"}
+    Body: {group_client_id, group_name, campaign_id, action: "assign"|"unassign"}
     """
     group_client_id = body.get("group_client_id")
+    group_name = body.get("group_name", "")
     campaign_id = body.get("campaign_id")
     action = body.get("action", "assign")
 
@@ -1481,8 +1482,23 @@ def api_assign_group_campaign(body):
     # Get all accounts for this group
     all_accounts = get_all_accounts()
     group_accounts = [a for a in all_accounts if a.get("client_id") == group_client_id]
+
+    # For SR sub-groups within "Acquisition Inboxes", filter by domain mapping
+    sr_mapping = _load_sr_groups()
+    domain_to_group = (sr_mapping or {}).get("domain_to_group", {})
+    if domain_to_group and group_name:
+        filtered = []
+        for acc in group_accounts:
+            email = acc.get("from_email", "")
+            domain = email.split("@")[-1] if "@" in email else ""
+            sr_group = domain_to_group.get(domain, "")
+            if sr_group == group_name or (not sr_group and group_name.lower() == "acquisition inboxes"):
+                filtered.append(acc)
+        if filtered:
+            group_accounts = filtered
+
     if not group_accounts:
-        return {"error": f"No accounts found for client {group_client_id}"}
+        return {"error": f"No accounts found for group {group_name or group_client_id}"}
 
     account_ids = [a["id"] for a in group_accounts]
 
@@ -3593,26 +3609,32 @@ def main():
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
 
     # Clean up pipelines stuck from previous instance
+    print("Cleaning up stuck pipelines...", flush=True)
     cleanup_stuck_pipelines()
+    print("Cleanup done", flush=True)
 
     # Start background infrastructure monitor (auto-disabled on Render to save memory)
     is_render = bool(os.environ.get("PORT")) and not os.environ.get("ENABLE_MONITOR")
+    print("Starting monitor...", flush=True)
     if not is_render:
         monitor = start_monitor_thread()
-        print("Infrastructure monitor started (checking every 4 hours)")
+        print("Infrastructure monitor started (checking every 4 hours)", flush=True)
     else:
-        print("Infrastructure monitor DISABLED (Render free tier — set ENABLE_MONITOR=1 to override)")
+        print("Infrastructure monitor DISABLED (Render free tier — set ENABLE_MONITOR=1 to override)", flush=True)
 
     # Start background SmartLead → Supabase sync (every 2 minutes)
+    print("Starting sync thread...", flush=True)
     start_sync_thread()
-    print("SmartLead + Spaceship background sync started (every 2 minutes)")
+    print("SmartLead + Spaceship background sync started (every 2 minutes)", flush=True)
 
     # Resume any interrupted setup pipelines
+    print("Resuming pipelines...", flush=True)
     pipeline_engine.resume_running_pipelines()
-    print("Setup pipeline resume check complete")
+    print("Setup pipeline resume check complete", flush=True)
 
+    print(f"Binding to {host}:{port}...", flush=True)
     server = HTTPServer((host, port), DashboardHandler)
-    print(f"Dashboard running at http://{host}:{port}")
+    print(f"Dashboard running at http://{host}:{port}", flush=True)
     print("Press Ctrl+C to stop")
     try:
         server.serve_forever()
