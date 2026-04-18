@@ -1007,9 +1007,9 @@ def get_global_campaign_counts():
             timeout=60,
         )
         campaigns = r.json() if r.status_code == 200 else []
-        for camp in campaigns:
-            if camp.get("status") not in ("ACTIVE", "PAUSED"):
-                continue
+        active_camps = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
+
+        def _fetch_camp_accounts(camp):
             camp_info = {
                 "id": camp["id"],
                 "name": camp.get("name", ""),
@@ -1020,15 +1020,22 @@ def get_global_campaign_counts():
                     f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
                     timeout=30,
                 )
-                camp_accounts = cr.json() if cr.status_code == 200 else []
-                if isinstance(camp_accounts, list):
-                    for ca in camp_accounts:
-                        email = ca.get("from_email", "")
-                        if email:
-                            counts[email] = counts.get(email, 0) + 1
-                            details.setdefault(email, []).append(camp_info)
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-                continue
+                if cr.status_code == 200:
+                    camp_accounts = cr.json()
+                    if isinstance(camp_accounts, list):
+                        return [(ca.get("from_email", ""), camp_info) for ca in camp_accounts if ca.get("from_email")]
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, ValueError):
+                pass
+            return []
+
+        # Fetch campaign accounts in parallel (5 at a time to avoid rate limits)
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            results = list(ex.map(_fetch_camp_accounts, active_camps))
+
+        for pairs in results:
+            for email, camp_info in pairs:
+                counts[email] = counts.get(email, 0) + 1
+                details.setdefault(email, []).append(camp_info)
         _global_campaign_counts["data"] = counts
         _global_campaign_counts["time"] = now
         _global_campaign_details["data"] = details
