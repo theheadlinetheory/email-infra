@@ -2503,14 +2503,23 @@ def delete_client_infra_sse(client_id, client_name):
         zm_domains = zm_list_domains()
         zm_domain_ids = [d["id"] for d in zm_domains if d.get("domain") in domains]
         if zm_domain_ids:
+            # Delete one at a time as fallback if bulk fails
             result = zm_delete_domains(zm_domain_ids)
             if isinstance(result, dict) and result.get("error"):
-                yield event(3, "error", result["error"])
-                return
-        yield event(3, "done", f"Cancelled {len(zm_domain_ids)} domain(s)")
+                # Try one-by-one
+                cancelled = 0
+                for did in zm_domain_ids:
+                    r2 = zm_delete_domains([did])
+                    if not (isinstance(r2, dict) and r2.get("error")):
+                        cancelled += 1
+                yield event(3, "done", f"Cancelled {cancelled}/{len(zm_domain_ids)} domain(s)")
+            else:
+                yield event(3, "done", f"Cancelled {len(zm_domain_ids)} domain(s)")
+        else:
+            yield event(3, "done", "No Zapmail domains found (already removed or not connected)")
     except Exception as e:
-        yield event(3, "error", str(e))
-        return
+        # Don't block deletion on Zapmail errors — continue with remaining steps
+        yield event(3, "done", f"Zapmail step skipped ({e})")
 
     # ── Step 4: Update Google Sheet ──
     yield event(4, "running")

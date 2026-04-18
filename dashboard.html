@@ -622,7 +622,10 @@ h2.section-title{font-family:var(--font-display);}
 <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
 <div class="detail-panel" id="detail-panel" style="display:none;">
     <button class="close-btn" onclick="closeDetail()">&times;</button>
-    <h2 id="detail-title"></h2>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+        <h2 id="detail-title" style="margin-bottom:0;"></h2>
+        <button id="archive-btn" onclick="toggleArchiveClient()" style="font-size:11px;padding:4px 12px;border-radius:4px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text-muted);cursor:pointer;">Archive</button>
+    </div>
     <div id="detail-content"></div>
 </div>
 
@@ -943,12 +946,18 @@ function renderOverview() {
 let trendChart = null;
 let currentTrendClientId = null;
 
+let currentDetailClientName = '';
 async function openDetail(clientId, clientName) {
     document.getElementById('detail-overlay').style.display = 'block';
     document.getElementById('detail-panel').style.display = 'block';
     document.getElementById('detail-title').textContent = clientName;
     document.getElementById('detail-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading accounts...</div>';
     currentTrendClientId = clientId;
+    currentDetailClientName = clientName;
+    const isArchived = (window._archivedClients || []).includes(clientName);
+    const archBtn = document.getElementById('archive-btn');
+    archBtn.textContent = isArchived ? 'Unarchive' : 'Archive';
+    archBtn.style.color = isArchived ? '#22c55e' : 'var(--text-muted)';
 
     try {
         const [accountsResp, trendsResp] = await Promise.all([
@@ -1214,6 +1223,29 @@ function closeDetail() {
     document.getElementById('detail-panel').style.display = 'none';
     if (trendChart) { trendChart.destroy(); trendChart = null; }
     currentTrendClientId = null;
+}
+
+async function toggleArchiveClient() {
+    if (!currentDetailClientName) return;
+    const isArchived = (window._archivedClients || []).includes(currentDetailClientName);
+    const action = isArchived ? 'unarchive' : 'archive';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${currentDetailClientName}"?`)) return;
+    try {
+        const resp = await fetch('/api/client/archive', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: currentDetailClientName, archived: !isArchived})
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            window._archivedClients = result.archived_clients || [];
+            const archBtn = document.getElementById('archive-btn');
+            archBtn.textContent = !isArchived ? 'Unarchive' : 'Archive';
+            archBtn.style.color = !isArchived ? '#22c55e' : 'var(--text-muted)';
+            closeDetail();
+            loadOverview();
+        }
+    } catch(e) { console.error('Archive error:', e); }
 }
 
 async function loadUnassigned() {
@@ -2791,7 +2823,16 @@ const DELETE_STEPS = [
     {id: 5, label: 'Deleting SmartLead client'},
 ];
 
+const _deletionInProgress = {};
 function openDeleteModal(clientId, clientName) {
+    // If deletion already started for this client, show progress instead of re-deleting
+    if (_deletionInProgress[clientId]) {
+        document.getElementById('delete-confirm').style.display = 'none';
+        document.getElementById('delete-progress').style.display = 'block';
+        document.getElementById('delete-overlay').style.display = 'block';
+        document.getElementById('delete-modal').style.display = 'block';
+        return;
+    }
     document.getElementById('del-client-id').value = clientId;
     document.getElementById('del-client-name').value = clientName;
     document.getElementById('del-client-label').textContent = clientName;
@@ -2829,6 +2870,7 @@ function checkDeleteConfirm() {
 function startDeletion() {
     const clientId = document.getElementById('del-client-id').value;
     const clientName = document.getElementById('del-client-name').value;
+    _deletionInProgress[clientId] = true;
 
     document.getElementById('delete-confirm').style.display = 'none';
     document.getElementById('delete-progress').style.display = 'block';
