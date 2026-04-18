@@ -1029,21 +1029,27 @@ def get_global_campaign_counts():
                 "name": camp.get("name", ""),
                 "status": camp.get("status", ""),
             }
-            try:
-                cr = requests.get(
-                    f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
-                    timeout=30,
-                )
-                if cr.status_code == 200:
-                    camp_accounts = cr.json()
-                    if isinstance(camp_accounts, list):
-                        return [(ca.get("from_email", ""), camp_info) for ca in camp_accounts if ca.get("from_email")]
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, ValueError):
-                pass
+            for attempt in range(2):
+                try:
+                    cr = requests.get(
+                        f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+                        timeout=30,
+                    )
+                    if cr.status_code == 200:
+                        camp_accounts = cr.json()
+                        if isinstance(camp_accounts, list):
+                            return [(ca.get("from_email", ""), camp_info) for ca in camp_accounts if ca.get("from_email")]
+                        break
+                    if cr.status_code == 429 and attempt == 0:
+                        time.sleep(5)
+                        continue
+                    break
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, ValueError):
+                    break
             return []
 
-        # Fetch campaign accounts in parallel (5 at a time to avoid rate limits)
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        # Fetch campaign accounts in parallel (3 at a time to stay under rate limits)
+        with ThreadPoolExecutor(max_workers=3) as ex:
             results = list(ex.map(_fetch_camp_accounts, active_camps))
 
         for pairs in results:
@@ -1555,31 +1561,40 @@ def api_assign_group_campaign(body):
                 "conflicts": list(conflicts),
             }
 
-        # Add accounts to campaign
-        r = requests.post(
-            f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
-            json={"email_account_ids": account_ids},
-            timeout=60,
-        )
-        if r.status_code == 200:
-            _global_campaign_counts["time"] = 0
-            _global_campaign_details["time"] = 0
-            store.log_inbox_events([{
-                "account_id": a["id"], "email": a.get("from_email", ""),
-                "event_type": "campaign_assign",
-                "old_value": None,
-                "new_value": {"campaign_id": campaign_id, "group": group_name},
-            } for a in group_accounts])
-            return {"ok": True, "action": "assigned", "accounts": len(account_ids)}
-        return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
+        # Add accounts to campaign (with retry on rate limit)
+        for attempt in range(3):
+            r = requests.post(
+                f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+                json={"email_account_ids": account_ids},
+                timeout=60,
+            )
+            if r.status_code == 200:
+                _global_campaign_counts["time"] = 0
+                _global_campaign_details["time"] = 0
+                store.log_inbox_events([{
+                    "account_id": a["id"], "email": a.get("from_email", ""),
+                    "event_type": "campaign_assign",
+                    "old_value": None,
+                    "new_value": {"campaign_id": campaign_id, "group": group_name},
+                } for a in group_accounts])
+                return {"ok": True, "action": "assigned", "accounts": len(account_ids)}
+            if r.status_code == 429 and attempt < 2:
+                time.sleep(30)
+                continue
+            return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
 
     elif action == "unassign":
-        # Remove accounts from campaign
-        r = requests.delete(
-            f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
-            json={"email_account_ids": account_ids},
-            timeout=60,
-        )
+        # Remove accounts from campaign (with retry on rate limit)
+        for attempt in range(3):
+            r = requests.delete(
+                f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+                json={"email_account_ids": account_ids},
+                timeout=60,
+            )
+            if r.status_code == 429 and attempt < 2:
+                time.sleep(30)
+                continue
+            break
         if r.status_code == 200:
             _global_campaign_counts["time"] = 0
             _global_campaign_details["time"] = 0
