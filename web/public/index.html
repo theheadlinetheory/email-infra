@@ -297,7 +297,7 @@ h2.section-title{font-family:var(--font-display);}
     <div class="topbar-left">
         <h1><span>THT</span> Infrastructure</h1>
         <div class="mode-switcher">
-            <button class="mode-btn active" onclick="switchMode('fulfillment')">Fulfillment</button>
+            <button class="mode-btn active" onclick="switchMode('fulfillment')">Clients</button>
             <button class="mode-btn" onclick="switchMode('acquisition')">Acquisition</button>
         </div>
         <nav class="topbar-nav" id="topbar-nav">
@@ -374,6 +374,7 @@ h2.section-title{font-family:var(--font-display);}
 
             <div id="acquisition-section" style="display:none;margin-top:28px;">
                 <h2 class="section-title">Acquisition Groups</h2>
+                <div id="acq-conflict-banner"></div>
                 <div class="summary-row" id="acquisition-stats"></div>
                 <div class="clients-grid" id="acquisition-grid"></div>
             </div>
@@ -661,9 +662,9 @@ async function loadOverview() {
         let untaggedData = null;
         try { untaggedData = untaggedResp && untaggedResp.ok ? await untaggedResp.json() : null; } catch(e) {}
 
-        // Render untagged alert
+        // Render untagged alert — only in fulfillment/clients mode
         const untaggedAlert = document.getElementById('untagged-alert');
-        if (untaggedData && untaggedData.untagged_count > 0) {
+        if (currentMode === 'fulfillment' && untaggedData && untaggedData.untagged_count > 0) {
             document.getElementById('untagged-alert-text').textContent =
                 '\u26a0 ' + untaggedData.untagged_count + ' accounts have no client assignment and may be missing tags. Run fix_untagged.py to remediate.';
             untaggedAlert.style.display = 'flex';
@@ -697,11 +698,13 @@ async function loadOverview() {
         }
 
         if (acquisitionData && acquisitionData.total_groups > 0) {
-            document.getElementById('acquisition-section').style.display = 'block';
+            // Only show if in acquisition mode; populate data either way
+            document.getElementById('acquisition-section').style.display = currentMode === 'acquisition' ? 'block' : 'none';
             document.getElementById('acquisition-stats').innerHTML = `
                 <div class="stat-card"><div class="value">${acquisitionData.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
                 <div class="stat-card"><div class="value">${acquisitionData.total_groups}</div><div class="label">Active Groups</div></div>
             `;
+            renderAcqAlerts(acquisitionData);
             renderAcquisitionGroups(acquisitionData.groups);
         } else {
             document.getElementById('acquisition-section').style.display = 'none';
@@ -737,15 +740,23 @@ function renderCardHTML(item) {
     const replyColor = item.avg_reply_rate === null || item.avg_reply_rate === undefined ? 'var(--text-muted)' : item.avg_reply_rate > 5 ? 'var(--accent)' : item.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444';
 
     let html = `<div class="client-card ${item.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${item.id}, '${(item.name || '').replace(/'/g, "\\'")}')">`;
-    // Header — name + count only (no health badge)
-    html += `<div class="cc-header"><span class="cc-name">${item.name}</span><span class="cc-count">${item.accounts} accounts</span></div>`;
+    // Header — name + count + warmup badge
+    let warmupBadge = '';
+    if (item.still_warming && item.warmup_done_date) {
+        warmupBadge = `<span class="badge badge-yellow" style="font-size:10px;margin-left:6px;">Ready ${item.warmup_done_date}</span>`;
+    }
+    html += `<div class="cc-header"><span class="cc-name">${item.name}</span><span class="cc-count">${item.accounts} accounts${warmupBadge}</span></div>`;
     // Alert banner
     if (item.needs_attention) {
         html += `<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">${item.flagged_domains}/${item.total_domains} domains flagged (${item.flagged_pct}%)</div>`;
     }
     // Stats: Capacity, Issues, Bounce, Reply
+    let capacityDisplay = (item.daily_capacity || 0) + '/day';
+    if (item.still_warming && item.daily_capacity < item.projected_capacity) {
+        capacityDisplay = (item.daily_capacity || 0) + ' → ' + item.projected_capacity + '/day';
+    }
     html += `<div class="cc-stats">`;
-    html += `<div class="cc-stat"><span class="label">Capacity</span><span>${item.daily_capacity || 0}/day</span></div>`;
+    html += `<div class="cc-stat"><span class="label">Capacity</span><span>${capacityDisplay}</span></div>`;
     html += `<div class="cc-stat"><span class="label">Issues</span><span style="color:${issuesColor}">${issues}</span></div>`;
     html += `<div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${bounceColor}">${bounceVal}</span></div>`;
     html += `<div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${replyColor}">${replyVal}</span></div>`;
@@ -766,6 +777,29 @@ function renderCardHTML(item) {
             }
             html += `</div>`;
         }
+    }
+    // Campaign assignment (acquisition groups)
+    if (item.active_campaigns || item.paused_campaigns) {
+        const active = item.active_campaigns || [];
+        const paused = item.paused_campaigns || [];
+        const currentCampId = active.length === 1 ? active[0].id : '';
+        html += `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px;">`;
+        if (item.campaign_conflict) {
+            html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;margin-bottom:6px;color:#dc2626;font-weight:600;">CONFLICT: ${active.length} active campaigns</div>`;
+            active.forEach(c => {
+                html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;"><span style="color:#dc2626;">&#9679; ${c.name}</span><button onclick="event.stopPropagation();unassignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',${c.id},'${c.name.replace(/'/g, "\\'")}')" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;">Remove</button></div>`;
+            });
+        } else {
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">`;
+            html += `<span class="label" style="white-space:nowrap;">Campaign</span>`;
+            html += `<select onchange="event.stopPropagation();assignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',this.value,${currentCampId || 0})" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);max-width:200px;cursor:pointer;" data-group-id="${item.id}">`;
+            html += `<option value="">— Available —</option>`;
+            html += `</select></div>`;
+        }
+        if (paused.length > 0) {
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;"><span class="label">Paused</span><span style="color:var(--text-muted);">${paused.map(c => c.name).join(', ')}</span></div>`;
+        }
+        html += `</div>`;
     }
     // Footer dates
     const hasReady = item.ready_date && item.days_until_ready !== null && item.days_until_ready > 0;
@@ -811,11 +845,11 @@ function renderOverview() {
         acqBadge.className = 'badge ' + (inventoryData.acquisition_low ? 'badge-red' : 'badge-green');
     }
 
-    // Alert banner
+    // Alert banner — only show in fulfillment/clients mode
     const alertEl = document.getElementById('alert-banner');
     const attentionClients = d.clients.filter(c => c.needs_attention);
     const invLow = inventoryData && (inventoryData.client_low || inventoryData.acquisition_low);
-    if (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0 || invLow) {
+    if (currentMode === 'fulfillment' && (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0 || invLow)) {
         let html = '<div class="alert-banner"><h3>Alerts</h3>';
         if (inventoryData && inventoryData.client_low) {
             html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Client pool has ' + inventoryData.client_available + ' available (need 20+)</div>';
@@ -915,16 +949,14 @@ async function openDetail(clientId, clientName) {
 function renderDetailTable(data, trends) {
     const accounts = data.accounts || [];
 
-    // Replacement recommendation
+    // Replacement recommendation (1-for-1 disabled — A/B group rotation pending)
     let recHtml = '';
     if (data.flagged_domains && data.flagged_domains.length > 0) {
         recHtml = `<div style="background:var(--red-bg);border:1px solid #3d1519;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
             <div style="font-size:14px;color:var(--red);font-weight:600;margin-bottom:6px;">Infrastructure Replacement Needed</div>
             <div style="font-size:13px;color:#f8a0a0;">${data.flagged_inbox_count} inbox(es) across ${data.flagged_domains.length} domain(s) are unhealthy.</div>
-            <div style="font-size:13px;color:#f8a0a0;margin-bottom:10px;">Recommended: Set up ${data.replacement_domains_needed} new domain(s) (${data.replacement_inboxes} inboxes).</div>
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Flagged domains: ${data.flagged_domains.join(', ')}</div>
-            <button onclick="triggerReplacement('${data.client_id}', ${JSON.stringify(data.flagged_domains).replace(/'/g, "\\'")})" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;">Start Replacement</button>
-            <span id="replacement-status-${data.client_id}" style="margin-left:12px;font-size:13px;"></span>
+            <div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px;">Replacements will go to the B group once set up. 1-for-1 replacement is disabled.</div>
         </div>`;
     }
 
@@ -1308,6 +1340,7 @@ async function loadAcquisition() {
                 <div class="stat-card"><div class="value">${data.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
                 <div class="stat-card"><div class="value">${data.total_groups}</div><div class="label">Active Groups</div></div>
             `;
+            renderAcqAlerts(data);
             renderAcquisitionGroups(data.groups);
         } else {
             document.getElementById('acquisition-section').style.display = 'none';
@@ -1317,9 +1350,128 @@ async function loadAcquisition() {
     }
 }
 
+function renderAcqAlerts(data) {
+    const el = document.getElementById('acq-conflict-banner');
+    if (!el) return;
+    const conflicts = data.campaign_conflicts || [];
+    const empty = data.empty_campaigns || [];
+    if (conflicts.length === 0 && empty.length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+    let html = '';
+    if (conflicts.length > 0) {
+        html += '<div class="alert-banner" style="border-color:#fecaca;"><h3 style="color:#dc2626;">Campaign Conflicts</h3>';
+        conflicts.forEach(c => {
+            html += '<div class="alert-item" style="color:#dc2626;">' + c.group + ' is in ' + c.campaigns.length + ' active campaigns: ' + c.campaigns.join(', ') + '</div>';
+        });
+        html += '</div>';
+    }
+    if (empty.length > 0) {
+        html += '<div class="alert-banner" style="border-color:#fed7aa;"><h3 style="color:#ea580c;">Campaigns With No Inboxes</h3>';
+        empty.forEach(c => {
+            html += '<div class="alert-item" style="color:#ea580c;">' + c.name + ' — active but has no email accounts assigned</div>';
+        });
+        html += '</div>';
+    }
+    el.innerHTML = html;
+}
+
+let acqCampaignsCache = null;
+
 function renderAcquisitionGroups(groups) {
     const grid = document.getElementById('acquisition-grid');
     grid.innerHTML = groups.map(g => renderCardHTML(g)).join('');
+    // Populate campaign dropdowns after rendering
+    populateCampaignDropdowns(groups);
+}
+
+async function populateCampaignDropdowns(groups) {
+    // Fetch acquisition campaigns (cached in-memory for the session)
+    if (!acqCampaignsCache) {
+        try {
+            const resp = await fetch('/api/acquisition-campaigns');
+            const data = await resp.json();
+            acqCampaignsCache = data.campaigns || [];
+        } catch (e) {
+            console.error('Failed to load acquisition campaigns:', e);
+            return;
+        }
+    }
+    // Populate each group's dropdown
+    const selects = document.querySelectorAll('select[data-group-id]');
+    selects.forEach(select => {
+        const groupId = parseInt(select.dataset.groupId);
+        const group = groups.find(g => g.id === groupId);
+        const activeCampId = group && group.active_campaigns && group.active_campaigns.length === 1 ? group.active_campaigns[0].id : null;
+
+        acqCampaignsCache.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name + (c.status === 'PAUSED' ? ' (paused)' : '');
+            if (c.id === activeCampId) opt.selected = true;
+            select.appendChild(opt);
+        });
+    });
+}
+
+async function assignGroupCampaign(groupClientId, groupName, newCampId, currentCampId) {
+    // Unassign from current campaign first if changing
+    if (currentCampId && currentCampId !== parseInt(newCampId)) {
+        if (!confirm(`Remove ${groupName} from current campaign before assigning to new one?`)) return;
+        try {
+            await fetch('/api/acquisition/assign-campaign', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({group_client_id: groupClientId, campaign_id: currentCampId, action: 'unassign'})
+            });
+        } catch (e) {
+            alert('Failed to unassign: ' + e.message);
+            return;
+        }
+    }
+    // Assign to new campaign
+    if (newCampId) {
+        const campName = acqCampaignsCache ? (acqCampaignsCache.find(c => c.id === parseInt(newCampId)) || {}).name || '' : '';
+        if (!confirm(`Assign all ${groupName} accounts to "${campName}"?`)) {
+            loadAcquisition();
+            return;
+        }
+        try {
+            const resp = await fetch('/api/acquisition/assign-campaign', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({group_client_id: groupClientId, campaign_id: parseInt(newCampId), action: 'assign'})
+            });
+            const result = await resp.json();
+            if (result.error) {
+                alert('Error: ' + result.error);
+            }
+        } catch (e) {
+            alert('Failed to assign: ' + e.message);
+        }
+    }
+    acqCampaignsCache = null; // Clear cache to refresh
+    loadAcquisition();
+}
+
+async function unassignGroupCampaign(groupClientId, groupName, campId, campName) {
+    if (!confirm(`Remove ${groupName} from "${campName}"?`)) return;
+    try {
+        const resp = await fetch('/api/acquisition/assign-campaign', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({group_client_id: groupClientId, campaign_id: campId, action: 'unassign'})
+        });
+        const result = await resp.json();
+        if (result.error) {
+            alert('Error: ' + result.error);
+        }
+    } catch (e) {
+        alert('Failed to unassign: ' + e.message);
+    }
+    acqCampaignsCache = null;
+    loadAcquisition();
 }
 
 // --- Setup Pipeline UI ---

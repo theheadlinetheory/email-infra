@@ -975,6 +975,7 @@ def api_overview():
 
 
 _global_campaign_counts = {"data": {}, "time": 0}
+_global_campaign_details = {"data": {}, "time": 0}
 
 def get_global_campaign_counts():
     """Build a global email → campaign count mapping from ALL campaigns.
@@ -982,11 +983,13 @@ def get_global_campaign_counts():
     SmartLead campaigns often have client_id=null, so filtering by client
     doesn't work. Instead, fetch all campaigns, get their email accounts,
     and build the full mapping. Cached for 120 seconds.
+    Also builds email → campaign details mapping for conflict detection.
     """
     now = time.time()
     if _global_campaign_counts["data"] and now - _global_campaign_counts["time"] < 120:
         return _global_campaign_counts["data"]
     counts = {}
+    details = {}  # email → list of {id, name, status}
     try:
         r = requests.get(
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
@@ -996,6 +999,11 @@ def get_global_campaign_counts():
         for camp in campaigns:
             if camp.get("status") not in ("ACTIVE", "PAUSED"):
                 continue
+            camp_info = {
+                "id": camp["id"],
+                "name": camp.get("name", ""),
+                "status": camp.get("status", ""),
+            }
             try:
                 cr = requests.get(
                     f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
@@ -1007,13 +1015,24 @@ def get_global_campaign_counts():
                         email = ca.get("from_email", "")
                         if email:
                             counts[email] = counts.get(email, 0) + 1
+                            details.setdefault(email, []).append(camp_info)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
                 continue
         _global_campaign_counts["data"] = counts
         _global_campaign_counts["time"] = now
+        _global_campaign_details["data"] = details
+        _global_campaign_details["time"] = now
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
         print(f"[campaigns] Timeout fetching campaign list: {e}")
     return _global_campaign_counts["data"] or counts
+
+
+def get_global_campaign_details():
+    """Return email → campaign details mapping. Calls get_global_campaign_counts to populate cache."""
+    now = time.time()
+    if not _global_campaign_details["data"] or now - _global_campaign_details["time"] >= 120:
+        get_global_campaign_counts()
+    return _global_campaign_details["data"]
 
 
 def api_client_accounts(client_id):
@@ -1199,10 +1218,28 @@ def _compute_group_stats(group_name, group_id, accounts, health):
     healthy = max(0, production - min(smtp_fail, production) - min(blocked, production))
     daily_capacity = healthy * 15
 
+    # Projected capacity — all accounts with working SMTP once warmup finishes
+    total_healthy = max(0, len(accounts) - smtp_fail - blocked)
+    projected_capacity = total_healthy * 15
+
     avg_health = round(sum(cl_scores) / len(cl_scores)) if cl_scores else 100
     avg_bounce = round(sum(cl_bounce_rates) / len(cl_bounce_rates), 2) if cl_bounce_rates else 0
     avg_reply = round(sum(cl_reply_rates) / len(cl_reply_rates), 2) if cl_reply_rates else 0
     total_domains = len(all_domains)
+
+    # Warmup completion date — latest batch's estimated finish (warmup_start + 14 days)
+    warmup_done_date = None
+    still_warming = any(b["status"] == "warming" for b in batches)
+    if still_warming:
+        latest_warming = max(
+            (b for b in batches if b["status"] == "warming"),
+            key=lambda b: b["warmup_start"],
+        )
+        try:
+            ws = datetime.strptime(latest_warming["warmup_start"], "%Y-%m-%d")
+            warmup_done_date = (ws + timedelta(days=14)).strftime("%m/%d")
+        except (ValueError, TypeError):
+            pass
 
     return {
         "id": group_id,
@@ -1223,6 +1260,9 @@ def _compute_group_stats(group_name, group_id, accounts, health):
         "needs_attention": len(flagged_domains) / total_domains >= 0.15 if total_domains else False,
         "blocked": blocked,
         "daily_capacity": daily_capacity,
+        "projected_capacity": projected_capacity,
+        "still_warming": still_warming,
+        "warmup_done_date": warmup_done_date,
         "batches": batches,
     }
 
@@ -1237,8 +1277,42 @@ def api_untagged_count():
     }
 
 
+def _enrich_groups_with_campaigns(groups, group_emails):
+    """Add campaign assignment data to each group for conflict detection.
+
+    Args:
+        groups: list of group stat dicts (mutated in place)
+        group_emails: dict mapping group name → list of email addresses
+    """
+    campaign_details = get_global_campaign_details()
+    conflicts = []
+
+    for g in groups:
+        emails = group_emails.get(g["name"], [])
+        # Collect all campaigns this group's accounts are in
+        seen = {}  # campaign_id → campaign info
+        for email in emails:
+            for camp in campaign_details.get(email, []):
+                seen[camp["id"]] = camp
+
+        active = [c for c in seen.values() if c["status"] == "ACTIVE"]
+        paused = [c for c in seen.values() if c["status"] == "PAUSED"]
+
+        g["active_campaigns"] = [{"id": c["id"], "name": c["name"]} for c in active]
+        g["paused_campaigns"] = [{"id": c["id"], "name": c["name"]} for c in paused]
+        g["campaign_conflict"] = len(active) > 1
+
+        if g["campaign_conflict"]:
+            conflicts.append({
+                "group": g["name"],
+                "campaigns": [c["name"] for c in active],
+            })
+
+    return conflicts
+
+
 def api_acquisition():
-    """Acquisition inbox groups with health metrics."""
+    """Acquisition inbox groups with health metrics and campaign assignments."""
     clients = get_clients()
     all_accounts = get_all_accounts()  # uses 30s cache — no extra API calls
     health = get_health_metrics()
@@ -1253,6 +1327,7 @@ def api_acquisition():
     ]
 
     groups = []
+    group_emails = {}  # group name → list of emails (for campaign cross-ref)
     total_accounts = 0
     for cl in sorted(group_clients, key=lambda x: x.get("name", "")):
         cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
@@ -1276,22 +1351,157 @@ def api_acquisition():
                 sr_accounts = sr_buckets[sr_name]
                 total_accounts += len(sr_accounts)
                 groups.append(_compute_group_stats(sr_name, cl["id"], sr_accounts, health))
+                group_emails[sr_name] = [a.get("from_email", "") for a in sr_accounts]
 
             # Remaining accounts (e.g. .info domains) stay under original name
             if remainder:
                 total_accounts += len(remainder)
                 groups.append(_compute_group_stats(cl["name"], cl["id"], remainder, health))
+                group_emails[cl["name"]] = [a.get("from_email", "") for a in remainder]
             continue
 
         total_accounts += len(cl_accounts)
         groups.append(_compute_group_stats(cl["name"], cl["id"], cl_accounts, health))
+        group_emails[cl["name"]] = [a.get("from_email", "") for a in cl_accounts]
+
+    # Enrich groups with campaign assignment data
+    conflicts = _enrich_groups_with_campaigns(groups, group_emails)
+
+    # Find active acquisition campaigns with no inboxes assigned
+    empty_campaigns = _find_empty_acquisition_campaigns()
 
     return {
         "groups": groups,
         "total_accounts": total_accounts,
         "total_groups": len(groups),
+        "campaign_conflicts": conflicts,
+        "empty_campaigns": empty_campaigns,
         "generated_at": datetime.now().isoformat(),
     }
+
+
+def _find_empty_acquisition_campaigns():
+    """Find ACTIVE acquisition campaigns that have zero email accounts assigned."""
+    campaign_details = get_global_campaign_details()
+
+    # Invert: campaign_id → set of emails
+    campaign_accounts = {}
+    for email, camps in campaign_details.items():
+        for c in camps:
+            campaign_accounts.setdefault(c["id"], set()).add(email)
+
+    # Get all campaigns to find acquisition ones
+    try:
+        r = requests.get(
+            f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
+            timeout=60,
+        )
+        campaigns = r.json() if r.status_code == 200 else []
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        return []
+
+    empty = []
+    for c in campaigns:
+        if c.get("status") != "ACTIVE":
+            continue
+        if "acquisition" not in c.get("name", "").lower():
+            continue
+        account_count = len(campaign_accounts.get(c["id"], set()))
+        if account_count == 0:
+            empty.append({"id": c["id"], "name": c.get("name", "")})
+    return empty
+
+
+def api_acquisition_campaigns():
+    """Return campaigns with 'acquisition' in the name, for dropdown assignment."""
+    try:
+        r = requests.get(
+            f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
+            timeout=60,
+        )
+        campaigns = r.json() if r.status_code == 200 else []
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        return {"campaigns": [], "error": "timeout"}
+
+    acq_campaigns = []
+    for c in campaigns:
+        name = c.get("name", "")
+        if "acquisition" not in name.lower():
+            continue
+        acq_campaigns.append({
+            "id": c["id"],
+            "name": name,
+            "status": c.get("status", ""),
+        })
+
+    # Sort: ACTIVE first, then PAUSED, then others, alphabetically within each
+    status_order = {"ACTIVE": 0, "PAUSED": 1}
+    acq_campaigns.sort(key=lambda c: (status_order.get(c["status"], 9), c["name"]))
+    return {"campaigns": acq_campaigns}
+
+
+def api_assign_group_campaign(body):
+    """Assign a group's accounts to a campaign (or unassign from one).
+
+    Body: {group_client_id, campaign_id, action: "assign"|"unassign"}
+    """
+    group_client_id = body.get("group_client_id")
+    campaign_id = body.get("campaign_id")
+    action = body.get("action", "assign")
+
+    if not group_client_id or not campaign_id:
+        return {"error": "group_client_id and campaign_id required"}
+
+    # Get all accounts for this group
+    all_accounts = get_all_accounts()
+    group_accounts = [a for a in all_accounts if a.get("client_id") == group_client_id]
+    if not group_accounts:
+        return {"error": f"No accounts found for client {group_client_id}"}
+
+    account_ids = [a["id"] for a in group_accounts]
+
+    if action == "assign":
+        # Conflict check: ensure no account is already in another ACTIVE campaign
+        campaign_details = get_global_campaign_details()
+        conflicts = set()
+        for a in group_accounts:
+            email = a.get("from_email", "")
+            for camp in campaign_details.get(email, []):
+                if camp["status"] == "ACTIVE" and camp["id"] != campaign_id:
+                    conflicts.add(camp["name"])
+        if conflicts:
+            return {
+                "error": f"Cannot assign — group is already in active campaign(s): {', '.join(conflicts)}",
+                "conflicts": list(conflicts),
+            }
+
+        # Add accounts to campaign
+        r = requests.post(
+            f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+            json={"email_account_ids": account_ids},
+            timeout=60,
+        )
+        if r.status_code == 200:
+            # Invalidate campaign cache so the dashboard refreshes
+            _global_campaign_counts["time"] = 0
+            _global_campaign_details["time"] = 0
+            return {"ok": True, "action": "assigned", "accounts": len(account_ids)}
+        return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
+
+    elif action == "unassign":
+        # Remove accounts from campaign
+        r = requests.delete(
+            f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+            json={"email_account_ids": account_ids},
+            timeout=60,
+        )
+        if r.status_code == 200:
+            _global_campaign_counts["time"] = 0
+            _global_campaign_details["time"] = 0
+            return {"ok": True, "action": "unassigned", "accounts": len(account_ids)}
+        return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
+
+    return {"error": f"Unknown action: {action}"}
 
 
 def api_zapmail():
@@ -1493,34 +1703,8 @@ def api_pipeline_new_client(body):
 
 
 def api_pipeline_replacement(body):
-    """Manually trigger replacement for a client/domain."""
-    client_name = body.get("client_name", "")
-    old_domain = body.get("old_domain", "")
-    old_emails = body.get("old_emails", [])
-    old_account_ids = body.get("old_account_ids", [])
-
-    if not client_name:
-        return {"error": "client_name required"}
-
-    available = get_available_domains()
-    if not available:
-        return {"error": "No domains available in inventory"}
-
-    available.sort(key=lambda d: d.get("purchase_date", "9999"))
-    chosen = available[:1]
-
-    pipeline = create_pipeline("replacement", client_name, chosen)
-    if old_domain:
-        pipeline["old_domains"] = [{
-            "domain": old_domain,
-            "emails": old_emails,
-            "smartlead_account_ids": old_account_ids,
-        }]
-        save_pipeline(pipeline)
-
-    threading.Thread(target=run_pipeline_steps, args=(pipeline,), daemon=True).start()
-
-    return {"pipeline_id": pipeline["id"], "status": "started"}
+    """1-for-1 replacement disabled — transitioning to A/B group rotation model."""
+    return {"error": "1-for-1 replacement is disabled. Replacements now go through A/B group rotation."}
 
 
 def api_pipeline_new_acquisition(body):
@@ -3013,6 +3197,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_untagged_count())
                 elif path == "/api/acquisition":
                     self._json_response(api_acquisition())
+                elif path == "/api/acquisition-campaigns":
+                    self._json_response(api_acquisition_campaigns())
                 elif path == "/api/generic-groups":
                     self._json_response(api_generic_groups())
                 elif path == "/api/clients/list":
@@ -3306,6 +3492,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             pid = body.get("pipeline_id", "")
             ok = pipeline_engine.retry_failed_step(pid)
             self._json_response({"ok": ok})
+        elif path == "/api/acquisition/assign-campaign":
+            result = api_assign_group_campaign(body)
+            self._json_response(result, 400 if "error" in result else 200)
         else:
             self._error(404, "Not found")
 
