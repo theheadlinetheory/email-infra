@@ -468,8 +468,26 @@ def _compute_overview():
         email = a.get("from_email", "")
         a["campaign_count"] = campaign_counts.get(email, 0)
 
+    # Classify clients as acquisition vs client/generic
+    def _is_acquisition_group(name):
+        nl = name.lower()
+        return ("group" in nl and ("/" in name or "day" in nl)) or nl == "acquisition inboxes"
+
+    def _is_generic_group(name):
+        return name.lower().startswith("generic")
+
+    acq_client_ids = {cl["id"] for cl in clients if _is_acquisition_group(cl.get("name", ""))}
+
+    # Split accounts into client+generic vs acquisition
+    client_accounts = [a for a in all_accounts if a.get("client_id") not in acq_client_ids]
+    acq_accounts = [a for a in all_accounts if a.get("client_id") in acq_client_ids]
+
     total = len(all_accounts)
-    in_campaign = int(sum(1 for a in all_accounts if (a.get("campaign_count") or 0) > 0))
+    client_total = len(client_accounts)
+    client_in_campaign = int(sum(1 for a in client_accounts if (a.get("campaign_count") or 0) > 0))
+    acq_total = len(acq_accounts)
+    acq_in_campaign = int(sum(1 for a in acq_accounts if (a.get("campaign_count") or 0) > 0))
+    in_campaign = client_in_campaign + acq_in_campaign
     smtp_fail = sum(1 for a in all_accounts if not a.get("is_smtp_success"))
     imap_fail = sum(1 for a in all_accounts if not a.get("is_imap_success"))
     unassigned = sum(1 for a in all_accounts if not a.get("client_id"))
@@ -482,14 +500,6 @@ def _compute_overview():
         if (a.get("warmup_details") or {}).get("status") not in ("ACTIVE", None)
         and (a.get("warmup_details") or {}).get("blocked_reason")
     ]
-
-    # Client summaries — exclude acquisition groups and generic groups (shown in their own sections)
-    def _is_acquisition_group(name):
-        nl = name.lower()
-        return ("group" in nl and ("/" in name or "day" in nl)) or nl == "acquisition inboxes"
-
-    def _is_generic_group(name):
-        return name.lower().startswith("generic")
 
     client_summaries = []
     for cl in clients:
@@ -735,6 +745,10 @@ def _compute_overview():
 
     return {
         "total_accounts": total,
+        "client_total": client_total,
+        "client_in_campaign": client_in_campaign,
+        "acq_total": acq_total,
+        "acq_in_campaign": acq_in_campaign,
         "warming": total_warming,
         "in_campaign": in_campaign,
         "unassigned": unassigned,

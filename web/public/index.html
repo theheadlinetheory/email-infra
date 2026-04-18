@@ -917,7 +917,9 @@ function renderOverview() {
     window._archivedClients = archivedClients;
     window._pausedClients = d.paused_clients || [];
 
-    document.getElementById('sl-subtitle').textContent = `${activeCount} active clients, ${d.total_accounts} accounts, ${d.in_campaign} in campaigns`;
+    const scopedTotal = currentMode === 'acquisition' ? (d.acq_total || 0) : (d.client_total || d.total_accounts);
+    const scopedCampaign = currentMode === 'acquisition' ? (d.acq_in_campaign || 0) : (d.client_in_campaign || d.in_campaign);
+    document.getElementById('sl-subtitle').textContent = `${activeCount} active clients, ${scopedTotal} accounts, ${scopedCampaign} in campaigns`;
 
     const filterBar = document.getElementById('sl-filter-bar');
     filterBar.innerHTML = `
@@ -1798,9 +1800,11 @@ function applyModeVisibility(mode) {
         const overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
         const obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
         const orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
+        const clientTotal = d.client_total || d.total_accounts;
+        const clientCampaign = d.client_in_campaign || d.in_campaign;
         summaryEl.innerHTML = `
-            <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
-            <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
+            <div class="stat-card good"><div class="value">${clientTotal}</div><div class="label">Total Accounts</div></div>
+            <div class="stat-card good"><div class="value">${clientCampaign}</div><div class="label">In Campaigns</div></div>
             <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
             <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
         `;
