@@ -812,7 +812,7 @@ function renderCardHTML(item) {
         } else {
             html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">`;
             html += `<span class="label" style="white-space:nowrap;">Campaign</span>`;
-            html += `<select onchange="event.stopPropagation();assignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',this.value,${currentCampId || 0})" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);max-width:200px;cursor:pointer;" data-group-id="${item.id}">`;
+            html += `<select onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" onchange="event.stopPropagation();assignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',this.value,${currentCampId || 0})" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);max-width:200px;cursor:pointer;" data-group-id="${item.id}">`;
             html += `<option value="">— Available —</option>`;
             html += `</select></div>`;
         }
