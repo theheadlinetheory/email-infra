@@ -469,7 +469,7 @@ def _compute_overview():
         a["campaign_count"] = campaign_counts.get(email, 0)
 
     total = len(all_accounts)
-    in_campaign = sum(1 for a in all_accounts if a.get("campaign_count", 0) > 0)
+    in_campaign = int(sum(1 for a in all_accounts if (a.get("campaign_count") or 0) > 0))
     smtp_fail = sum(1 for a in all_accounts if not a.get("is_smtp_success"))
     imap_fail = sum(1 for a in all_accounts if not a.get("is_imap_success"))
     unassigned = sum(1 for a in all_accounts if not a.get("client_id"))
@@ -496,8 +496,6 @@ def _compute_overview():
         if _is_acquisition_group(cl.get("name", "")) or _is_generic_group(cl.get("name", "")):
             continue
         cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
-        if not cl_accounts:
-            continue
         ws_date = warmup_dates.get(cl["name"].lower(), "")
         ready_date = ""
         days_left = None
@@ -531,11 +529,11 @@ def _compute_overview():
         for a in cl_accounts:
             wd = a.get("warmup_details") or {}
             warmup_created = wd.get("warmup_created_at", "")
-            in_campaign = a.get("campaign_count", 0) > 0
+            acct_in_campaign = a.get("campaign_count", 0) > 0
 
             # Determine if this individual account has completed warmup
             account_warmup_done = False
-            if in_campaign:
+            if acct_in_campaign:
                 account_warmup_done = True
             elif warmup_created:
                 try:
@@ -546,7 +544,7 @@ def _compute_overview():
 
             if account_warmup_done:
                 cl_production += 1
-                if not in_campaign:
+                if not acct_in_campaign:
                     cl_idle += 1
             else:
                 cl_still_warming += 1
