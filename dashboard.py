@@ -41,6 +41,7 @@ from setup import (
     Spaceship, SPACESHIP_API, SPACESHIP_KEY, SPACESHIP_SECRET,
 )
 import db as store
+import inbox_history
 import pipeline_engine
 
 SCRIPT_DIR = Path(__file__).parent
@@ -1114,79 +1115,6 @@ def api_debug_supabase():
         info["test_error"] = str(e)
     return info
 
-
-def snapshot_all_inboxes():
-    """Compare current inbox state against last snapshot and log diffs."""
-    accounts = get_all_accounts()
-    if not accounts:
-        return {"error": "No accounts fetched"}
-
-    # Build current state: {account_id: {client_id, email}}
-    current = {}
-    for a in accounts:
-        current[a["id"]] = {
-            "client_id": a.get("client_id"),
-            "email": a.get("from_email", ""),
-        }
-
-    # Load previous snapshot
-    prev = store.get_state("inbox_snapshot") or {}
-    prev_map = prev.get("accounts", {})
-
-    # Find diffs
-    events = []
-    for acc_id_str, cur in current.items():
-        acc_id = int(acc_id_str) if isinstance(acc_id_str, str) else acc_id_str
-        old = prev_map.get(str(acc_id))
-        if old is None:
-            # New account
-            events.append({
-                "account_id": acc_id, "email": cur["email"],
-                "event_type": "snapshot_new",
-                "old_value": None,
-                "new_value": {"client_id": cur["client_id"]},
-                "source": "snapshot",
-            })
-        elif old.get("client_id") != cur["client_id"]:
-            events.append({
-                "account_id": acc_id, "email": cur["email"],
-                "event_type": "client_change",
-                "old_value": {"client_id": old.get("client_id")},
-                "new_value": {"client_id": cur["client_id"]},
-                "source": "snapshot",
-            })
-
-    # Check for deleted accounts
-    for acc_id_str, old in prev_map.items():
-        if int(acc_id_str) not in current:
-            events.append({
-                "account_id": int(acc_id_str), "email": old.get("email", ""),
-                "event_type": "snapshot_deleted",
-                "old_value": {"client_id": old.get("client_id")},
-                "new_value": None,
-                "source": "snapshot",
-            })
-
-    if events:
-        store.log_inbox_events(events)
-
-    # Save current snapshot
-    store.set_state("inbox_snapshot", {
-        "accounts": {str(a_id): v for a_id, v in current.items()},
-        "taken_at": datetime.now().isoformat(),
-        "account_count": len(current),
-    })
-
-    return {"diffs": len(events), "accounts": len(current)}
-
-
-def api_inbox_history(params):
-    """Get inbox history. ?account_id=X for per-inbox, or ?limit=N for global feed."""
-    account_id = params.get("account_id", [None])[0]
-    limit = int(params.get("limit", ["100"])[0])
-    if account_id:
-        return store.get_inbox_history(int(account_id), limit=limit)
-    return store.get_recent_inbox_events(limit=limit)
 
 
 def _load_sr_groups():
@@ -3367,9 +3295,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 elif path == "/api/debug/supabase":
                     self._json_response(api_debug_supabase())
                 elif path == "/api/inbox-history":
-                    self._json_response(api_inbox_history(params))
+                    self._json_response(inbox_history.query_history(params))
                 elif path == "/api/snapshot":
-                    self._json_response(snapshot_all_inboxes())
+                    self._json_response(inbox_history.snapshot_inboxes(get_all_accounts()))
                 elif path == "/api/setup-pipelines":
                     pipelines = store.list_setup_pipelines()
                     self._json_response({"pipelines": pipelines})
@@ -3747,7 +3675,7 @@ def main():
     # Take initial inbox snapshot for history tracking
     print("Taking inbox snapshot...", flush=True)
     try:
-        snap = snapshot_all_inboxes()
+        snap = inbox_history.snapshot_inboxes(get_all_accounts())
         print(f"Inbox snapshot: {snap.get('accounts', 0)} accounts, {snap.get('diffs', 0)} diffs", flush=True)
     except Exception as e:
         print(f"Inbox snapshot failed (non-critical): {e}", flush=True)
