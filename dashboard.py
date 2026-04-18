@@ -1508,14 +1508,40 @@ def api_acquisition_campaigns():
     return {"campaigns": acq_campaigns}
 
 
+def _patch_campaign_cache_assign(campaign_id, campaign_name, group_accounts):
+    """Optimistically add accounts to campaign cache after successful assign."""
+    camp_info = {"id": campaign_id, "name": campaign_name, "status": "ACTIVE"}
+    for a in group_accounts:
+        email = a.get("from_email", "")
+        if not email:
+            continue
+        _global_campaign_counts["data"][email] = _global_campaign_counts["data"].get(email, 0) + 1
+        _global_campaign_details["data"].setdefault(email, []).append(camp_info)
+
+
+def _patch_campaign_cache_unassign(campaign_id, group_accounts):
+    """Optimistically remove accounts from campaign cache after successful unassign."""
+    for a in group_accounts:
+        email = a.get("from_email", "")
+        if not email:
+            continue
+        if email in _global_campaign_counts["data"]:
+            _global_campaign_counts["data"][email] = max(0, _global_campaign_counts["data"][email] - 1)
+        if email in _global_campaign_details["data"]:
+            _global_campaign_details["data"][email] = [
+                c for c in _global_campaign_details["data"][email] if c["id"] != campaign_id
+            ]
+
+
 def api_assign_group_campaign(body):
     """Assign a group's accounts to a campaign (or unassign from one).
 
-    Body: {group_client_id, group_name, campaign_id, action: "assign"|"unassign"}
+    Body: {group_client_id, group_name, campaign_id, campaign_name, action: "assign"|"unassign"}
     """
     group_client_id = body.get("group_client_id")
     group_name = body.get("group_name", "")
     campaign_id = body.get("campaign_id")
+    campaign_name = body.get("campaign_name", "")
     action = body.get("action", "assign")
 
     if not group_client_id or not campaign_id:
@@ -1569,8 +1595,9 @@ def api_assign_group_campaign(body):
                 timeout=60,
             )
             if r.status_code == 200:
-                _global_campaign_counts["time"] = 0
-                _global_campaign_details["time"] = 0
+                # Optimistically patch campaign caches instead of invalidating
+                # (avoids slow re-fetch that often hits rate limits)
+                _patch_campaign_cache_assign(campaign_id, campaign_name or "", group_accounts)
                 store.log_inbox_events([{
                     "account_id": a["id"], "email": a.get("from_email", ""),
                     "event_type": "campaign_assign",
@@ -1596,8 +1623,7 @@ def api_assign_group_campaign(body):
                 continue
             break
         if r.status_code == 200:
-            _global_campaign_counts["time"] = 0
-            _global_campaign_details["time"] = 0
+            _patch_campaign_cache_unassign(campaign_id, group_accounts)
             store.log_inbox_events([{
                 "account_id": a["id"], "email": a.get("from_email", ""),
                 "event_type": "campaign_unassign",

@@ -1514,7 +1514,7 @@ async function assignGroupCampaign(groupClientId, groupName, newCampId, currentC
             const resp = await fetch('/api/acquisition/assign-campaign', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({group_client_id: groupClientId, group_name: groupName, campaign_id: parseInt(newCampId), action: 'assign'})
+                body: JSON.stringify({group_client_id: groupClientId, group_name: groupName, campaign_id: parseInt(newCampId), campaign_name: campName, action: 'assign'})
             });
             const result = await resp.json();
             if (result.error) {
