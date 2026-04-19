@@ -803,17 +803,23 @@ function renderCardHTML(item) {
         const active = item.active_campaigns || [];
         const paused = item.paused_campaigns || [];
         const currentCampId = active.length === 1 ? active[0].id : '';
-        html += `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px;">`;
+        html += `<div onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px;">`;
         if (item.campaign_conflict) {
             html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;margin-bottom:6px;color:#dc2626;font-weight:600;">CONFLICT: ${active.length} active campaigns</div>`;
             active.forEach(c => {
-                html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;"><span style="color:#dc2626;">&#9679; ${c.name}</span><button onclick="event.stopPropagation();unassignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',${c.id},'${c.name.replace(/'/g, "\\'")}')" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;">Remove</button></div>`;
+                html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;"><span style="color:#dc2626;">&#9679; ${c.name}</span><button onclick="unassignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',${c.id},'${c.name.replace(/'/g, "\\'")}')" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;">Remove</button></div>`;
             });
+        } else if (active.length === 1) {
+            html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">`;
+            html += `<span class="label" style="white-space:nowrap;">Campaign</span>`;
+            html += `<span style="color:var(--accent);font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${active[0].name}">${active[0].name}</span>`;
+            html += `<button onclick="unassignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',${active[0].id},'${active[0].name.replace(/'/g, "\\'")}')" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;">Change</button>`;
+            html += `</div>`;
         } else {
             html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">`;
             html += `<span class="label" style="white-space:nowrap;">Campaign</span>`;
-            html += `<select onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" onchange="event.stopPropagation();assignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',this.value,${currentCampId || 0})" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);max-width:200px;cursor:pointer;" data-group-id="${item.id}">`;
-            html += `<option value="">— Available —</option>`;
+            html += `<select onchange="assignGroupCampaign(${item.id},'${item.name.replace(/'/g, "\\'")}',this.value,0)" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);max-width:200px;cursor:pointer;" data-group-id="${item.id}">`;
+            html += `<option value="">— Select Campaign —</option>`;
             html += `</select></div>`;
         }
         if (paused.length > 0) {
@@ -1466,10 +1472,21 @@ async function populateCampaignDropdowns(groups) {
             const resp = await fetch('/api/acquisition-campaigns');
             const data = await resp.json();
             acqCampaignsCache = data.campaigns || [];
+            if (data.error) console.warn('Campaign fetch warning:', data.error);
         } catch (e) {
             console.error('Failed to load acquisition campaigns:', e);
+            // Show error in dropdowns
+            document.querySelectorAll('select[data-group-id]').forEach(s => {
+                s.innerHTML = '<option value="">— Rate limited, retry in 1 min —</option>';
+            });
             return;
         }
+    }
+    if (acqCampaignsCache.length === 0) {
+        document.querySelectorAll('select[data-group-id]').forEach(s => {
+            s.innerHTML = '<option value="">— No campaigns found —</option>';
+        });
+        return;
     }
     // Populate each group's dropdown
     const selects = document.querySelectorAll('select[data-group-id]');

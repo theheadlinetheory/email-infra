@@ -1011,7 +1011,7 @@ def get_global_campaign_counts():
     Also builds email → campaign details mapping for conflict detection.
     """
     now = time.time()
-    if _global_campaign_counts["data"] and now - _global_campaign_counts["time"] < 120:
+    if _global_campaign_counts["data"] and now - _global_campaign_counts["time"] < 300:
         return _global_campaign_counts["data"]
     counts = {}
     details = {}  # email → list of {id, name, status}
@@ -1020,6 +1020,9 @@ def get_global_campaign_counts():
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=60,
         )
+        if r.status_code == 429:
+            print("[campaigns] Rate limited fetching campaign list, using cached data")
+            return _global_campaign_counts["data"] or counts
         campaigns = r.json() if r.status_code == 200 else []
         active_camps = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
 
@@ -1048,8 +1051,8 @@ def get_global_campaign_counts():
                     break
             return []
 
-        # Fetch campaign accounts in parallel (3 at a time to stay under rate limits)
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        # Fetch campaign accounts in parallel (2 at a time to stay under rate limits)
+        with ThreadPoolExecutor(max_workers=2) as ex:
             results = list(ex.map(_fetch_camp_accounts, active_camps))
 
         for pairs in results:
@@ -1068,7 +1071,7 @@ def get_global_campaign_counts():
 def get_global_campaign_details():
     """Return email → campaign details mapping. Calls get_global_campaign_counts to populate cache."""
     now = time.time()
-    if not _global_campaign_details["data"] or now - _global_campaign_details["time"] >= 120:
+    if not _global_campaign_details["data"] or now - _global_campaign_details["time"] >= 300:
         get_global_campaign_counts()
     return _global_campaign_details["data"]
 
@@ -1480,15 +1483,27 @@ def _find_empty_acquisition_campaigns():
     return empty
 
 
+_acq_campaigns_cache = {"data": [], "time": 0}
+
 def api_acquisition_campaigns():
     """Return campaigns with 'acquisition' in the name, for dropdown assignment."""
+    now = time.time()
+    if _acq_campaigns_cache["data"] and now - _acq_campaigns_cache["time"] < 300:
+        return {"campaigns": _acq_campaigns_cache["data"]}
     try:
         r = requests.get(
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=60,
         )
+        if r.status_code == 429:
+            # Return cached data if rate limited
+            if _acq_campaigns_cache["data"]:
+                return {"campaigns": _acq_campaigns_cache["data"], "error": "rate_limited_using_cache"}
+            return {"campaigns": [], "error": "rate_limited"}
         campaigns = r.json() if r.status_code == 200 else []
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        if _acq_campaigns_cache["data"]:
+            return {"campaigns": _acq_campaigns_cache["data"], "error": "timeout_using_cache"}
         return {"campaigns": [], "error": "timeout"}
 
     acq_campaigns = []
@@ -1505,6 +1520,8 @@ def api_acquisition_campaigns():
     # Sort: ACTIVE first, then PAUSED, then others, alphabetically within each
     status_order = {"ACTIVE": 0, "PAUSED": 1}
     acq_campaigns.sort(key=lambda c: (status_order.get(c["status"], 9), c["name"]))
+    _acq_campaigns_cache["data"] = acq_campaigns
+    _acq_campaigns_cache["time"] = now
     return {"campaigns": acq_campaigns}
 
 
