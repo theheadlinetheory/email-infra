@@ -231,8 +231,9 @@ def get_clients():
         return _clients_cache["data"]
     r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
     result = r.json() if r.status_code == 200 else []
-    _clients_cache["data"] = result
-    _clients_cache["time"] = now
+    if result:
+        _clients_cache["data"] = result
+        _clients_cache["time"] = now
     return result
 
 
@@ -273,8 +274,10 @@ def get_all_accounts():
             offset += 100
         else:
             break
-    _accounts_cache["data"] = accounts
-    _accounts_cache["time"] = now
+    # Only cache non-empty results (empty likely means rate-limited)
+    if accounts:
+        _accounts_cache["data"] = accounts
+        _accounts_cache["time"] = now
     return accounts
 
 
@@ -322,7 +325,7 @@ def get_health_metrics(days=7):
             f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
             headers=sl_internal_headers(),
             params={"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
-            timeout=60,
+            timeout=15,
         )
         if r.status_code != 200:
             return _health_cache["data"] or {}
@@ -451,17 +454,21 @@ _sync_running = False  # prevent overlapping syncs
 def _compute_overview():
     """Compute the full overview payload from live SmartLead data."""
     gc.collect()
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        f_clients = ex.submit(get_clients)
-        f_accounts = ex.submit(get_all_accounts)
-        f_warmup = ex.submit(get_warmup_start_dates)
-        f_health = ex.submit(get_health_metrics)
-        f_campaigns = ex.submit(get_global_campaign_counts)
-    clients = f_clients.result()
-    all_accounts = f_accounts.result()
-    warmup_dates = f_warmup.result()
-    health = f_health.result()
-    campaign_counts = f_campaigns.result()
+    print("[overview] Starting computation...")
+    # Sequential to avoid burning SmartLead rate limit (200 req/min)
+    clients = get_clients()
+    print(f"[overview] Got {len(clients)} clients")
+    all_accounts = get_all_accounts()
+    print(f"[overview] Got {len(all_accounts)} accounts")
+    print("[overview] Fetching warmup dates...")
+    warmup_dates = get_warmup_start_dates()
+    print(f"[overview] Got {len(warmup_dates)} warmup dates")
+    print("[overview] Fetching health metrics...", flush=True)
+    health = get_health_metrics()
+    print(f"[overview] Got {len(health)} health records", flush=True)
+    print("[overview] Fetching campaign counts...")
+    campaign_counts = get_global_campaign_counts()
+    print(f"[overview] Got {len(campaign_counts)} campaign counts")
 
     # Enrich accounts with accurate campaign counts
     for a in all_accounts:
@@ -1026,34 +1033,39 @@ def get_global_campaign_counts():
         campaigns = r.json() if r.status_code == 200 else []
         active_camps = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
 
-        def _fetch_camp_accounts(camp):
+        # Only fetch ACTIVE campaigns (skip PAUSED to save API calls)
+        active_only = [c for c in active_camps if c.get("status") == "ACTIVE"]
+        print(f"[campaigns] Fetching accounts for {len(active_only)} active campaigns (skipping {len(active_camps) - len(active_only)} paused)...")
+
+        deadline = time.time() + 60  # max 60 seconds for all campaign fetches
+        results = []
+        for i, camp in enumerate(active_only):
+            if time.time() > deadline:
+                print(f"[campaigns] Timeout after {i}/{len(active_only)} campaigns (60s limit)")
+                break
             camp_info = {
                 "id": camp["id"],
                 "name": camp.get("name", ""),
                 "status": camp.get("status", ""),
             }
-            for attempt in range(2):
-                try:
-                    cr = requests.get(
-                        f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
-                        timeout=30,
-                    )
-                    if cr.status_code == 200:
-                        camp_accounts = cr.json()
-                        if isinstance(camp_accounts, list):
-                            return [(ca.get("from_email", ""), camp_info) for ca in camp_accounts if ca.get("from_email")]
-                        break
-                    if cr.status_code == 429 and attempt == 0:
-                        time.sleep(5)
+            try:
+                cr = requests.get(
+                    f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+                    timeout=8,
+                )
+                if cr.status_code == 200:
+                    camp_accounts = cr.json()
+                    if isinstance(camp_accounts, list):
+                        results.append([(ca.get("from_email", ""), camp_info) for ca in camp_accounts if ca.get("from_email")])
                         continue
+                if cr.status_code == 429:
+                    print(f"[campaigns] Rate limited after {i}/{len(active_only)} campaigns")
                     break
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, ValueError):
-                    break
-            return []
-
-        # Fetch campaign accounts in parallel (2 at a time to stay under rate limits)
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            results = list(ex.map(_fetch_camp_accounts, active_camps))
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, ValueError):
+                pass
+            results.append([])
+            time.sleep(0.3)
+        print(f"[campaigns] Fetched {len(results)}/{len(active_only)} campaigns")
 
         for pairs in results:
             for email, camp_info in pairs:

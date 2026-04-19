@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime
 
 import httpx
@@ -32,6 +33,7 @@ if SUPABASE_KEY:
                     _e, len(SUPABASE_KEY), SUPABASE_KEY[:10], SUPABASE_KEY[-10:])
 
 _http: httpx.Client | None = None
+_http_lock = threading.Lock()
 
 
 def _get_http() -> httpx.Client:
@@ -58,9 +60,10 @@ def _get_http() -> httpx.Client:
 
 def _request(method: str, path: str, *, params: dict | None = None,
              json_body=None, headers: dict | None = None):
-    """Make a request to the Supabase REST API."""
+    """Make a request to the Supabase REST API (thread-safe)."""
     h = headers or {}
-    resp = _get_http().request(method, path, params=params, json=json_body, headers=h)
+    with _http_lock:
+        resp = _get_http().request(method, path, params=params, json=json_body, headers=h)
     resp.raise_for_status()
     if resp.status_code == 204 or not resp.content:
         return []
