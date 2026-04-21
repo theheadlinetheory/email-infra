@@ -192,3 +192,214 @@ def post_session_summary(decisions):
 def post_custom(message):
     """Post a custom Marsha-voiced message."""
     post_to_slack(f"{_greet()} {message}")
+
+
+# ---------------------------------------------------------------------------
+# Campaign-tag audit
+# ---------------------------------------------------------------------------
+
+# Client tag name → SmartLead tag ID (must match reference_smartlead_tags.md)
+CLIENT_TAGS = {
+    "Tropical Landscaping": 373673,
+    "Dallas Land Care": 317210,
+    "Lightning Lawn Care": 300713,
+    "Coastal Lawn Care": 300714,
+    "Kay's Landscaping": 350275,
+    "Timesavers Landscaping": 348097,
+    "Pioneer Landscaping": 356894,
+    "GM Landscaping & Design": 356893,
+    "Canopy Land Solutions": 370043,
+    "Borja Landscaping Construction": 370045,
+    "High Southern Scapes": 275208,
+    "Umbrella Property Services": 318577,
+    "Shade Tree Landscaping": 319587,
+}
+
+SMARTLEAD_API_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
+SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+GQL_URL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+SL_BASE = "https://server.smartlead.ai/api"
+
+
+def _gql_tagged_ids(tag_id):
+    """Get all email_account_ids with a given tag via GraphQL."""
+    query = (
+        "{ email_account_tag_mappings(where: {tag_id: {_eq: %d}}) "
+        "{ email_account_id } }" % tag_id
+    )
+    r = requests.post(
+        GQL_URL,
+        headers={"Authorization": f"Bearer {SMARTLEAD_JWT}"},
+        json={"query": query},
+        timeout=30,
+    )
+    data = r.json()
+    return set(
+        m["email_account_id"]
+        for m in data.get("data", {}).get("email_account_tag_mappings", [])
+    )
+
+
+def _campaign_account_ids(campaign_id):
+    """Get all email_account_ids on a campaign."""
+    r = requests.get(
+        f"{SL_BASE}/v1/campaigns/{campaign_id}/email-accounts",
+        params={"api_key": SMARTLEAD_API_KEY},
+        timeout=30,
+    )
+    return set(a["id"] for a in r.json())
+
+
+def _active_client_campaigns():
+    """Return list of active campaigns whose name contains 'client'."""
+    r = requests.get(
+        f"{SL_BASE}/v1/campaigns",
+        params={"api_key": SMARTLEAD_API_KEY},
+        timeout=30,
+    )
+    return [
+        c for c in r.json()
+        if c.get("status") == "ACTIVE" and "client" in c.get("name", "").lower()
+    ]
+
+
+def _match_campaign_to_tag(campaign_name):
+    """Match a campaign name to a client tag name. Returns (tag_name, tag_id) or None."""
+    name_lower = campaign_name.lower()
+    for tag_name, tag_id in CLIENT_TAGS.items():
+        if tag_name.lower().split()[0] in name_lower:
+            return tag_name, tag_id
+    return None
+
+
+def run_campaign_audit(fix=False):
+    """Audit all active client campaigns for tag-account alignment.
+
+    Returns dict with issues found. If fix=True, adds missing accounts.
+    """
+    campaigns = _active_client_campaigns()
+    issues = []
+    fixes = []
+
+    # Cache tagged IDs per tag to avoid redundant GQL calls
+    tag_cache = {}
+
+    for c in campaigns:
+        cid = c["id"]
+        cname = c["name"]
+        match = _match_campaign_to_tag(cname)
+        if not match:
+            log.warning("Campaign '%s' has no matching client tag", cname)
+            continue
+
+        tag_name, tag_id = match
+
+        if tag_id not in tag_cache:
+            tag_cache[tag_id] = _gql_tagged_ids(tag_id)
+        tagged = tag_cache[tag_id]
+
+        on_campaign = _campaign_account_ids(cid)
+        missing = tagged - on_campaign
+        volume = len(on_campaign) * 15
+
+        if missing:
+            issues.append({
+                "campaign": cname,
+                "campaign_id": cid,
+                "client_tag": tag_name,
+                "on_campaign": len(on_campaign),
+                "tagged_total": len(tagged),
+                "missing": len(missing),
+                "volume_before": volume,
+                "volume_after": len(tagged) * 15,
+            })
+
+            if fix:
+                try:
+                    r = requests.post(
+                        f"{SL_BASE}/v1/campaigns/{cid}/email-accounts",
+                        params={"api_key": SMARTLEAD_API_KEY},
+                        json={"email_account_ids": list(missing)},
+                        timeout=60,
+                    )
+                    if r.status_code == 200:
+                        fixes.append(f"{cname}: added {len(missing)} accounts ({volume}/day → {len(tagged)*15}/day)")
+                    else:
+                        fixes.append(f"{cname}: FAILED to add {len(missing)} accounts ({r.status_code})")
+                except Exception as e:
+                    fixes.append(f"{cname}: ERROR adding accounts — {e}")
+
+    # Also check for accounts on campaign that are NOT tagged (reverse problem)
+    untagged_issues = []
+    for c in campaigns:
+        cid = c["id"]
+        cname = c["name"]
+        match = _match_campaign_to_tag(cname)
+        if not match:
+            continue
+        tag_name, tag_id = match
+        tagged = tag_cache.get(tag_id, set())
+        on_campaign = _campaign_account_ids(cid)
+        extra = on_campaign - tagged
+        if extra:
+            untagged_issues.append({
+                "campaign": cname,
+                "campaign_id": cid,
+                "client_tag": tag_name,
+                "untagged_count": len(extra),
+                "untagged_ids": list(extra)[:10],
+            })
+
+    return {"issues": issues, "fixes": fixes, "untagged": untagged_issues}
+
+
+def _format_campaign_audit(result):
+    """Format campaign audit results into a Marsha-style message."""
+    issues = result["issues"]
+    fixes = result["fixes"]
+
+    if not issues and not fixes:
+        return (
+            f"{_greet()} Just finished my campaign audit — "
+            "every client campaign has all its tagged accounts assigned. "
+            "We're running at full capacity, baby! :white_check_mark:"
+        )
+
+    lines = [f"{_greet()} I ran my campaign audit and found some gaps:\n"]
+
+    if fixes:
+        lines.append(":wrench: *Fixed automatically:*")
+        for f in fixes:
+            lines.append(f"  • {f}")
+        lines.append("")
+    elif issues:
+        lines.append(":warning: *Campaigns with missing accounts:*")
+        for i in issues:
+            lines.append(
+                f"  • *{i['campaign']}* — {i['on_campaign']}/{i['tagged_total']} "
+                f"accounts ({i['volume_before']}/day, should be {i['volume_after']}/day)"
+            )
+        lines.append("")
+
+    untagged = result.get("untagged", [])
+    if untagged:
+        lines.append(":mag: *Accounts on campaigns WITHOUT the client tag:*")
+        for u in untagged:
+            lines.append(
+                f"  • *{u['campaign']}* — {u['untagged_count']} account(s) missing the "
+                f"`{u['client_tag']}` tag"
+            )
+        lines.append("")
+
+    lines.append("Tag your accounts, assign your campaigns — that's the rule, sugar. :eyes:")
+    return "\n".join(lines)
+
+
+def run_daily_audit(fix=False):
+    """Run the full daily audit and post results to Slack."""
+    log.info("Marsha daily audit starting")
+    result = run_campaign_audit(fix=fix)
+    msg = _format_campaign_audit(result)
+    post_to_slack(msg)
+    log.info("Marsha daily audit complete: %d issues, %d fixes", len(result["issues"]), len(result["fixes"]))
+    return result
