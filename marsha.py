@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -272,17 +272,74 @@ def _match_campaign_to_tag(campaign_name):
     return None
 
 
+MAX_CLIENT_VOLUME = 750  # Max emails/day per client campaign before flagging
+WARMUP_DAYS = 14  # Days required before an account is campaign-ready
+
+
+def _get_warmup_ready_ids(tag_id):
+    """Get account IDs with this tag that have completed warmup (14+ days).
+
+    Uses the date tag (M/D/YY format) to determine warmup start date.
+    Accounts without a parseable date tag are assumed ready.
+    """
+    query = (
+        "{ email_account_tag_mappings(where: {tag_id: {_eq: %d}}) {"
+        " email_account_id email_account {"
+        " email_account_tag_mappings { tag { name } } } } }" % tag_id
+    )
+    r = requests.post(
+        GQL_URL,
+        headers={"Authorization": f"Bearer {SMARTLEAD_JWT}"},
+        json={"query": query},
+        timeout=30,
+    )
+    data = r.json()
+    mappings = data.get("data", {}).get("email_account_tag_mappings", [])
+
+    cutoff = datetime.now() - timedelta(days=WARMUP_DAYS)
+    ready = set()
+    not_ready = set()
+
+    for m in mappings:
+        aid = m["email_account_id"]
+        all_tags = m.get("email_account", {}).get("email_account_tag_mappings", [])
+        found_date = False
+        for t in all_tags:
+            try:
+                dt = datetime.strptime(t["tag"]["name"], "%m/%d/%y")
+                found_date = True
+                if dt <= cutoff:
+                    ready.add(aid)
+                else:
+                    not_ready.add(aid)
+                break
+            except ValueError:
+                pass
+        if not found_date:
+            ready.add(aid)  # No date tag = assume ready
+
+    return ready, not_ready
+
+
 def run_campaign_audit(fix=False):
     """Audit all active client campaigns for tag-account alignment.
 
-    Returns dict with issues found. If fix=True, adds missing accounts.
+    Only adds accounts whose warmup is complete (14+ days).
+    Never removes accounts without flagging for manual review.
+    Flags campaigns exceeding MAX_CLIENT_VOLUME.
     """
     campaigns = _active_client_campaigns()
     issues = []
     fixes = []
+    volume_warnings = []
+    untagged_issues = []
+    warmup_on_campaign = []
 
-    # Cache tagged IDs per tag to avoid redundant GQL calls
-    tag_cache = {}
+    # Caches to avoid redundant API calls
+    ready_cache = {}
+    not_ready_cache = {}
+    all_tagged_cache = {}
+    campaign_acct_cache = {}
 
     for c in campaigns:
         cid = c["id"]
@@ -294,24 +351,36 @@ def run_campaign_audit(fix=False):
 
         tag_name, tag_id = match
 
-        if tag_id not in tag_cache:
-            tag_cache[tag_id] = _gql_tagged_ids(tag_id)
-        tagged = tag_cache[tag_id]
+        if tag_id not in ready_cache:
+            ready, not_ready = _get_warmup_ready_ids(tag_id)
+            ready_cache[tag_id] = ready
+            not_ready_cache[tag_id] = not_ready
+            all_tagged_cache[tag_id] = ready | not_ready
 
-        on_campaign = _campaign_account_ids(cid)
-        missing = tagged - on_campaign
+        ready = ready_cache[tag_id]
+        not_ready = not_ready_cache[tag_id]
+        all_tagged = all_tagged_cache[tag_id]
+
+        if cid not in campaign_acct_cache:
+            time.sleep(0.5)  # Rate limit protection
+            campaign_acct_cache[cid] = _campaign_account_ids(cid)
+        on_campaign = campaign_acct_cache[cid]
+
+        missing_ready = ready - on_campaign
         volume = len(on_campaign) * 15
 
-        if missing:
+        if missing_ready:
+            new_volume = (len(on_campaign) + len(missing_ready)) * 15
             issues.append({
                 "campaign": cname,
                 "campaign_id": cid,
                 "client_tag": tag_name,
                 "on_campaign": len(on_campaign),
-                "tagged_total": len(tagged),
-                "missing": len(missing),
+                "ready_total": len(ready),
+                "not_ready_total": len(not_ready),
+                "missing": len(missing_ready),
                 "volume_before": volume,
-                "volume_after": len(tagged) * 15,
+                "volume_after": new_volume,
             })
 
             if fix:
@@ -319,28 +388,32 @@ def run_campaign_audit(fix=False):
                     r = requests.post(
                         f"{SL_BASE}/v1/campaigns/{cid}/email-accounts",
                         params={"api_key": SMARTLEAD_API_KEY},
-                        json={"email_account_ids": list(missing)},
+                        json={"email_account_ids": list(missing_ready)},
                         timeout=60,
                     )
                     if r.status_code == 200:
-                        fixes.append(f"{cname}: added {len(missing)} accounts ({volume}/day → {len(tagged)*15}/day)")
+                        fixes.append(
+                            f"{cname}: added {len(missing_ready)} warmed accounts "
+                            f"({volume}/day → {new_volume}/day)"
+                        )
                     else:
-                        fixes.append(f"{cname}: FAILED to add {len(missing)} accounts ({r.status_code})")
+                        fixes.append(
+                            f"{cname}: FAILED to add accounts ({r.status_code})"
+                        )
                 except Exception as e:
-                    fixes.append(f"{cname}: ERROR adding accounts — {e}")
+                    fixes.append(f"{cname}: ERROR — {e}")
 
-    # Also check for accounts on campaign that are NOT tagged (reverse problem)
-    untagged_issues = []
-    for c in campaigns:
-        cid = c["id"]
-        cname = c["name"]
-        match = _match_campaign_to_tag(cname)
-        if not match:
-            continue
-        tag_name, tag_id = match
-        tagged = tag_cache.get(tag_id, set())
-        on_campaign = _campaign_account_ids(cid)
-        extra = on_campaign - tagged
+        # Flag if volume exceeds cap
+        current_or_new = (len(on_campaign) + len(missing_ready)) * 15 if missing_ready else volume
+        if current_or_new > MAX_CLIENT_VOLUME:
+            volume_warnings.append({
+                "campaign": cname,
+                "volume": current_or_new,
+                "accounts": len(on_campaign) + (len(missing_ready) if missing_ready else 0),
+            })
+
+        # Check for untagged accounts on this campaign
+        extra = on_campaign - all_tagged
         if extra:
             untagged_issues.append({
                 "campaign": cname,
@@ -350,7 +423,23 @@ def run_campaign_audit(fix=False):
                 "untagged_ids": list(extra)[:10],
             })
 
-    return {"issues": issues, "fixes": fixes, "untagged": untagged_issues}
+        # Check for not-ready accounts on this campaign
+        still_warming = on_campaign & not_ready
+        if still_warming:
+            warmup_on_campaign.append({
+                "campaign": cname,
+                "campaign_id": cid,
+                "count": len(still_warming),
+                "ids": list(still_warming)[:10],
+            })
+
+    return {
+        "issues": issues,
+        "fixes": fixes,
+        "untagged": untagged_issues,
+        "volume_warnings": volume_warnings,
+        "warmup_on_campaign": warmup_on_campaign,
+    }
 
 
 def _format_campaign_audit(result):
@@ -388,6 +477,25 @@ def _format_campaign_audit(result):
             lines.append(
                 f"  • *{u['campaign']}* — {u['untagged_count']} account(s) missing the "
                 f"`{u['client_tag']}` tag"
+            )
+        lines.append("")
+
+    volume_warnings = result.get("volume_warnings", [])
+    if volume_warnings:
+        lines.append(f":chart_with_upwards_trend: *Campaigns above {MAX_CLIENT_VOLUME}/day:*")
+        for v in volume_warnings:
+            lines.append(
+                f"  • *{v['campaign']}* — {v['accounts']} accounts, "
+                f"{v['volume']}/day"
+            )
+        lines.append("")
+
+    warmup = result.get("warmup_on_campaign", [])
+    if warmup:
+        lines.append(":hourglass_flowing_sand: *Still-warming accounts on live campaigns (should not be sending):*")
+        for w in warmup:
+            lines.append(
+                f"  • *{w['campaign']}* — {w['count']} account(s) still in warmup"
             )
         lines.append("")
 
