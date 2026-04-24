@@ -2898,6 +2898,9 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         return
 
     domains = [d["domain"] for d in pipeline.get("purchased_domains", [])]
+    # Also support newer pipeline format where domains is a dict keyed by domain name
+    if not domains and isinstance(pipeline.get("domains"), dict):
+        domains = list(pipeline["domains"].keys())
     if not domains:
         yield event(0, "error", "No domains in pipeline")
         return
