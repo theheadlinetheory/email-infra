@@ -2973,15 +2973,6 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
                 date_tag_name = warmup_date
             date_tag_id = sl_find_or_create_tag(date_tag_name, existing_tags=all_tags)
 
-        # Build the required 3-tag list
-        required_tags = []
-        if zapmail_tag_id:
-            required_tags.append(zapmail_tag_id)
-        if client_tag_id:
-            required_tags.append(client_tag_id)
-        if date_tag_id:
-            required_tags.append(date_tag_id)
-
         # Get all SmartLead accounts for these domains
         our_domains = set(domains)
         our_accounts = []
@@ -3006,6 +2997,32 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         if not our_accounts:
             yield event(2, "error", "No SmartLead accounts found for these domains")
             return
+
+        # Fallback: derive warmup date from accounts if pipeline doesn't have it
+        if not date_tag_id and our_accounts:
+            from datetime import datetime as dt
+            warmup_dates = []
+            for acc in our_accounts:
+                wd = (acc.get("warmup_details") or {}).get("warmup_created_at", "")
+                if wd:
+                    warmup_dates.append(wd[:10])
+            if warmup_dates:
+                earliest = min(warmup_dates)
+                try:
+                    d = dt.strptime(earliest, "%Y-%m-%d")
+                    date_tag_name = f"{d.month}/{d.day}/{d.strftime('%y')}"
+                    date_tag_id = sl_find_or_create_tag(date_tag_name, existing_tags=all_tags)
+                except ValueError:
+                    pass
+
+        # Build the required 3-tag list
+        required_tags = []
+        if zapmail_tag_id:
+            required_tags.append(zapmail_tag_id)
+        if client_tag_id:
+            required_tags.append(client_tag_id)
+        if date_tag_id:
+            required_tags.append(date_tag_id)
 
         # Set all accounts to exactly the 3 required tags
         for acc in our_accounts:
