@@ -3336,6 +3336,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
+        if self.path == "/healthz":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
         if not self._check_auth():
             return
         parsed = urlparse(self.path)
@@ -3758,46 +3764,46 @@ def cleanup_stuck_pipelines():
         print(f"Warning: could not clean up stuck pipelines: {e}")
 
 
+def _deferred_init():
+    """Run expensive initialization after the HTTP server is already listening."""
+    try:
+        print("Cleaning up stuck pipelines...", flush=True)
+        cleanup_stuck_pipelines()
+        print("Cleanup done", flush=True)
+
+        is_render = bool(os.environ.get("PORT")) and not os.environ.get("ENABLE_MONITOR")
+        if not is_render:
+            start_monitor_thread()
+            print("Infrastructure monitor started (checking every 4 hours)", flush=True)
+        else:
+            print("Infrastructure monitor DISABLED (Render free tier)", flush=True)
+
+        start_sync_thread()
+        print("SmartLead + Spaceship background sync started (every 2 minutes)", flush=True)
+
+        pipeline_engine.resume_running_pipelines()
+        print("Setup pipeline resume check complete", flush=True)
+
+        try:
+            snap = marsha.run_snapshot_check(get_all_accounts())
+            print(f"Marsha snapshot: {snap.get('accounts', 0)} accounts, {snap.get('diffs', 0)} diffs", flush=True)
+        except Exception as e:
+            print(f"Marsha snapshot failed (non-critical): {e}", flush=True)
+
+        print("Deferred initialization complete", flush=True)
+    except Exception as e:
+        print(f"Deferred init error (non-fatal): {e}", flush=True)
+
+
 def main():
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
 
-    # Clean up pipelines stuck from previous instance
-    print("Cleaning up stuck pipelines...", flush=True)
-    cleanup_stuck_pipelines()
-    print("Cleanup done", flush=True)
-
-    # Start background infrastructure monitor (auto-disabled on Render to save memory)
-    is_render = bool(os.environ.get("PORT")) and not os.environ.get("ENABLE_MONITOR")
-    print("Starting monitor...", flush=True)
-    if not is_render:
-        monitor = start_monitor_thread()
-        print("Infrastructure monitor started (checking every 4 hours)", flush=True)
-    else:
-        print("Infrastructure monitor DISABLED (Render free tier — set ENABLE_MONITOR=1 to override)", flush=True)
-
-    # Start background SmartLead → Supabase sync (every 2 minutes)
-    print("Starting sync thread...", flush=True)
-    start_sync_thread()
-    print("SmartLead + Spaceship background sync started (every 2 minutes)", flush=True)
-
-    # Resume any interrupted setup pipelines
-    print("Resuming pipelines...", flush=True)
-    pipeline_engine.resume_running_pipelines()
-    print("Setup pipeline resume check complete", flush=True)
-
-    # Take initial inbox snapshot via Marsha (posts to Slack if anomalies found)
-    print("Marsha running inbox snapshot...", flush=True)
-    try:
-        snap = marsha.run_snapshot_check(get_all_accounts())
-        print(f"Marsha snapshot: {snap.get('accounts', 0)} accounts, {snap.get('diffs', 0)} diffs", flush=True)
-    except Exception as e:
-        print(f"Marsha snapshot failed (non-critical): {e}", flush=True)
-
-    print(f"Binding to {host}:{port}...", flush=True)
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}", flush=True)
-    print("Press Ctrl+C to stop")
+
+    threading.Thread(target=_deferred_init, daemon=True).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
