@@ -144,11 +144,11 @@ function renderData(el, data, meta) {
 
 function clientCard(client) {
   const card = document.createElement('div');
-  card.className = `client-card ${client.flagged_inbox_count > 0 ? 'has-alert' : ''}`;
+  card.className = `client-card ${client.needs_attention ? 'has-alert' : ''}`;
 
-  const healthPct = client.avg_health != null ? `${Math.round(client.avg_health)}%` : '—';
-  const healthColor = (client.avg_health || 0) >= 90 ? 'var(--green)' :
-                      (client.avg_health || 0) >= 75 ? 'var(--yellow)' : 'var(--red)';
+  const healthPct = client.health_score != null ? `${Math.round(client.health_score)}%` : '—';
+  const healthColor = (client.health_score || 0) >= 90 ? 'var(--green)' :
+                      (client.health_score || 0) >= 75 ? 'var(--yellow)' : 'var(--red)';
 
   card.innerHTML = `
     <div class="cc-header">
@@ -156,10 +156,10 @@ function clientCard(client) {
       <span class="cc-count" style="color:${healthColor}">${healthPct}</span>
     </div>
     <div class="cc-stats">
-      <div class="cc-stat"><span class="label">Accounts</span><span>${client.account_count || 0}</span></div>
-      <div class="cc-stat"><span class="label">Domains</span><span>${client.domain_count || 0}</span></div>
+      <div class="cc-stat"><span class="label">Accounts</span><span>${client.accounts || 0}</span></div>
+      <div class="cc-stat"><span class="label">Domains</span><span>${client.total_domains || 0}</span></div>
       <div class="cc-stat"><span class="label">In Campaign</span><span>${client.in_campaign || 0}</span></div>
-      <div class="cc-stat"><span class="label">Flagged</span><span style="color:${client.flagged_inbox_count ? 'var(--red)' : 'inherit'}">${client.flagged_inbox_count || 0}</span></div>
+      <div class="cc-stat"><span class="label">Flagged</span><span style="color:${client.flagged_domains ? 'var(--red)' : 'inherit'}">${client.flagged_domains || 0}</span></div>
     </div>
   `;
 
