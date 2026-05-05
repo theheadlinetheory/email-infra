@@ -73,11 +73,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pw = params.get("pw", [None])[0]
 
         # Static assets — no auth required (login page needs these to render)
-        if path == "/" or path == "/index.html":
-            self._serve_file("index.html", "text/html", set_cookie=pw)
-            return
-        if path == "/dashboard.html":
+        if path == "/" or path == "/dashboard.html":
             self._serve_file("dashboard.html", "text/html", set_cookie=pw)
+            return
+        if path == "/v2" or path == "/v2/" or path == "/index.html":
+            self._serve_file("index.html", "text/html", set_cookie=pw)
             return
         if path.startswith("/css/") or path.startswith("/js/"):
             ext_map = {".css": "text/css", ".js": "application/javascript"}
