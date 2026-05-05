@@ -1,51 +1,59 @@
 """Firebase JWT verification for backend routes.
 
 Verifies tokens from the shared THT CRM Firebase project (tht-crm).
+Uses lightweight PyJWT + Google public keys instead of heavy firebase-admin SDK.
 Falls back to password-based auth when Firebase is not configured.
 """
 
 import os
 import json
+import time
 
-_firebase_app = None
-_firebase_initialized = False
+import jwt
+import requests
+from cachetools import TTLCache
+
+FIREBASE_PROJECT_ID = "tht-crm"
+GOOGLE_CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+
+_cert_cache = TTLCache(maxsize=1, ttl=3600)
 
 
-def _init_firebase():
-    """Initialize Firebase Admin SDK lazily."""
-    global _firebase_app, _firebase_initialized
-    if _firebase_initialized:
-        return _firebase_app
-
-    _firebase_initialized = True
-    try:
-        import firebase_admin
-        from firebase_admin import credentials
-
-        cred_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-        if cred_json:
-            cred_data = json.loads(cred_json)
-            cred = credentials.Certificate(cred_data)
-            _firebase_app = firebase_admin.initialize_app(cred)
-        elif os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            _firebase_app = firebase_admin.initialize_app()
-        else:
-            print("[auth] No Firebase credentials found — using password auth fallback")
-            return None
-    except Exception as e:
-        print(f"[auth] Firebase init failed: {e} — using password auth fallback")
-        return None
-    return _firebase_app
+def _get_google_certs():
+    """Fetch Google's public certs for Firebase JWT verification (cached 1hr)."""
+    if "certs" in _cert_cache:
+        return _cert_cache["certs"]
+    resp = requests.get(GOOGLE_CERTS_URL, timeout=10)
+    resp.raise_for_status()
+    certs = resp.json()
+    _cert_cache["certs"] = certs
+    return certs
 
 
 def verify_firebase_token(token):
     """Verify a Firebase JWT and return the decoded claims, or None on failure."""
-    app = _init_firebase()
-    if not app:
-        return None
     try:
-        from firebase_admin import auth
-        decoded = auth.verify_id_token(token, app=app)
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        if not kid:
+            return None
+
+        certs = _get_google_certs()
+        cert_pem = certs.get(kid)
+        if not cert_pem:
+            return None
+
+        decoded = jwt.decode(
+            token,
+            cert_pem,
+            algorithms=["RS256"],
+            audience=FIREBASE_PROJECT_ID,
+            issuer=f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}",
+        )
+
+        if decoded.get("exp", 0) < time.time():
+            return None
+
         return decoded
     except Exception:
         return None
@@ -57,7 +65,6 @@ def check_auth(handler):
     Tries Firebase JWT first (Authorization: Bearer <token>), then falls back
     to password-based auth (query param or cookie). Returns True if authorized.
     """
-    # Try Firebase JWT
     auth_header = handler.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
@@ -66,7 +73,6 @@ def check_auth(handler):
             handler._auth_user = claims
             return True
 
-    # Fall back to password auth
     password = os.environ.get("DASHBOARD_PASSWORD", "")
     if not password:
         return True
@@ -81,7 +87,6 @@ def check_auth(handler):
     if f"dashboard_pw={password}" in cookie:
         return True
 
-    # Unauthorized
     handler.send_response(401)
     handler.send_header("Content-Type", "application/json")
     handler.send_header("Access-Control-Allow-Origin", "*")
