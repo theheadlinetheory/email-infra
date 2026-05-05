@@ -67,6 +67,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"ok")
             return
+        if self.path.startswith("/api/auth-check"):
+            if self._check_auth():
+                self._json_response({"ok": True})
+            return
+
         if not self._check_auth():
             return
 

@@ -16,10 +16,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initAuth();
 
   // Wait for auth before rendering
-  store.subscribe('authReady', (ready) => {
+  store.subscribe('authReady', async (ready) => {
     if (!ready) return;
     const user = store.get('user');
     if (user) {
+      renderApp();
+    } else if (await hasPasswordAuth()) {
       renderApp();
     } else {
       renderLogin();
@@ -29,8 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
   store.subscribe('user', (user) => {
     if (user) {
       renderApp();
-    } else {
-      renderLogin();
     }
   });
 
@@ -39,6 +39,13 @@ document.addEventListener('DOMContentLoaded', () => {
     renderApp();
   }
 });
+
+async function hasPasswordAuth() {
+  try {
+    const resp = await fetch('/api/auth-check');
+    return resp.ok;
+  } catch { return false; }
+}
 
 function renderLogin() {
   const app = document.getElementById('app');
