@@ -37,6 +37,7 @@ let sseHandle = null;
 
 export function mount(el) {
   container = el;
+  container.className = 'client-detail';
   clientId = location.hash.split('/')[1] || null;
   if (!clientId) {
     el.innerHTML = '<p style="color:var(--text-muted);padding:24px;">No client selected</p>';
@@ -59,6 +60,7 @@ export function destroy() {
   unsubs = [];
   destroyChart();
   if (sseHandle) { sseHandle.close(); sseHandle = null; }
+  if (container) container.className = '';
   container = null;
   clientId = null;
   accountsData = null;
@@ -230,14 +232,14 @@ function render() {
   container.appendChild(actions);
 
   // ── Render Chart After DOM ──
-  requestAnimationFrame(() => {
-    const canvas = container.querySelector('#trend-chart');
+  setTimeout(() => {
+    const canvas = container?.querySelector('#trend-chart');
     if (canvas && trends && !trends.error && trends.data && trends.data.some(d => d.reply_rate !== null)) {
       renderTrendChart(canvas, trends);
     } else if (canvas) {
       renderNoChartData(canvas, 'No campaign data yet');
     }
-  });
+  }, 50);
 }
 
 // ── Chart Section ──
@@ -253,7 +255,7 @@ function buildChartSection(trends) {
 
   const titleEl = document.createElement('div');
   titleEl.style.cssText = 'font-size:14px;font-weight:600;';
-  titleEl.innerHTML = 'Campaign Performance <span style="font-size:11px;color:#666;font-weight:400;">(7-day rolling avg)</span>';
+  titleEl.innerHTML = 'Campaign Performance <span style="font-size:11px;color:var(--text-muted);font-weight:400;">(7-day rolling avg)</span>';
 
   const zoomBtns = document.createElement('div');
   zoomBtns.style.cssText = 'display:flex;gap:4px;';
@@ -423,9 +425,15 @@ function destroyChart() {
 function buildAccountsTable(accounts, data) {
   const wrapper = document.createElement('div');
 
-  const table = document.createElement('table');
-  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px;';
+  const title = document.createElement('h3');
+  title.style.cssText = 'font-size:15px;font-weight:600;margin:20px 0 12px;color:var(--text-primary);font-family:var(--font-display);';
+  title.textContent = `Email Accounts (${accounts.length})`;
+  wrapper.appendChild(title);
 
+  const scroll = document.createElement('div');
+  scroll.style.cssText = 'overflow-x:auto;';
+
+  const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th>Email</th><th>Health</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr>';
   table.appendChild(thead);
@@ -435,7 +443,8 @@ function buildAccountsTable(accounts, data) {
     tbody.appendChild(buildAccountRow(a));
   }
   table.appendChild(tbody);
-  wrapper.appendChild(table);
+  scroll.appendChild(table);
+  wrapper.appendChild(scroll);
   return wrapper;
 }
 
