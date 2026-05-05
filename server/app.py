@@ -67,20 +67,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"ok")
             return
-        if self.path.startswith("/api/auth-check"):
-            if self._check_auth():
-                self._json_response({"ok": True})
-            return
-
-        if not self._check_auth():
-            return
-
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
         pw = params.get("pw", [None])[0]
 
-        if path == "/":
+        # Static assets — no auth required (login page needs these to render)
+        if path == "/" or path == "/index.html":
             self._serve_file("index.html", "text/html", set_cookie=pw)
             return
         if path == "/dashboard.html":
@@ -93,6 +86,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/headshots/sean_reynolds.png":
             self._serve_file("headshots/sean_reynolds.png", "image/png")
+            return
+
+        # Auth-check probes its own auth
+        if path == "/api/auth-check":
+            if self._check_auth():
+                self._json_response({"ok": True})
+            return
+
+        # All other API routes require auth
+        if not self._check_auth():
             return
 
         if path.startswith("/api/"):
