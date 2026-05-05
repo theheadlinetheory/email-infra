@@ -858,7 +858,8 @@ def _sync_smartlead_data():
     try:
         print(f"[sync] Starting SmartLead → Supabase sync at {datetime.now().strftime('%H:%M:%S')}")
         overview = _compute_overview()
-        store.cache_set("overview", overview)
+        if overview.get("total_accounts", 0) > 0 or overview.get("clients"):
+            store.cache_set("overview", overview)
 
         # Pre-cache client accounts for each client
         for cl in overview.get("clients", []):
