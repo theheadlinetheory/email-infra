@@ -12,6 +12,7 @@ import sys
 import time
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -3800,7 +3801,11 @@ def main():
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
 
     from server.app import DashboardHandler as NewHandler
-    server = HTTPServer((host, port), NewHandler)
+
+    class ThreadedServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedServer((host, port), NewHandler)
     print(f"Dashboard running at http://{host}:{port}", flush=True)
 
     threading.Thread(target=_deferred_init, daemon=True).start()
