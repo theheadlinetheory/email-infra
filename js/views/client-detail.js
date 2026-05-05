@@ -167,13 +167,36 @@ function render() {
   leftHeader.appendChild(backBtn);
   leftHeader.appendChild(titleBlock);
 
+  const actionRow = document.createElement('div');
+  actionRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+
+  const genericBtn = document.createElement('button');
+  genericBtn.textContent = 'Convert to Generic';
+  genericBtn.style.cssText = 'background:var(--purple);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+  genericBtn.addEventListener('click', () => openConvertToGenericModal(data));
+
+  const transBtn2 = document.createElement('button');
+  transBtn2.textContent = 'Transition';
+  transBtn2.style.cssText = 'background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+  transBtn2.addEventListener('click', () => openTransitionModal(data));
+
+  const delBtn2 = document.createElement('button');
+  delBtn2.textContent = 'Delete';
+  delBtn2.style.cssText = 'background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+  delBtn2.addEventListener('click', () => openDeleteModal(data));
+
   const archBtn = document.createElement('button');
   archBtn.textContent = isArchived ? 'Unarchive' : 'Archive';
   archBtn.style.cssText = `background:none;border:1px solid var(--border);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:${isArchived ? '#22c55e' : 'var(--text-muted)'};`;
   archBtn.addEventListener('click', () => toggleArchive(data));
 
+  actionRow.appendChild(genericBtn);
+  actionRow.appendChild(transBtn2);
+  actionRow.appendChild(delBtn2);
+  actionRow.appendChild(archBtn);
+
   header.appendChild(leftHeader);
-  header.appendChild(archBtn);
+  header.appendChild(actionRow);
   container.appendChild(header);
 
   // ── Infrastructure Replacement Banner ──
@@ -213,23 +236,6 @@ function render() {
     container.appendChild(buildAccountsTable(accounts, data));
   }
 
-  // ── Delete + Transition Buttons ──
-  const actions = document.createElement('div');
-  actions.style.cssText = 'margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end;';
-
-  const transBtn = document.createElement('button');
-  transBtn.textContent = 'Transition to Another Client';
-  transBtn.style.cssText = 'background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border);padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
-  transBtn.addEventListener('click', () => openTransitionModal(data));
-
-  const delBtn = document.createElement('button');
-  delBtn.textContent = 'Delete All Infrastructure';
-  delBtn.style.cssText = 'background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
-  delBtn.addEventListener('click', () => openDeleteModal(data));
-
-  actions.appendChild(transBtn);
-  actions.appendChild(delBtn);
-  container.appendChild(actions);
 
   // ── Render Chart After DOM ──
   setTimeout(() => {
@@ -551,6 +557,99 @@ async function toggleArchive(data) {
   } catch (e) {
     showToast(`Archive error: ${e.message}`, 'error');
   }
+}
+
+// ── Convert to Generic Modal ──
+
+async function openConvertToGenericModal(data) {
+  const content = document.createElement('div');
+  content.innerHTML = `<div style="text-align:center;padding:12px;"><span class="spinner"></span> Fetching next generic name...</div>`;
+  openModal({ title: 'Convert to Generic Group', content });
+
+  let genericName;
+  try {
+    const resp = await apiGet('/api/next-generic-name');
+    genericName = resp.name || resp.generic_name;
+  } catch (e) {
+    content.innerHTML = `<p style="color:var(--red);">Failed to get generic name: ${esc(e.message)}</p>`;
+    return;
+  }
+
+  content.innerHTML = '';
+
+  const info = document.createElement('div');
+  info.style.cssText = 'margin-bottom:16px;';
+  info.innerHTML = `
+    <p style="font-size:14px;color:var(--text-secondary);margin-bottom:12px;">
+      This will convert <strong>${esc(data.client_name)}</strong>'s ${(data.accounts || []).length} accounts into a generic group for reuse with future clients.
+    </p>
+    <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:12px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">New group name</div>
+      <div style="font-size:16px;font-weight:600;color:var(--purple);">${esc(genericName)}</div>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);">Accounts will be removed from campaigns, retagged, and made available for assignment.</p>
+  `;
+  content.appendChild(info);
+
+  const fwdDiv = document.createElement('div');
+  fwdDiv.style.cssText = 'margin-bottom:16px;';
+  fwdDiv.innerHTML = `<label style="display:block;font-size:13px;color:var(--text-muted);margin-bottom:4px;">Forwarding Domain (for the generic group)</label>`;
+  const fwdInput = document.createElement('input');
+  fwdInput.type = 'text';
+  fwdInput.placeholder = 'e.g. theheadlinetheory.com';
+  fwdInput.value = 'theheadlinetheory.com';
+  fwdInput.style.cssText = 'width:100%;padding:9px 12px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius);font-size:14px;';
+  fwdDiv.appendChild(fwdInput);
+  content.appendChild(fwdDiv);
+
+  const convertBtn = document.createElement('button');
+  convertBtn.textContent = 'Convert to Generic';
+  convertBtn.style.cssText = 'width:100%;padding:10px;border:none;border-radius:6px;background:var(--purple);color:#fff;font-weight:600;cursor:pointer;font-size:14px;';
+  convertBtn.addEventListener('click', () => {
+    convertBtn.disabled = true;
+    convertBtn.textContent = 'Converting...';
+    info.style.display = 'none';
+    fwdDiv.style.display = 'none';
+
+    const progressWrap = document.createElement('div');
+    const progress = sseProgress({ steps: TRANSITION_STEPS, title: '' });
+    progressWrap.appendChild(progress.element);
+    content.appendChild(progressWrap);
+
+    sseHandle = connectSSE(
+      '/api/client/transition',
+      {
+        client_id: data.client_id,
+        client_name: data.client_name,
+        new_client_name: genericName,
+        forwarding_domain: fwdInput.value.trim() || 'theheadlinetheory.com',
+        is_new_client: true,
+      },
+      (event) => {
+        if (event.status === 'complete') {
+          progress.update({ step: TRANSITION_STEPS.length, total: TRANSITION_STEPS.length, status: 'done', message: 'Complete' });
+          showDoneButton(`Converted to ${genericName}!`, () => {
+            closeModal();
+            location.hash = '#overview';
+          });
+          return;
+        }
+        progress.update({
+          step: event.step,
+          total: event.total || TRANSITION_STEPS.length,
+          status: event.status,
+          message: event.message,
+        });
+        if (event.status === 'error') {
+          showDoneButton(event.message, closeModal, true);
+        }
+      },
+      (err) => {
+        showToast(`Convert error: ${err.message}`, 'error');
+      },
+    );
+  });
+  content.appendChild(convertBtn);
 }
 
 // ── Delete Modal ──
