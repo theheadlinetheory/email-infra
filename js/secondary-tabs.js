@@ -17,13 +17,12 @@ function renderZapmail() {
     var d = zmData;
 
     // Summary
-    var renewingSoon = d.clients.reduce((n, c) => n + c.renewing_soon, 0);
-    document.getElementById('zm-summary-row').innerHTML = `
-        <div class="stat-card good"><div class="value">${d.total_domains}</div><div class="label">Total Domains</div></div>
-        <div class="stat-card good"><div class="value">${d.total_mailboxes}</div><div class="label">Total Mailboxes</div></div>
-        <div class="stat-card good"><div class="value">${d.clients.length}</div><div class="label">Client Tags</div></div>
-        <div class="stat-card ${renewingSoon > 0 ? 'alert' : 'good'}"><div class="value">${renewingSoon}</div><div class="label">Renewing in 3 days</div></div>
-    `;
+    var renewingSoon = d.clients.reduce(function(n, c) { return n + c.renewing_soon; }, 0);
+    document.getElementById('zm-summary-row').innerHTML =
+        statCard(d.total_domains, 'Total Domains', 'good') +
+        statCard(d.total_mailboxes, 'Total Mailboxes', 'good') +
+        statCard(d.clients.length, 'Client Tags', 'good') +
+        statCard(renewingSoon, 'Renewing in 3 days', renewingSoon > 0 ? 'alert' : 'good');
 
     // Client cards with domain tables
     document.getElementById('zm-clients').innerHTML = d.clients.map(cl => {
@@ -121,11 +120,10 @@ async function loadDomains() {
 function renderDomains() {
     var d = domData;
 
-    document.getElementById('dom-summary-row').innerHTML = `
-        <div class="stat-card good"><div class="value">${d.total_domains}</div><div class="label">Total Domains</div></div>
-        <div class="stat-card ${d.expiring_soon > 0 ? 'alert' : 'good'}"><div class="value">${d.expiring_soon}</div><div class="label">Expiring in 14 days</div></div>
-        <div class="stat-card ${d.no_auto_renew_30d > 0 ? 'warn' : 'good'}"><div class="value">${d.no_auto_renew_30d}</div><div class="label">No Auto-Renew (30d)</div></div>
-    `;
+    document.getElementById('dom-summary-row').innerHTML =
+        statCard(d.total_domains, 'Total Domains', 'good') +
+        statCard(d.expiring_soon, 'Expiring in 14 days', d.expiring_soon > 0 ? 'alert' : 'good') +
+        statCard(d.no_auto_renew_30d, 'No Auto-Renew (30d)', d.no_auto_renew_30d > 0 ? 'warn' : 'good');
 
     // Alerts
     if (d.alerts.length > 0) {
@@ -249,12 +247,12 @@ async function loadSync() {
 
 function renderSync() {
     var d = syncData;
-    var html = '<div class="summary-row">';
-    html += `<div class="stat-card good"><div class="value">${d.total_checked}</div><div class="label">Domains Checked</div></div>`;
-    html += `<div class="stat-card ${d.mismatches.length > 0 ? 'alert' : 'good'}"><div class="value">${d.mismatches.length}</div><div class="label">Tag Mismatches</div></div>`;
-    html += `<div class="stat-card ${d.zapmail_only_count > 0 ? 'warn' : 'good'}"><div class="value">${d.zapmail_only_count}</div><div class="label">ZapMail Only</div></div>`;
-    html += `<div class="stat-card ${d.smartlead_only_count > 0 ? 'warn' : 'good'}"><div class="value">${d.smartlead_only_count}</div><div class="label">SmartLead Only</div></div>`;
-    html += '</div>';
+    var html = '<div class="summary-row">' +
+        statCard(d.total_checked, 'Domains Checked', 'good') +
+        statCard(d.mismatches.length, 'Tag Mismatches', d.mismatches.length > 0 ? 'alert' : 'good') +
+        statCard(d.zapmail_only_count, 'ZapMail Only', d.zapmail_only_count > 0 ? 'warn' : 'good') +
+        statCard(d.smartlead_only_count, 'SmartLead Only', d.smartlead_only_count > 0 ? 'warn' : 'good') +
+        '</div>';
 
     if (d.mismatches.length > 0) {
         html += '<h2 class="section-title">Tag Mismatches</h2>';
@@ -263,21 +261,18 @@ function renderSync() {
         });
     }
 
-    if (d.zapmail_only_count > 0) {
-        html += `<h2 class="section-title">In ZapMail but not SmartLead (${d.zapmail_only_count})</h2>`;
-        d.zapmail_only.forEach(domain => {
-            html += `<div class="sync-item"><span class="domain">${domain}</span></div>`;
-        });
-        if (d.zapmail_only_count > 20) html += `<div class="sync-item" style="color:var(--text-muted)">...and ${d.zapmail_only_count - 20} more</div>`;
-    }
-
-    if (d.smartlead_only_count > 0) {
-        html += `<h2 class="section-title">In SmartLead but not ZapMail (${d.smartlead_only_count})</h2>`;
-        d.smartlead_only.forEach(domain => {
-            html += `<div class="sync-item"><span class="domain">${domain}</span></div>`;
-        });
-        if (d.smartlead_only_count > 20) html += `<div class="sync-item" style="color:var(--text-muted)">...and ${d.smartlead_only_count - 20} more</div>`;
-    }
+    [
+        {title: 'In ZapMail but not SmartLead', items: d.zapmail_only, count: d.zapmail_only_count},
+        {title: 'In SmartLead but not ZapMail', items: d.smartlead_only, count: d.smartlead_only_count}
+    ].forEach(function(section) {
+        if (section.count > 0) {
+            html += '<h2 class="section-title">' + section.title + ' (' + section.count + ')</h2>';
+            section.items.forEach(function(domain) {
+                html += '<div class="sync-item"><span class="domain">' + domain + '</span></div>';
+            });
+            if (section.count > 20) html += '<div class="sync-item" style="color:var(--text-muted)">...and ' + (section.count - 20) + ' more</div>';
+        }
+    });
 
     if (d.mismatches.length === 0 && d.zapmail_only_count === 0 && d.smartlead_only_count === 0) {
         html += '<div class="sync-item" style="color:var(--accent);">Everything in sync!</div>';

@@ -95,6 +95,30 @@ function runSSEOperation(url, body, prefix, steps, totalSteps, onComplete, onErr
     });
 }
 
+// --- Shared modal helpers ---
+
+function populateClientDropdown(selectId, excludeClient) {
+    var select = document.getElementById(selectId);
+    select.innerHTML = '<option value="">Loading...</option>';
+    fetch('/api/clients/list').then(function(resp) {
+        return resp.json();
+    }).then(function(data) {
+        var clients = (data.clients || []);
+        if (excludeClient) clients = clients.filter(function(c) { return c !== excludeClient; });
+        var opts = '<option value="">Select a client...</option>';
+        clients.forEach(function(c) { opts += '<option value="' + c + '">' + c + '</option>'; });
+        opts += '<option value="__new__">+ Add New Client</option>';
+        select.innerHTML = opts;
+    }).catch(function() {
+        select.innerHTML = '<option value="">Error loading clients</option>';
+    });
+}
+
+function setButtonReady(btnId, ready) {
+    document.getElementById(btnId).disabled = !ready;
+    document.getElementById(btnId).style.opacity = ready ? '1' : '0.5';
+}
+
 // --- Assign to Client ---
 
 function openAssignModal(pipelineId, groupName) {
@@ -104,26 +128,10 @@ function openAssignModal(pipelineId, groupName) {
     document.getElementById('assign-progress').style.display = 'none';
     document.getElementById('ac-new-client-row').style.display = 'none';
     document.getElementById('ac-forwarding').value = '';
-    document.getElementById('ac-assign-btn').disabled = true;
-    document.getElementById('ac-assign-btn').style.opacity = '0.5';
+    setButtonReady('ac-assign-btn', false);
     document.getElementById('assign-overlay').style.display = 'block';
     document.getElementById('assign-modal').style.display = 'block';
-
-    // Populate client dropdown
-    var select = document.getElementById('ac-client-select');
-    select.innerHTML = '<option value="">Loading...</option>';
-    fetch('/api/clients/list').then(function(resp) {
-        return resp.json();
-    }).then(function(data) {
-        var opts = '<option value="">Select a client...</option>';
-        (data.clients || []).forEach(function(c) {
-            opts += '<option value="' + c + '">' + c + '</option>';
-        });
-        opts += '<option value="__new__">+ Add New Client</option>';
-        select.innerHTML = opts;
-    }).catch(function() {
-        select.innerHTML = '<option value="">Error loading clients</option>';
-    });
+    populateClientDropdown('ac-client-select');
 }
 
 function closeAssignModal() {
@@ -144,9 +152,7 @@ function checkAssignReady() {
     var newName = document.getElementById('ac-new-client-name').value.trim();
     var fwd = document.getElementById('ac-forwarding').value.trim();
     var hasClient = selectVal === '__new__' ? newName.length > 0 : selectVal.length > 0;
-    var ready = hasClient && fwd.length > 0;
-    document.getElementById('ac-assign-btn').disabled = !ready;
-    document.getElementById('ac-assign-btn').style.opacity = ready ? '1' : '0.5';
+    setButtonReady('ac-assign-btn', hasClient && fwd.length > 0);
 }
 
 function startAssignment() {
@@ -201,8 +207,7 @@ function openDeleteModal(clientId, clientName) {
     document.getElementById('del-step2').style.display = 'none';
     document.getElementById('delete-confirm').style.display = 'block';
     document.getElementById('delete-progress').style.display = 'none';
-    document.getElementById('del-final-btn').disabled = true;
-    document.getElementById('del-final-btn').style.opacity = '0.5';
+    setButtonReady('del-final-btn', false);
     document.getElementById('delete-overlay').style.display = 'block';
     document.getElementById('delete-modal').style.display = 'block';
 }
@@ -221,9 +226,7 @@ function showDeleteStep2() {
 function checkDeleteConfirm() {
     var input = document.getElementById('del-confirm-input').value.trim();
     var expected = document.getElementById('del-client-name').value.trim();
-    var match = input.toLowerCase() === expected.toLowerCase();
-    document.getElementById('del-final-btn').disabled = !match;
-    document.getElementById('del-final-btn').style.opacity = match ? '1' : '0.5';
+    setButtonReady('del-final-btn', input.toLowerCase() === expected.toLowerCase());
 }
 
 function startDeletion() {
@@ -259,27 +262,12 @@ function openTransitionModal(clientId, clientName) {
     document.getElementById('tr-source-label').textContent = 'Transitioning from: ' + clientName;
     document.getElementById('tr-new-client-row').style.display = 'none';
     document.getElementById('tr-forwarding').value = '';
-    document.getElementById('tr-start-btn').disabled = true;
-    document.getElementById('tr-start-btn').style.opacity = '0.5';
+    setButtonReady('tr-start-btn', false);
     document.getElementById('transition-form').style.display = 'block';
     document.getElementById('transition-progress').style.display = 'none';
     document.getElementById('transition-overlay').style.display = 'block';
     document.getElementById('transition-modal').style.display = 'block';
-
-    var select = document.getElementById('tr-client-select');
-    select.innerHTML = '<option value="">Loading...</option>';
-    fetch('/api/clients/list').then(function(resp) {
-        return resp.json();
-    }).then(function(data) {
-        var opts = '<option value="">Select a client...</option>';
-        (data.clients || []).filter(function(c) { return c !== clientName; }).forEach(function(c) {
-            opts += '<option value="' + c + '">' + c + '</option>';
-        });
-        opts += '<option value="__new__">+ Add New Client</option>';
-        select.innerHTML = opts;
-    }).catch(function() {
-        select.innerHTML = '<option value="">Error loading clients</option>';
-    });
+    populateClientDropdown('tr-client-select', clientName);
 }
 
 function closeTransitionModal() {
@@ -299,9 +287,7 @@ function checkTransitionReady() {
     var newName = document.getElementById('tr-new-client-name').value.trim();
     var fwd = document.getElementById('tr-forwarding').value.trim();
     var hasClient = selectVal === '__new__' ? newName.length > 0 : selectVal.length > 0;
-    var ready = hasClient && fwd.length > 0;
-    document.getElementById('tr-start-btn').disabled = !ready;
-    document.getElementById('tr-start-btn').style.opacity = ready ? '1' : '0.5';
+    setButtonReady('tr-start-btn', hasClient && fwd.length > 0);
 }
 
 function startTransition() {

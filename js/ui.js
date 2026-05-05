@@ -1,5 +1,10 @@
 // ── Theme + Toast + Shared Utilities ──
 
+function statCard(value, label, modifier) {
+    var cls = modifier ? 'stat-card ' + modifier : 'stat-card';
+    return '<div class="' + cls + '"><div class="value">' + value + '</div><div class="label">' + label + '</div></div>';
+}
+
 function initTheme() {
     var saved = localStorage.getItem('tht-theme');
     if (saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {

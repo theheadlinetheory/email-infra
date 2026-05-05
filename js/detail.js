@@ -1,5 +1,20 @@
 // ── Client Detail Panel + Trends ──
 
+function trendIndicator(trend) {
+    var icon = trend === 'up' ? '▲' : trend === 'down' ? '▼' : '▶';
+    var color = trend === 'up' ? '#22c55e' : trend === 'down' ? '#ef4444' : '#9ca3af';
+    return {icon: icon, color: color};
+}
+
+function renderNoChartData(canvas, message) {
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#666';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(message, canvas.width / 2, 100);
+}
+
 async function openDetail(clientId, clientName) {
     document.getElementById('detail-overlay').style.display = 'block';
     document.getElementById('detail-panel').style.display = 'block';
@@ -43,8 +58,9 @@ function renderDetailTable(data, trends) {
     var chartHtml = '';
     if (trends && !trends.error) {
         var s = trends.summary || {};
-        var trendIcon = s.trend === 'up' ? '&#9650;' : s.trend === 'down' ? '&#9660;' : '&#9654;';
-        var trendColor = s.trend === 'up' ? '#22c55e' : s.trend === 'down' ? '#ef4444' : '#9ca3af';
+        var ti = trendIndicator(s.trend);
+        var trendIcon = ti.icon;
+        var trendColor = ti.color;
         chartHtml = `<div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <div style="font-size:14px;font-weight:600;">Campaign Performance <span style="font-size:11px;color:#666;font-weight:400;">(7-day rolling avg)</span></div>
@@ -136,14 +152,7 @@ function renderDetailTable(data, trends) {
     if (trends && !trends.error && trends.data && trends.data.some(d => d.reply_rate !== null)) {
         renderTrendChart(trends);
     } else {
-        var canvas = document.getElementById('trend-chart');
-        if (canvas) {
-            var ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#666';
-            ctx.font = '14px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('No campaign data yet', canvas.width / 2, 100);
-        }
+        renderNoChartData(document.getElementById('trend-chart'), 'No campaign data yet');
     }
 }
 
@@ -155,18 +164,14 @@ function renderTrendChart(trends) {
 
     var points = trends.data.filter(d => d.reply_rate !== null);
     if (points.length === 0) {
-        var ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#666';
-        ctx.font = '14px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('No sending data in this period', canvas.width / 2, 100);
+        renderNoChartData(canvas, 'No sending data in this period');
         return;
     }
 
-    // Update summary stats
     var s = trends.summary || {};
-    var trendIcon = s.trend === 'up' ? '▲' : s.trend === 'down' ? '▼' : '▶';
-    var trendColor = s.trend === 'up' ? '#22c55e' : s.trend === 'down' ? '#ef4444' : '#9ca3af';
+    var ti = trendIndicator(s.trend);
+    var trendIcon = ti.icon;
+    var trendColor = ti.color;
     var summaryEl = document.getElementById('trend-summary');
     if (summaryEl) {
         summaryEl.innerHTML = `
@@ -263,9 +268,6 @@ async function loadTrends(days) {
         var resp = await fetch('/api/client/' + currentTrendClientId + '/trends?days=' + days);
         var trends = await resp.json();
         if (trends && !trends.error) {
-            // Update summary
-            var s = trends.summary || {};
-            var trendIcon = s.trend === 'up' ? '▲' : s.trend === 'down' ? '▼' : '▶';
             renderTrendChart(trends);
         }
     } catch(e) { console.error('Trend load error:', e); }

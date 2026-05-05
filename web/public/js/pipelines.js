@@ -1,10 +1,39 @@
 // ── Pipelines (Setup + Old Pipeline Tab) ──
 
+var STEP_LABELS = {
+    claim_domains: 'Claim Domains',
+    set_dns: 'Set DNS',
+    connect_zapmail: 'Connect ZapMail',
+    create_mailboxes: 'Create Mailboxes',
+    upload_photos: 'Upload Photos',
+    tag_and_configure: 'Tag & Configure',
+    export_to_smartlead: 'Export to SmartLead',
+    enable_warmup: 'Enable Warmup',
+    smartlead_tags: 'SmartLead Tags',
+    export_csv: 'Export CSV',
+    gcal_rotation: 'Schedule Rotation',
+    wait_for_warmup: 'Waiting for Warmup',
+    check_campaigns: 'Check Campaigns',
+    remove_old: 'Remove Old Inboxes',
+    cleanup: 'Cleanup',
+};
+
+function stepStatusIcon(status) {
+    if (status === 'completed') return '&#10003;';
+    if (status === 'running') return '&#9679;';
+    if (status === 'failed') return '&#10007;';
+    return '&#9675;';
+}
+
+function stepStatusColor(status) {
+    if (status === 'completed' || status === 'running') return 'var(--accent)';
+    if (status === 'failed') return 'var(--red)';
+    return 'var(--text-muted)';
+}
+
 function renderSetupPipelineSteps(steps) {
     return steps.map((s, i) => {
-        var icon = s.status === 'completed' ? '&#10003;' :
-                     s.status === 'running' ? '&#9679;' :
-                     s.status === 'failed' ? '&#10007;' : '&#9675;';
+        var icon = stepStatusIcon(s.status);
         var cls = s.status || 'pending';
         var connector = i < steps.length - 1
             ? '<div class="pill-connector ' + (s.status === 'completed' ? 'done' : 'pending') + '"></div>'
@@ -129,12 +158,8 @@ function showSetupPipelineDetail(id) {
         overlay.className = 'pipeline-modal-overlay';
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
         var stepsHtml = p.steps.map(s => {
-            var icon = s.status === 'completed' ? '&#10003;' :
-                         s.status === 'running' ? '&#9679;' :
-                         s.status === 'failed' ? '&#10007;' : '&#9675;';
-            var color = s.status === 'completed' ? 'var(--accent)' :
-                          s.status === 'running' ? 'var(--accent)' :
-                          s.status === 'failed' ? 'var(--red)' : 'var(--text-muted)';
+            var icon = stepStatusIcon(s.status);
+            var color = stepStatusColor(s.status);
             var timing = s.completed_at && s.started_at
                 ? Math.round((new Date(s.completed_at) - new Date(s.started_at)) / 1000) + 's'
                 : s.status === 'running' ? 'running...' : '';
@@ -255,6 +280,151 @@ async function loadPipelines() {
     document.getElementById('pipelines-loading').style.display = 'none';
 }
 
+function pipelineTypeLabel(type) {
+    if (type === 'new_setup') return 'New Setup';
+    if (type === 'acquisition') return 'Acquisition';
+    return 'Replacement';
+}
+
+function pipelineStatusColor(status) {
+    if (status === 'complete') return '#22c55e';
+    if (status === 'error') return '#ef4444';
+    if (status === 'awaiting_removal') return '#f59e0b';
+    return '#8b5cf6';
+}
+
+function pipelineStatusLabel(status) {
+    if (status === 'awaiting_removal') return 'Awaiting Removal';
+    return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function renderPipelineStepPills(p) {
+    if (p.status === 'complete') return '';
+    var allSteps = p.steps || [];
+    var currentIdx = allSteps.indexOf(p.current_step);
+    var stepSuffix = (p.retry_info && p.status === 'running')
+        ? ' (attempt ' + p.retry_info.attempt + '/' + p.retry_info.max_attempts + ')'
+        : '';
+
+    var pills = allSteps.map(function(s, i) {
+        var color, textColor;
+        if (i < currentIdx) { color = '#22c55e'; textColor = '#fff'; }
+        else if (i === currentIdx) { color = p.status === 'error' ? '#ef4444' : '#8b5cf6'; textColor = '#fff'; }
+        else { color = '#333'; textColor = '#666'; }
+        var label = (STEP_LABELS[s] || s) + (i === currentIdx ? stepSuffix : '');
+        return '<div style="background:' + color + ';padding:4px 10px;border-radius:4px;font-size:11px;color:' + textColor + ';" title="' + label + '">' + label + '</div>';
+    }).join('');
+
+    return '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">' + pills + '</div>';
+}
+
+function domainStatusBadge(stepStatus) {
+    if (stepStatus === 'complete') return '<span style="color:var(--accent);font-weight:500;">Complete</span>';
+    if (stepStatus === 'error') return '<span style="color:var(--red);font-weight:500;">Error</span>';
+    if (stepStatus === 'pending') return '<span style="color:var(--text-muted);">Pending</span>';
+    return '<span style="color:var(--purple);font-weight:500;">Running</span>';
+}
+
+function renderDomainDetailTable(dd) {
+    var thStyle = 'text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);';
+    var html = '<div style="margin-top:12px;background:var(--bg-input);border-radius:8px;padding:12px;overflow-x:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+    html += '<thead><tr>';
+    html += '<th style="' + thStyle + '">Domain</th>';
+    html += '<th style="' + thStyle + '">Status</th>';
+    html += '<th style="' + thStyle + '">Error</th>';
+    html += '<th style="' + thStyle + '">Attempts</th>';
+    html += '</tr></thead><tbody>';
+
+    var tdStyle = 'padding:6px 8px;border-bottom:1px solid var(--border-light);';
+    for (var domain in dd) {
+        var detail = dd[domain];
+        var errorText = detail.error || '—';
+        var attemptText = detail.step_status === 'error'
+            ? detail.attempt + '/' + detail.max_attempts + ' failed'
+            : detail.step_status === 'complete' ? '—' : detail.attempt + '/' + detail.max_attempts;
+        html += '<tr>';
+        html += '<td style="' + tdStyle + 'color:var(--text-primary);">' + domain + '</td>';
+        html += '<td style="' + tdStyle + '">' + domainStatusBadge(detail.step_status) + '</td>';
+        html += '<td style="' + tdStyle + 'color:#f8a0a0;font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;">' + errorText + '</td>';
+        html += '<td style="' + tdStyle + 'color:var(--text-muted);">' + attemptText + '</td>';
+        html += '</tr>';
+    }
+
+    html += '</tbody></table></div>';
+    return html;
+}
+
+function renderPipelineErrorActions(p, dd) {
+    var failedCount = 0;
+    for (var dk in dd) { if (dd[dk].step_status === 'error') failedCount++; }
+    return '<div style="margin-top:12px;display:flex;gap:12px;align-items:center;">' +
+        '<button onclick="retryPipeline(\'' + p.id + '\')" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">Retry Failed (' + failedCount + ')</button>' +
+        '<button onclick="skipPipelineStep(\'' + p.id + '\',\'' + p.current_step + '\')" style="background:none;color:var(--red);border:1px solid #5c1a1a;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">Skip Step</button>' +
+    '</div>';
+}
+
+function renderPendingRemovals(pendingRemovals) {
+    var html = '<div style="background:var(--red-bg);border:1px solid #3d1519;border-radius:8px;padding:12px;margin-top:12px;">';
+    html += '<div style="color:var(--red);font-weight:600;margin-bottom:8px;">Inboxes need removal from campaigns</div>';
+    for (var email in pendingRemovals) {
+        var camps = pendingRemovals[email];
+        html += '<div style="margin-bottom:8px;"><div style="font-size:13px;color:#f8a0a0;">' + email + ' is in ' + camps.length + ' campaign(s):</div>';
+        camps.forEach(function(c) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 4px 16px;font-size:12px;">';
+            html += '<span style="color:var(--text-muted);">' + c.campaign_name + '</span>';
+            html += '<button onclick="removeFromCampaign(\'' + email + '\',' + c.campaign_id + ')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Remove</button></div>';
+        });
+        html += '<button onclick="removeFromAllCampaigns(\'' + email + '\')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Remove from all campaigns</button>';
+        html += '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
+function renderPipelineCard(p) {
+    var html = '<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+    html += '<div><span style="font-size:16px;font-weight:600;">' + p.client_name + '</span>';
+    html += '<span style="font-size:13px;color:var(--text-muted);margin-left:12px;">' + pipelineTypeLabel(p.type) + '</span></div>';
+    html += '<span style="color:' + pipelineStatusColor(p.status) + ';font-weight:500;">' + pipelineStatusLabel(p.status) + '</span></div>';
+    html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Domains: ' + p.domains.length + '</div>';
+    html += '<div style="font-size:12px;color:var(--text-muted);">Started: ' + new Date(p.created_at).toLocaleString() + '</div>';
+
+    html += renderPipelineStepPills(p);
+
+    var dd = p.domain_details || {};
+    var hasErrors = false;
+    for (var dk in dd) { if (dd[dk].step_status === 'error') { hasErrors = true; break; } }
+    if ((p.status === 'error' || hasErrors) && Object.keys(dd).length > 0) {
+        html += renderDomainDetailTable(dd);
+    }
+
+    if (p.status === 'error') {
+        html += renderPipelineErrorActions(p, dd);
+    }
+
+    if (p.status === 'awaiting_removal' && p.pending_removals) {
+        html += renderPendingRemovals(p.pending_removals);
+    }
+
+    var isGeneric = p.client_name && p.client_name.toLowerCase().indexOf('generic') === 0;
+    if (isGeneric && (p.status === 'complete' || p.status === 'running')) {
+        html += '<div style="margin-top:12px;display:flex;justify-content:flex-end;">';
+        html += '<button onclick="event.stopPropagation();openAssignModal(\'' + p.id + '\',\'' + p.client_name.replace(/'/g, "\\'") + '\')" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>';
+        html += '</div>';
+    }
+
+    if (p.errors && p.errors.length > 0) {
+        html += '<div style="margin-top:8px;font-size:12px;color:var(--red);">';
+        p.errors.forEach(function(e) { html += '<div>' + e + '</div>'; });
+        html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+}
+
 function renderPipelines() {
     var pipelines = pipelineData.pipelines || [];
 
@@ -272,131 +442,7 @@ function renderPipelines() {
         return;
     }
 
-    var stepLabels = {
-        claim_domains: 'Claim Domains',
-        set_dns: 'Set DNS',
-        connect_zapmail: 'Connect ZapMail',
-        create_mailboxes: 'Create Mailboxes',
-        upload_photos: 'Upload Photos',
-        tag_and_configure: 'Tag & Configure',
-        export_to_smartlead: 'Export to SmartLead',
-        enable_warmup: 'Enable Warmup',
-        smartlead_tags: 'SmartLead Tags',
-        export_csv: 'Export CSV',
-        gcal_rotation: 'Schedule Rotation',
-        wait_for_warmup: 'Waiting for Warmup',
-        check_campaigns: 'Check Campaigns',
-        remove_old: 'Remove Old Inboxes',
-        cleanup: 'Cleanup',
-    };
-
-    var html = '';
-    pipelines.forEach(p => {
-        var statusColor = p.status === 'complete' ? '#22c55e' : p.status === 'error' ? '#ef4444' : p.status === 'awaiting_removal' ? '#f59e0b' : '#8b5cf6';
-        var statusLabel = p.status === 'awaiting_removal' ? 'Awaiting Removal' : p.status.charAt(0).toUpperCase() + p.status.slice(1);
-
-        var stepSuffix = '';
-        if (p.retry_info && p.status === 'running') {
-            stepSuffix = ' (attempt ' + p.retry_info.attempt + '/' + p.retry_info.max_attempts + ')';
-        }
-
-        html += '<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
-        html += '<div><span style="font-size:16px;font-weight:600;">' + p.client_name + '</span>';
-        html += '<span style="font-size:13px;color:var(--text-muted);margin-left:12px;">' + (p.type === 'new_setup' ? 'New Setup' : p.type === 'acquisition' ? 'Acquisition' : 'Replacement') + '</span></div>';
-        html += '<span style="color:' + statusColor + ';font-weight:500;">' + statusLabel + '</span></div>';
-        html += '<div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">Domains: ' + p.domains.length + '</div>';
-        html += '<div style="font-size:12px;color:var(--text-muted);">Started: ' + new Date(p.created_at).toLocaleString() + '</div>';
-
-        if (p.status !== 'complete') {
-            var allSteps = p.steps || [];
-            var currentIdx = allSteps.indexOf(p.current_step);
-            html += '<div style="display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;">';
-            allSteps.forEach(function(s, i) {
-                var color, textColor;
-                if (i < currentIdx) { color = '#22c55e'; textColor = '#fff'; }
-                else if (i === currentIdx) { color = p.status === 'error' ? '#ef4444' : '#8b5cf6'; textColor = '#fff'; }
-                else { color = '#333'; textColor = '#666'; }
-                var label = (stepLabels[s] || s) + (i === currentIdx ? stepSuffix : '');
-                html += '<div style="background:' + color + ';padding:4px 10px;border-radius:4px;font-size:11px;color:' + textColor + ';" title="' + label + '">' + label + '</div>';
-            });
-            html += '</div>';
-        }
-
-        var dd = p.domain_details || {};
-        var hasErrors = false;
-        for (var dk in dd) { if (dd[dk].step_status === 'error') { hasErrors = true; break; } }
-        if ((p.status === 'error' || hasErrors) && Object.keys(dd).length > 0) {
-            html += '<div style="margin-top:12px;background:var(--bg-input);border-radius:8px;padding:12px;overflow-x:auto;">';
-            html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-            html += '<thead><tr><th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Domain</th>';
-            html += '<th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Status</th>';
-            html += '<th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Error</th>';
-            html += '<th style="text-align:left;padding:6px 8px;color:var(--text-muted);border-bottom:1px solid var(--border);">Attempts</th></tr></thead><tbody>';
-            for (var domain in dd) {
-                var detail = dd[domain];
-                var statusBadge = detail.step_status === 'complete'
-                    ? '<span style="color:var(--accent);font-weight:500;">Complete</span>'
-                    : detail.step_status === 'error'
-                    ? '<span style="color:var(--red);font-weight:500;">Error</span>'
-                    : detail.step_status === 'pending'
-                    ? '<span style="color:var(--text-muted);">Pending</span>'
-                    : '<span style="color:var(--purple);font-weight:500;">Running</span>';
-                var errorText = detail.error || '—';
-                var attemptText = detail.step_status === 'error'
-                    ? detail.attempt + '/' + detail.max_attempts + ' failed'
-                    : detail.step_status === 'complete' ? '—' : detail.attempt + '/' + detail.max_attempts;
-                html += '<tr><td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:var(--text-primary);">' + domain + '</td>';
-                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border-light);">' + statusBadge + '</td>';
-                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:#f8a0a0;font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;">' + errorText + '</td>';
-                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:var(--text-muted);">' + attemptText + '</td></tr>';
-            }
-            html += '</tbody></table></div>';
-        }
-
-        if (p.status === 'error') {
-            var failedCount = 0;
-            for (var dk2 in dd) { if (dd[dk2].step_status === 'error') failedCount++; }
-            html += '<div style="margin-top:12px;display:flex;gap:12px;align-items:center;">';
-            html += '<button onclick="retryPipeline(\'' + p.id + '\')" style="background:var(--accent);color:var(--bg-root);border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">Retry Failed (' + failedCount + ')</button>';
-            html += '<button onclick="skipPipelineStep(\'' + p.id + '\',\'' + p.current_step + '\')" style="background:none;color:var(--red);border:1px solid #5c1a1a;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">Skip Step</button>';
-            html += '</div>';
-        }
-
-        if (p.status === 'awaiting_removal' && p.pending_removals) {
-            html += '<div style="background:var(--red-bg);border:1px solid #3d1519;border-radius:8px;padding:12px;margin-top:12px;">';
-            html += '<div style="color:var(--red);font-weight:600;margin-bottom:8px;">Inboxes need removal from campaigns</div>';
-            for (var email in p.pending_removals) {
-                var camps = p.pending_removals[email];
-                html += '<div style="margin-bottom:8px;"><div style="font-size:13px;color:#f8a0a0;">' + email + ' is in ' + camps.length + ' campaign(s):</div>';
-                camps.forEach(function(c) {
-                    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 4px 16px;font-size:12px;">';
-                    html += '<span style="color:var(--text-muted);">' + c.campaign_name + '</span>';
-                    html += '<button onclick="removeFromCampaign(\'' + email + '\',' + c.campaign_id + ')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Remove</button></div>';
-                });
-                html += '<button onclick="removeFromAllCampaigns(\'' + email + '\')" style="background:var(--red-bg);color:var(--red);border:1px solid #3d1519;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Remove from all campaigns</button>';
-                html += '</div>';
-            }
-            html += '</div>';
-        }
-
-        var isGeneric = p.client_name && p.client_name.toLowerCase().indexOf('generic') === 0;
-        if (isGeneric && (p.status === 'complete' || p.status === 'running')) {
-            html += '<div style="margin-top:12px;display:flex;justify-content:flex-end;">';
-            html += '<button onclick="event.stopPropagation();openAssignModal(\'' + p.id + '\',\'' + p.client_name.replace(/'/g, "\\'") + '\')" style="background:var(--purple);color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;">Assign to Client</button>';
-            html += '</div>';
-        }
-
-        if (p.errors && p.errors.length > 0) {
-            html += '<div style="margin-top:8px;font-size:12px;color:var(--red);">';
-            p.errors.forEach(function(e) { html += '<div>' + e + '</div>'; });
-            html += '</div>';
-        }
-
-        html += '</div>';
-    });
-
-    document.getElementById('pipelines-content').innerHTML = html;
+    document.getElementById('pipelines-content').innerHTML = pipelines.map(renderPipelineCard).join('');
 }
 
 async function removeFromCampaign(email, campaignId) {
@@ -428,21 +474,14 @@ async function retryPipeline(pipelineId, domains) {
 }
 
 async function skipPipelineStep(pipelineId, stepName) {
-    var stepLabels = {
-        claim_domains: 'Claim Domains', set_dns: 'Set DNS', connect_zapmail: 'Connect ZapMail',
-        create_mailboxes: 'Create Mailboxes', upload_photos: 'Upload Photos',
-        tag_and_configure: 'Tag & Configure', export_to_smartlead: 'Export to SmartLead',
-        enable_warmup: 'Enable Warmup', smartlead_tags: 'SmartLead Tags',
-        export_csv: 'Export CSV', gcal_rotation: 'Schedule Rotation',
-    };
-    var label = stepLabels[stepName] || stepName;
+    var label = STEP_LABELS[stepName] || stepName;
     if (!confirm('Skip "' + label + '"? Domains that failed this step may have incomplete setup. This should only be used as a last resort.')) return;
     try {
         var result = await apiPost('/api/pipeline/skip-step', {pipeline_id: pipelineId});
         if (result.error) {
             alert('Skip failed: ' + result.error);
         } else {
-            alert('Skipped ' + label + '. Pipeline moving to: ' + (stepLabels[result.next_step] || result.next_step));
+            alert('Skipped ' + label + '. Pipeline moving to: ' + (STEP_LABELS[result.next_step] || result.next_step));
             loadPipelines();
             startPipelinePolling();
         }

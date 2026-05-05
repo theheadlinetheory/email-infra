@@ -1,19 +1,57 @@
+function safeParseJson(resp) {
+    if (!resp || !resp.ok) return Promise.resolve(null);
+    return resp.json().catch(function() { return null; });
+}
+
+function rateColor(value, thresholds) {
+    if (value === null || value === undefined) return 'var(--text-muted)';
+    if (thresholds.ascending) {
+        if (value > thresholds.good) return 'var(--accent)';
+        if (value > thresholds.warn) return '#f59e0b';
+        return '#ef4444';
+    }
+    if (value > thresholds.bad) return '#ef4444';
+    if (value > thresholds.warn) return '#f59e0b';
+    return 'var(--accent)';
+}
+
+function rateDisplay(value) {
+    return (value !== null && value !== undefined) ? value + '%' : '—';
+}
+
+function computeAverageRate(items, field) {
+    var values = items.filter(function(c) { return c[field] !== null && c[field] !== undefined && c[field] > 0; }).map(function(c) { return c[field]; });
+    return values.length ? (values.reduce(function(a, b) { return a + b; }, 0) / values.length).toFixed(1) : '—';
+}
+
+function rateCssClass(value, thresholds) {
+    if (value === '—') return 'good';
+    var n = parseFloat(value);
+    if (thresholds.ascending) {
+        if (n > thresholds.good) return 'good';
+        if (n > thresholds.warn) return 'warn';
+        return 'alert';
+    }
+    if (n > thresholds.bad) return 'alert';
+    if (n > thresholds.warn) return 'warn';
+    return 'good';
+}
+
 async function loadOverview() {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('content').style.display = 'none';
 
     try {
-        // Load ALL sections in parallel — show nothing until everything is ready
         var [overviewResp, unassignedResp, genericResp, acquisitionResp, inventoryResp, rotationResp, setupPipelineResp, genericSetupResp, untaggedResp] = await Promise.all([
             fetch('/api/overview'),
-            fetch('/api/unassigned').catch(() => null),
-            fetch('/api/generic-groups').catch(() => null),
-            fetch('/api/acquisition').catch(() => null),
-            fetch('/api/domain-inventory').catch(() => null),
-            fetch('/api/rotation/status').catch(() => null),
-            fetch('/api/setup-pipelines').catch(() => null),
-            fetch('/api/generic-groups-status').catch(() => null),
-            fetch('/api/untagged-count').catch(() => null),
+            fetch('/api/unassigned').catch(function() { return null; }),
+            fetch('/api/generic-groups').catch(function() { return null; }),
+            fetch('/api/acquisition').catch(function() { return null; }),
+            fetch('/api/domain-inventory').catch(function() { return null; }),
+            fetch('/api/rotation/status').catch(function() { return null; }),
+            fetch('/api/setup-pipelines').catch(function() { return null; }),
+            fetch('/api/generic-groups-status').catch(function() { return null; }),
+            fetch('/api/untagged-count').catch(function() { return null; }),
         ]);
 
         var text = await overviewResp.text();
@@ -28,99 +66,94 @@ async function loadOverview() {
             return;
         }
 
-        // Parse sub-section responses
-        var unassignedData = null, genericData = null, acquisitionData = null;
-        try { if (unassignedResp) unassignedData = await unassignedResp.json(); } catch(e) {}
-        try { if (genericResp) genericData = await genericResp.json(); } catch(e) {}
-        try { if (acquisitionResp) acquisitionData = await acquisitionResp.json(); } catch(e) {}
+        var unassignedData = await safeParseJson(unassignedResp);
+        var genericData = await safeParseJson(genericResp);
+        var acquisitionData = await safeParseJson(acquisitionResp);
         acquisitionDataGlobal = acquisitionData;
-        if (inventoryResp && inventoryResp.ok) {
-            try { inventoryData = await inventoryResp.json(); } catch(e) {}
-        }
-        var rotationData = null;
-        if (rotationResp && rotationResp.ok) {
-            try { rotationData = await rotationResp.json(); } catch(e) {}
-        }
+        inventoryData = await safeParseJson(inventoryResp);
+        var rotationData = await safeParseJson(rotationResp);
+        var untaggedData = await safeParseJson(untaggedResp);
 
-        var untaggedData = null;
-        try { untaggedData = untaggedResp && untaggedResp.ok ? await untaggedResp.json() : null; } catch(e) {}
-
-        // Render untagged alert — only in fulfillment/clients mode
-        var untaggedAlert = document.getElementById('untagged-alert');
-        if (currentMode === 'fulfillment' && untaggedData && untaggedData.untagged_count > 0) {
-            document.getElementById('untagged-alert-text').textContent =
-                '⚠ ' + untaggedData.untagged_count + ' accounts have no client assignment and may be missing tags. Run fix_untagged.py to remediate.';
-            untaggedAlert.style.display = 'flex';
-        } else if (untaggedAlert) {
-            untaggedAlert.style.display = 'none';
-        }
-
-        // Render everything at once — no layout shifts
+        renderUntaggedAlert(untaggedData);
         renderOverview();
-
-        if (unassignedData && unassignedData.count > 0) {
-            document.getElementById('unassigned-section').style.display = 'block';
-            renderUnassigned(unassignedData.accounts);
-        } else {
-            document.getElementById('unassigned-section').style.display = 'none';
-        }
-
-        if (genericData && genericData.groups && genericData.groups.length > 0) {
-            document.getElementById('generic-section').style.display = 'block';
-            var ready = genericData.groups.filter(g => g.status === 'ready').length;
-            var warming = genericData.groups.filter(g => g.status === 'warming').length;
-            document.getElementById('generic-stats').innerHTML = `
-                <div class="stat-card"><div class="value">${genericData.total_accounts}</div><div class="label">Generic Inboxes</div></div>
-                <div class="stat-card good"><div class="value">${ready}</div><div class="label">Ready for Clients</div></div>
-                ${warming > 0 ? '<div class="stat-card warn"><div class="value">' + warming + '</div><div class="label">Still Warming</div></div>' : ''}
-                <div class="stat-card"><div class="value">${genericData.total_daily_capacity}/day</div><div class="label">Total Capacity</div></div>
-            `;
-            renderGenericGroups(genericData.groups);
-        } else {
-            document.getElementById('generic-section').style.display = 'none';
-        }
-
-        if (acquisitionData && acquisitionData.total_groups > 0) {
-            // Only show if in acquisition mode; populate data either way
-            document.getElementById('acquisition-section').style.display = currentMode === 'acquisition' ? 'block' : 'none';
-            document.getElementById('acquisition-stats').innerHTML = `
-                <div class="stat-card"><div class="value">${acquisitionData.total_accounts}</div><div class="label">Acquisition Inboxes</div></div>
-                <div class="stat-card"><div class="value">${acquisitionData.total_groups}</div><div class="label">Active Groups</div></div>
-            `;
-            renderAcqAlerts(acquisitionData);
-            renderAcquisitionGroups(acquisitionData.groups);
-        } else {
-            document.getElementById('acquisition-section').style.display = 'none';
-        }
-
-        var setupPipelineData = null;
-        try { if (setupPipelineResp) setupPipelineData = await setupPipelineResp.json(); } catch(e) {}
-
-        if (setupPipelineData && setupPipelineData.pipelines && setupPipelineData.pipelines.length > 0) {
-            renderSetupPipelines(setupPipelineData.pipelines);
-            var hasRunning = setupPipelineData.pipelines.some(p => p.status === 'running');
-            if (hasRunning && !setupPipelinePollInterval) {
-                setupPipelinePollInterval = setInterval(loadSetupPipelines, 5000);
-            }
-        }
-
+        renderUnassignedSection(unassignedData);
+        renderGenericSection(genericData);
+        renderAcquisitionSection(acquisitionData);
+        renderSetupPipelineSection(await safeParseJson(setupPipelineResp));
         renderRotation(rotationData);
 
-        var genericSetupData = null;
-        try { if (genericSetupResp) genericSetupData = await genericSetupResp.json(); } catch(e) {}
+        var genericSetupData = await safeParseJson(genericSetupResp);
         if (genericSetupData) renderGenericSetupTracker(genericSetupData);
     } catch (err) {
         document.getElementById('loading').innerHTML = 'Error loading data: ' + err.message;
     }
 }
 
+function renderUntaggedAlert(untaggedData) {
+    var untaggedAlert = document.getElementById('untagged-alert');
+    if (currentMode === 'fulfillment' && untaggedData && untaggedData.untagged_count > 0) {
+        document.getElementById('untagged-alert-text').textContent =
+            '⚠ ' + untaggedData.untagged_count + ' accounts have no client assignment and may be missing tags. Run fix_untagged.py to remediate.';
+        untaggedAlert.style.display = 'flex';
+    } else if (untaggedAlert) {
+        untaggedAlert.style.display = 'none';
+    }
+}
+
+function renderUnassignedSection(unassignedData) {
+    if (unassignedData && unassignedData.count > 0) {
+        document.getElementById('unassigned-section').style.display = 'block';
+        renderUnassigned(unassignedData.accounts);
+    } else {
+        document.getElementById('unassigned-section').style.display = 'none';
+    }
+}
+
+function renderGenericSection(genericData) {
+    if (!genericData || !genericData.groups || genericData.groups.length === 0) {
+        document.getElementById('generic-section').style.display = 'none';
+        return;
+    }
+    document.getElementById('generic-section').style.display = 'block';
+    var ready = genericData.groups.filter(function(g) { return g.status === 'ready'; }).length;
+    var warming = genericData.groups.filter(function(g) { return g.status === 'warming'; }).length;
+    var html = statCard(genericData.total_accounts, 'Generic Inboxes');
+    html += statCard(ready, 'Ready for Clients', 'good');
+    if (warming > 0) html += statCard(warming, 'Still Warming', 'warn');
+    html += statCard(genericData.total_daily_capacity + '/day', 'Total Capacity');
+    document.getElementById('generic-stats').innerHTML = html;
+    renderGenericGroups(genericData.groups);
+}
+
+function renderAcquisitionSection(acquisitionData) {
+    if (!acquisitionData || !acquisitionData.total_groups) {
+        document.getElementById('acquisition-section').style.display = 'none';
+        return;
+    }
+    document.getElementById('acquisition-section').style.display = currentMode === 'acquisition' ? 'block' : 'none';
+    var html = statCard(acquisitionData.total_accounts, 'Acquisition Inboxes');
+    html += statCard(acquisitionData.total_groups, 'Active Groups');
+    document.getElementById('acquisition-stats').innerHTML = html;
+    renderAcqAlerts(acquisitionData);
+    renderAcquisitionGroups(acquisitionData.groups);
+}
+
+function renderSetupPipelineSection(setupPipelineData) {
+    if (!setupPipelineData || !setupPipelineData.pipelines || setupPipelineData.pipelines.length === 0) return;
+    renderSetupPipelines(setupPipelineData.pipelines);
+    var hasRunning = setupPipelineData.pipelines.some(function(p) { return p.status === 'running'; });
+    if (hasRunning && !setupPipelinePollInterval) {
+        setupPipelinePollInterval = setInterval(loadSetupPipelines, 5000);
+    }
+}
+
 function renderCardHTML(item) {
     var issues = (item.smtp_failures || 0) + (item.blocked || 0);
     var issuesColor = issues > 0 ? '#ef4444' : 'var(--accent)';
-    var bounceVal = item.avg_bounce_rate !== null && item.avg_bounce_rate !== undefined ? item.avg_bounce_rate + '%' : '—';
-    var bounceColor = item.avg_bounce_rate === null || item.avg_bounce_rate === undefined ? 'var(--text-muted)' : item.avg_bounce_rate > 3 ? '#ef4444' : item.avg_bounce_rate > 1 ? '#f59e0b' : 'var(--accent)';
-    var replyVal = item.avg_reply_rate !== null && item.avg_reply_rate !== undefined ? item.avg_reply_rate + '%' : '—';
-    var replyColor = item.avg_reply_rate === null || item.avg_reply_rate === undefined ? 'var(--text-muted)' : item.avg_reply_rate > 5 ? 'var(--accent)' : item.avg_reply_rate > 2 ? '#f59e0b' : '#ef4444';
+    var bounceVal = rateDisplay(item.avg_bounce_rate);
+    var bounceColor = rateColor(item.avg_bounce_rate, {bad: 3, warn: 1});
+    var replyVal = rateDisplay(item.avg_reply_rate);
+    var replyColor = rateColor(item.avg_reply_rate, {ascending: true, good: 5, warn: 2});
 
     var html = `<div class="client-card ${item.needs_attention ? 'has-alert' : ''}" onclick="openDetail(${item.id}, '${(item.name || '').replace(/'/g, "\\'")}')">`;
     // Header — name + count + warmup badge
@@ -203,8 +236,51 @@ function renderCardHTML(item) {
     return html;
 }
 
-function renderClientCards(clients, archivedClients, pausedClients) {
-    return clients.map(cl => renderCardHTML(cl)).join('');
+function renderClientCards(clients) {
+    return clients.map(function(cl) { return renderCardHTML(cl); }).join('');
+}
+
+function renderAlertBanner(d) {
+    var alertEl = document.getElementById('alert-banner');
+    var attentionClients = d.clients.filter(function(c) { return c.needs_attention; });
+    var invLow = inventoryData && (inventoryData.client_low || inventoryData.acquisition_low);
+    var hasAlerts = d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0 || invLow;
+
+    if (currentMode !== 'fulfillment' || !hasAlerts) {
+        alertEl.innerHTML = '';
+        return;
+    }
+
+    var html = '<div class="alert-banner"><h3>Alerts</h3>';
+    if (inventoryData && inventoryData.client_low) {
+        html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Client pool has ' + inventoryData.client_available + ' available (need 20+)</div>';
+    }
+    if (inventoryData && inventoryData.acquisition_low) {
+        html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Acquisition pool has ' + inventoryData.acquisition_available + ' available (need 20+)</div>';
+    }
+    if (d.idle_inboxes > 0) {
+        html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:var(--yellow);">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
+    }
+    if (attentionClients.length > 0) {
+        html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;">' + attentionClients.length + ' client(s) have infrastructure that needs attention</div>';
+        attentionClients.forEach(function(c) {
+            html += '<div class="alert-item" style="padding-left:16px;">' + c.name + ' — ' + c.flagged_domains + '/' + c.total_domains + ' domains flagged (health score: ' + c.health_score + ')</div>';
+        });
+    }
+    if (d.smtp_failures > 0) html += '<div class="alert-item">' + d.smtp_failures + ' accounts with SMTP failures</div>';
+    if (d.imap_failures > 0) html += '<div class="alert-item">' + d.imap_failures + ' accounts with IMAP failures</div>';
+    var grouped = {};
+    d.blocked_accounts.forEach(function(b) {
+        var short = b.reason.split(':')[0] || 'Unknown';
+        if (!grouped[short]) grouped[short] = [];
+        grouped[short].push(b.email.split('@')[1]);
+    });
+    for (var [reason, domains] of Object.entries(grouped)) {
+        var unique = [...new Set(domains)];
+        html += '<div class="alert-item">' + unique.length + ' domain(s) blocked — ' + reason + ': ' + unique.join(', ') + '</div>';
+    }
+    html += '</div>';
+    alertEl.innerHTML = html;
 }
 
 function renderOverview() {
@@ -228,44 +304,7 @@ function renderOverview() {
         acqBadge.className = 'badge ' + (inventoryData.acquisition_low ? 'badge-red' : 'badge-green');
     }
 
-    // Alert banner — only show in fulfillment/clients mode
-    var alertEl = document.getElementById('alert-banner');
-    var attentionClients = d.clients.filter(c => c.needs_attention);
-    var invLow = inventoryData && (inventoryData.client_low || inventoryData.acquisition_low);
-    if (currentMode === 'fulfillment' && (d.blocked_accounts.length > 0 || d.smtp_failures > 0 || attentionClients.length > 0 || d.idle_inboxes > 0 || invLow)) {
-        var html = '<div class="alert-banner"><h3>Alerts</h3>';
-        if (inventoryData && inventoryData.client_low) {
-            html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Client pool has ' + inventoryData.client_available + ' available (need 20+)</div>';
-        }
-        if (inventoryData && inventoryData.acquisition_low) {
-            html += '<div class="alert-item" style="color:var(--yellow);">Domain inventory low: Acquisition pool has ' + inventoryData.acquisition_available + ' available (need 20+)</div>';
-        }
-        if (d.idle_inboxes > 0) {
-            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;color:var(--yellow);">' + d.idle_inboxes + ' warmed inbox(es) across ' + d.idle_clients + ' client(s) are not in any campaign</div>';
-        }
-        if (attentionClients.length > 0) {
-            html += '<div class="alert-item" style="font-size:14px;margin-bottom:6px;">' + attentionClients.length + ' client(s) have infrastructure that needs attention</div>';
-            attentionClients.forEach(c => {
-                html += '<div class="alert-item" style="padding-left:16px;">' + c.name + ' — ' + c.flagged_domains + '/' + c.total_domains + ' domains flagged (health score: ' + c.health_score + ')</div>';
-            });
-        }
-        if (d.smtp_failures > 0) html += '<div class="alert-item">' + d.smtp_failures + ' accounts with SMTP failures</div>';
-        if (d.imap_failures > 0) html += '<div class="alert-item">' + d.imap_failures + ' accounts with IMAP failures</div>';
-        var grouped = {};
-        d.blocked_accounts.forEach(b => {
-            var short = b.reason.split(':')[0] || 'Unknown';
-            if (!grouped[short]) grouped[short] = [];
-            grouped[short].push(b.email.split('@')[1]);
-        });
-        for (var [reason, domains] of Object.entries(grouped)) {
-            var unique = [...new Set(domains)];
-            html += '<div class="alert-item">' + unique.length + ' domain(s) blocked — ' + reason + ': ' + unique.join(', ') + '</div>';
-        }
-        html += '</div>';
-        alertEl.innerHTML = html;
-    } else {
-        alertEl.innerHTML = '';
-    }
+    renderAlertBanner(d);
 
     // Subtitle + filter bar
     var archivedClients = d.archived_clients || [];
@@ -289,10 +328,9 @@ function renderOverview() {
     `;
 
     // Client cards
-    var pausedClients = d.paused_clients || [];
     var gridEl = document.getElementById('clients-grid');
     clientsList = activeClients;
-    gridEl.innerHTML = renderClientCards(activeClients, archivedClients, pausedClients);
+    gridEl.innerHTML = renderClientCards(activeClients);
 
     // Populate assign dropdown
     var select = document.getElementById('assign-client-select');
@@ -399,8 +437,8 @@ async function loadAcquisition() {
         acquisitionDataGlobal = data;
         if (data && data.groups) {
             document.getElementById('acquisition-stats').innerHTML =
-                '<div class="stat-card"><div class="value">' + data.total_accounts + '</div><div class="label">Acquisition Inboxes</div></div>' +
-                '<div class="stat-card"><div class="value">' + data.total_groups + '</div><div class="label">Active Groups</div></div>';
+                statCard(data.total_accounts, 'Acquisition Inboxes') +
+                statCard(data.total_groups, 'Active Groups');
             renderAcqAlerts(data);
             renderAcquisitionGroups(data.groups);
         }
@@ -578,70 +616,54 @@ function applyModeVisibility(mode) {
     document.querySelector(`.mode-btn[onclick="switchMode('${mode}')"]`).classList.add('active');
 
     // 2. Show/hide fulfillment vs acquisition sections
+    var isFulfillment = mode === 'fulfillment';
     var fulfillmentSections = ['clients-grid', 'generic-section', 'rotation-section', 'unassigned-section', 'generic-setup-tracker'];
     var acquisitionSections = ['acquisition-section'];
-
-    if (mode === 'fulfillment') {
-        fulfillmentSections.forEach(id => { var el = document.getElementById(id); if (el) el.style.display = ''; });
-        acquisitionSections.forEach(id => { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
-    } else {
-        fulfillmentSections.forEach(id => { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
-        acquisitionSections.forEach(id => { var el = document.getElementById(id); if (el) el.style.display = ''; });
-    }
+    fulfillmentSections.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = isFulfillment ? '' : 'none'; });
+    acquisitionSections.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = isFulfillment ? 'none' : ''; });
 
     // 3. Render scoped summary stats
     if (!overviewData) return;
     var d = overviewData;
     var summaryEl = document.getElementById('summary-row');
+
+    var items, countLabel1, countVal1, countLabel2, countVal2;
     if (mode === 'fulfillment') {
-        var allBounce = d.clients.filter(c => c.avg_bounce_rate !== null).map(c => c.avg_bounce_rate);
-        var allReply = d.clients.filter(c => c.avg_reply_rate !== null).map(c => c.avg_reply_rate);
-        var overallBounce = allBounce.length ? (allBounce.reduce((a,b) => a+b, 0) / allBounce.length).toFixed(1) : '—';
-        var overallReply = allReply.length ? (allReply.reduce((a,b) => a+b, 0) / allReply.length).toFixed(1) : '—';
-        var obColor = overallBounce !== '—' ? (parseFloat(overallBounce) > 3 ? 'alert' : parseFloat(overallBounce) > 1 ? 'warn' : 'good') : 'good';
-        var orColor = overallReply !== '—' ? (parseFloat(overallReply) > 5 ? 'good' : parseFloat(overallReply) > 2 ? 'warn' : 'alert') : 'good';
-        summaryEl.innerHTML = `
-            <div class="stat-card good"><div class="value">${d.total_accounts}</div><div class="label">Total Accounts</div></div>
-            <div class="stat-card good"><div class="value">${d.in_campaign}</div><div class="label">In Campaigns</div></div>
-            <div class="stat-card ${obColor}"><div class="value">${overallBounce}${overallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
-            <div class="stat-card ${orColor}"><div class="value">${overallReply}${overallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
-        `;
+        items = d.clients;
+        countVal1 = d.total_accounts;
+        countLabel1 = 'Total Accounts';
+        countVal2 = d.in_campaign;
+        countLabel2 = 'In Campaigns';
     } else {
         var aq = acquisitionDataGlobal;
-        if (aq) {
-            var aqBounce = aq.groups.filter(g => g.avg_bounce_rate > 0).map(g => g.avg_bounce_rate);
-            var aqReply = aq.groups.filter(g => g.avg_reply_rate > 0).map(g => g.avg_reply_rate);
-            var aqOverallBounce = aqBounce.length ? (aqBounce.reduce((a,b) => a+b, 0) / aqBounce.length).toFixed(1) : '—';
-            var aqOverallReply = aqReply.length ? (aqReply.reduce((a,b) => a+b, 0) / aqReply.length).toFixed(1) : '—';
-            var aqBColor = aqOverallBounce !== '—' ? (parseFloat(aqOverallBounce) > 3 ? 'alert' : parseFloat(aqOverallBounce) > 1 ? 'warn' : 'good') : 'good';
-            var aqRColor = aqOverallReply !== '—' ? (parseFloat(aqOverallReply) > 5 ? 'good' : parseFloat(aqOverallReply) > 2 ? 'warn' : 'alert') : 'good';
-            summaryEl.innerHTML = `
-                <div class="stat-card good"><div class="value">${aq.total_accounts}</div><div class="label">Total Accounts</div></div>
-                <div class="stat-card good"><div class="value">${aq.total_groups}</div><div class="label">Active Groups</div></div>
-                <div class="stat-card ${aqBColor}"><div class="value">${aqOverallBounce}${aqOverallBounce !== '—' ? '%' : ''}</div><div class="label">Avg Bounce Rate</div></div>
-                <div class="stat-card ${aqRColor}"><div class="value">${aqOverallReply}${aqOverallReply !== '—' ? '%' : ''}</div><div class="label">Avg Reply Rate</div></div>
-            `;
-        }
+        if (!aq) return;
+        items = aq.groups;
+        countVal1 = aq.total_accounts;
+        countLabel1 = 'Total Accounts';
+        countVal2 = aq.total_groups;
+        countLabel2 = 'Active Groups';
     }
+
+    var avgBounce = computeAverageRate(items, 'avg_bounce_rate');
+    var avgReply = computeAverageRate(items, 'avg_reply_rate');
+    var bounceClass = rateCssClass(avgBounce, {bad: 3, warn: 1});
+    var replyClass = rateCssClass(avgReply, {ascending: true, good: 5, warn: 2});
+    var bounceSuffix = avgBounce !== '—' ? '%' : '';
+    var replySuffix = avgReply !== '—' ? '%' : '';
+
+    summaryEl.innerHTML = statCard(countVal1, countLabel1, 'good')
+        + statCard(countVal2, countLabel2, 'good')
+        + statCard(avgBounce + bounceSuffix, 'Avg Bounce Rate', bounceClass)
+        + statCard(avgReply + replySuffix, 'Avg Reply Rate', replyClass);
 }
 
 function filterClients(filter) {
-    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.filter-pill').forEach(function(p) { p.classList.remove('active'); });
     event.target.closest('.filter-pill').classList.add('active');
 
-    var gridEl = document.getElementById('clients-grid');
-    var archivedClients = window._archivedClients || [];
-    var pausedClients = window._pausedClients || [];
-
-    var clients;
-    if (filter === 'archived') {
-        clients = window._archivedClientData || [];
-    } else {
-        clients = window._activeClients || [];
-    }
-
+    var clients = filter === 'archived' ? (window._archivedClientData || []) : (window._activeClients || []);
     clientsList = clients;
-    gridEl.innerHTML = renderClientCards(clients, archivedClients, pausedClients);
+    document.getElementById('clients-grid').innerHTML = renderClientCards(clients);
 }
 
 document.getElementById('assign-client-select').addEventListener('change', updateAssignBtn);

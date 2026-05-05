@@ -58,31 +58,33 @@ function toggleGenericMode() {
     if (isGeneric) document.getElementById('nc-forwarding').value = '';
 }
 
-async function loadInventoryPreview() {
-    var el = document.getElementById('nc-inventory');
+async function fetchInventoryCount(displayElId) {
+    var el = document.getElementById(displayElId);
     try {
         var resp = await fetch('/api/domain-inventory');
-        var text = await resp.text();
-        if (!text) { el.textContent = 'Could not load inventory'; el.style.color = '#ef4444'; return; }
-        var data = JSON.parse(text);
-        var count = data.available_count ?? 0;
+        var data = await resp.json();
         if (data.error) {
             el.textContent = 'Could not load inventory: ' + data.error;
             el.style.color = '#ef4444';
-            return;
+            return 0;
         }
+        var count = data.available_count ?? 0;
         el.textContent = count + ' domains available in inventory';
         el.style.color = count < 5 ? '#ef4444' : '#22c55e';
-
-        var alertEl = document.getElementById('inventory-alert');
-        if (count < 5) {
-            alertEl.style.display = 'inline';
-            alertEl.textContent = 'Low inventory: only ' + count + ' domains available';
-        }
+        return count;
     } catch(e) {
         el.textContent = 'Could not load inventory';
         el.style.color = '#ef4444';
-        console.error('Inventory error:', e);
+        return 0;
+    }
+}
+
+async function loadInventoryPreview() {
+    var count = await fetchInventoryCount('nc-inventory');
+    if (count < 5) {
+        var alertEl = document.getElementById('inventory-alert');
+        alertEl.style.display = 'inline';
+        alertEl.textContent = 'Low inventory: only ' + count + ' domains available';
     }
 }
 
@@ -104,7 +106,7 @@ async function startNewClientPipeline() {
             document.getElementById('nc-start-btn').disabled = false;
         } else {
             document.getElementById('nc-status').innerHTML = '<span style="color:var(--accent);">Pipeline started! ID: ' + result.pipeline_id + '</span>';
-            setTimeout(() => {
+            setTimeout(function() {
                 closeNewClientForm();
                 switchTab('pipelines');
                 loadPipelines();
@@ -147,17 +149,7 @@ function updateAcqMath() {
 }
 
 async function loadAcqInventory() {
-    var el = document.getElementById('acq-inventory');
-    try {
-        var resp = await fetch('/api/domain-inventory');
-        var data = await resp.json();
-        var count = data.available_count ?? 0;
-        el.textContent = count + ' domains available in inventory';
-        el.style.color = count < 5 ? '#ef4444' : '#22c55e';
-    } catch(e) {
-        el.textContent = 'Could not load inventory';
-        el.style.color = '#ef4444';
-    }
+    await fetchInventoryCount('acq-inventory');
 }
 
 async function startNewAcquisitionPipeline() {
@@ -177,7 +169,7 @@ async function startNewAcquisitionPipeline() {
             document.getElementById('acq-start-btn').disabled = false;
         } else {
             document.getElementById('acq-status').innerHTML = '<span style="color:var(--accent);">Pipeline started! ' + result.infra.domains_needed + ' domains, ' + result.infra.actual_accounts + ' inboxes</span>';
-            setTimeout(() => {
+            setTimeout(function() {
                 closeNewAcquisitionForm();
                 switchTab('pipelines');
                 loadPipelines();
