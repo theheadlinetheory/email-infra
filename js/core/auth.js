@@ -7,7 +7,7 @@ import { store } from './state.js';
 import { setAuthToken } from './api.js';
 
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCbEwfKvC71Md5u2AIyKC_yyxdgluUZ-Jg",
+  apiKey: "AIzaSyDrjU77BiVX27egzoc86jHsZCTwLbQfgVc",
   authDomain: "tht-crm.firebaseapp.com",
   projectId: "tht-crm",
   storageBucket: "tht-crm.firebasestorage.app",
