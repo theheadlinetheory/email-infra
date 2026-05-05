@@ -3347,6 +3347,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/dashboard.html":
             self._serve_file("dashboard.html", "text/html", set_cookie=pw)
+        elif path.startswith("/css/") or path.startswith("/js/"):
+            mime_types = {".css": "text/css", ".js": "application/javascript"}
+            ext = os.path.splitext(path)[1]
+            self._serve_file(path.lstrip("/"), mime_types.get(ext, "application/octet-stream"))
         elif path == "/headshots/sean_reynolds.png":
             self._serve_file("headshots/sean_reynolds.png", "image/png")
         elif path.startswith("/api/"):
