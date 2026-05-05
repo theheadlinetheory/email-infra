@@ -1,46 +1,58 @@
-:root {
-    --bg-root: hsl(140, 10%, 95%);
-    --bg-surface: hsl(140, 8%, 98%);
-    --bg-raised: hsl(140, 6%, 92%);
-    --bg-input: hsl(140, 6%, 90%);
-    --border: hsl(140, 6%, 83%);
-    --border-light: hsl(140, 6%, 89%);
-    --text-primary: hsl(160, 15%, 10%);
-    --text-secondary: hsl(160, 8%, 35%);
-    --text-muted: hsl(160, 6%, 55%);
-    --accent: hsl(152, 56%, 35%);
-    --accent-dim: hsl(152, 56%, 28%);
-    --accent-bg: hsl(152, 40%, 92%);
+:root,
+[data-theme="light"] {
+    --bg-root: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-raised: #f1f5f9;
+    --bg-input: #e2e8f0;
+    --border: #cbd5e1;
+    --border-light: #e2e8f0;
+    --text-primary: #1e293b;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-bg: #f0fdf4;
+    --accent: var(--green);
+    --accent-dim: var(--green-dim);
+    --accent-bg: var(--green-bg);
+    --blue: #3b82f6;
+    --blue-bg: #eff6ff;
     --purple: #8b5cf6;
-    --purple-bg: #eeebff;
-    --red: hsl(0, 72%, 51%);
-    --red-dim: hsl(0, 72%, 42%);
-    --red-bg: hsl(0, 60%, 95%);
-    --yellow: hsl(38, 85%, 50%);
-    --yellow-bg: hsl(38, 85%, 94%);
-    --font-display: 'Sora', -apple-system, sans-serif;
+    --purple-bg: #f5f3ff;
+    --red: #ef4444;
+    --red-dim: #dc2626;
+    --red-bg: #fef2f2;
+    --yellow: #f59e0b;
+    --yellow-bg: #fffbeb;
+    --font-display: 'DM Sans', -apple-system, sans-serif;
     --font-body: 'DM Sans', -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
-    --radius: 0.625rem;
-    --radius-lg: 0.75rem;
+    --radius: 6px;
+    --radius-lg: 8px;
+    --transition-fast: 0.12s;
+    --transition-normal: 0.15s;
 }
 
-html.dark {
-    --bg-root: hsl(160, 15%, 6%);
-    --bg-surface: hsl(158, 14%, 9%);
-    --bg-raised: hsl(158, 12%, 13%);
-    --bg-input: hsl(158, 12%, 15%);
-    --border: hsl(158, 10%, 20%);
-    --border-light: hsl(158, 10%, 14%);
-    --text-primary: hsl(140, 10%, 92%);
-    --text-secondary: hsl(140, 6%, 68%);
-    --text-muted: hsl(140, 4%, 48%);
-    --accent: hsl(152, 60%, 42%);
-    --accent-dim: hsl(152, 56%, 35%);
-    --accent-bg: hsl(152, 30%, 14%);
-    --purple-bg: hsl(260, 30%, 15%);
-    --red-bg: hsl(0, 40%, 12%);
-    --yellow-bg: hsl(38, 40%, 14%);
+[data-theme="dark"] {
+    --bg-root: #0f172a;
+    --bg-surface: #1e293b;
+    --bg-raised: #334155;
+    --bg-input: #334155;
+    --border: #475569;
+    --border-light: #334155;
+    --text-primary: #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-muted: #64748b;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-bg: rgba(34,197,94,0.1);
+    --accent: var(--green);
+    --accent-dim: var(--green-dim);
+    --accent-bg: var(--green-bg);
+    --blue-bg: rgba(59,130,246,0.1);
+    --purple-bg: rgba(139,92,246,0.1);
+    --red-bg: rgba(239,68,68,0.1);
+    --yellow-bg: rgba(245,158,11,0.1);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -248,3 +260,26 @@ h2.section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); 
 .generic-tracker-bar { height: 8px; background: var(--bg-raised); border-radius: 4px; overflow: hidden; }
 .generic-tracker-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .5s ease; min-width: 0; }
 .generic-tracker-detail { font-size: 13px; color: var(--text-secondary); font-family: var(--font-mono); }
+
+.stale-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; font-family: var(--font-mono); background: var(--yellow-bg); color: var(--yellow); cursor: pointer; transition: all var(--transition-fast); }
+.stale-badge:hover { opacity: 0.8; }
+
+.error-card { background: var(--red-bg); border: 1px solid var(--red); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.error-card .error-msg { font-size: 13px; color: var(--red); margin-bottom: 8px; }
+.error-card .retry-btn { background: var(--red); color: #fff; border: none; padding: 6px 14px; border-radius: var(--radius); font-size: 12px; font-weight: 600; cursor: pointer; }
+.error-card .retry-btn:hover { background: var(--red-dim); }
+
+.skeleton { background: linear-gradient(90deg, var(--bg-raised) 25%, var(--bg-input) 50%, var(--bg-raised) 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.5s ease-in-out infinite; border-radius: var(--radius); }
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skeleton-line { height: 14px; margin-bottom: 8px; }
+.skeleton-card { height: 120px; }
+
+.login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.login-box { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 32px; width: 360px; text-align: center; }
+.login-box h2 { font-size: 20px; font-weight: 600; margin-bottom: 4px; font-family: var(--font-display); }
+.login-box .subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+.login-box input { width: 100%; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-primary); font-size: 14px; font-family: var(--font-body); margin-bottom: 12px; }
+.login-box input:focus { outline: none; border-color: var(--accent); }
+.login-box .login-btn { width: 100%; padding: 10px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; }
+.login-box .login-btn:hover { background: var(--accent-dim); }
+.login-box .login-error { font-size: 12px; color: var(--red); margin-top: 8px; display: none; }
