@@ -82,16 +82,16 @@ function render() {
   // --- Conflict Alerts ---
   if (conflicts.length > 0 || emptyCampaigns.length > 0) {
     if (conflicts.length > 0) {
-      html += '<div class="alert-banner" style="border-color:#fecaca;"><h3 style="color:#dc2626;">Campaign Conflicts</h3>';
+      html += '<div class="alert-banner"><h3>Campaign Conflicts</h3>';
       conflicts.forEach(c => {
-        html += `<div class="alert-item" style="color:#dc2626;">${esc(c.group)} is in ${c.campaigns.length} active campaigns: ${esc(c.campaigns.join(', '))}</div>`;
+        html += `<div class="alert-item">${esc(c.group)} is in ${c.campaigns.length} active campaigns: ${esc(c.campaigns.join(', '))}</div>`;
       });
       html += '</div>';
     }
     if (emptyCampaigns.length > 0) {
-      html += '<div class="alert-banner" style="border-color:#fed7aa;"><h3 style="color:#ea580c;">Campaigns With No Inboxes</h3>';
+      html += '<div class="alert-banner" style="border-color:var(--yellow);"><h3 style="color:var(--yellow);">Campaigns With No Inboxes</h3>';
       emptyCampaigns.forEach(c => {
-        html += `<div class="alert-item" style="color:#ea580c;">${esc(c.name)} — active but has no email accounts assigned</div>`;
+        html += `<div class="alert-item" style="color:var(--yellow);">${esc(c.name)} — active but has no email accounts assigned</div>`;
       });
       html += '</div>';
     }
@@ -203,11 +203,11 @@ function renderGroupCard(g, campaigns) {
   // Campaign assignment section
   html += '<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px;">';
   if (hasConflict) {
-    html += `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;margin-bottom:6px;color:#dc2626;font-weight:600;">CONFLICT: ${activeCampaigns.length} active campaigns</div>`;
+    html += `<div style="background:var(--red-bg);border:1px solid var(--red);border-radius:6px;padding:6px 10px;margin-bottom:6px;color:var(--red);font-weight:600;">CONFLICT: ${activeCampaigns.length} active campaigns</div>`;
     activeCampaigns.forEach(c => {
       html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
-        <span style="color:#dc2626;">&#9679; ${esc(c.name)}</span>
-        <button class="acq-unassign-btn" data-group-id="${g.id}" data-group-name="${esc(name)}" data-camp-id="${c.id}" data-camp-name="${esc(c.name)}" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;">Remove</button>
+        <span style="color:var(--red);">&#9679; ${esc(c.name)}</span>
+        <button class="acq-unassign-btn" data-group-id="${g.id}" data-group-name="${esc(name)}" data-camp-id="${c.id}" data-camp-name="${esc(c.name)}" style="font-size:10px;padding:2px 8px;border:1px solid var(--red);border-radius:4px;background:var(--red-bg);color:var(--red);cursor:pointer;">Remove</button>
       </div>`;
     });
   } else {
@@ -232,7 +232,7 @@ function renderGroupCard(g, campaigns) {
   html += '</div>';
 
   // Footer dates (ready/rotation)
-  const hasReady = g.ready_date && g.days_until_ready !== null && g.days_until_ready !== undefined && g.days_until_ready > 0;
+  const hasReady = g.ready_date && g.days_until_ready != null;
   const hasRotation = !!g.rotation_date;
   if (hasReady || hasRotation) {
     html += '<div class="cc-dates">';

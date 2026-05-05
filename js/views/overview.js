@@ -268,7 +268,7 @@ function buildHeaderBar(data, inventoryData, meta) {
       <span style="color:var(--text-muted);font-size:13px;">Updated: ${esc(time)}</span>
       ${inventoryBadges}
     </div>
-    <div style="display:flex;gap:4px;">
+    <div class="mode-switcher">
       <button class="mode-btn ${fulfillActive}" data-mode="fulfillment">Fulfillment</button>
       <button class="mode-btn ${acqActive}" data-mode="acquisition">Acquisition</button>
     </div>
@@ -749,14 +749,14 @@ function buildGenericGroupCard(g) {
   const progressPct = isReady ? 100 : Math.min(100, Math.round((g.days_warming / 14) * 100));
 
   let html = `
-    <div class="cc-header">
-      <span class="cc-name">${esc(g.name)}</span>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="badge" style="background:${statusBg};color:${statusColor};font-size:13px;padding:3px 10px;">${esc(statusLabel)}</span>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="cc-name">${esc(g.name)}</span>
+        <span class="badge" style="background:${statusBg};color:${statusColor};font-size:11px;padding:2px 8px;">${esc(statusLabel)}</span>
         <span class="cc-count">${esc(g.accounts)} accounts</span>
       </div>
     </div>
-    <div class="cc-stats">
+    <div class="cc-stats" style="grid-template-columns:1fr 1fr 1fr;">
       <div class="cc-stat"><span class="label">Domains</span><span>${esc(g.domains)}</span></div>
       <div class="cc-stat"><span class="label">Capacity</span><span>${esc(g.daily_capacity)}/day</span></div>
       <div class="cc-stat"><span class="label">Warmup Start</span><span>${esc(g.warmup_start || '—')}</span></div>
@@ -772,22 +772,19 @@ function buildGenericGroupCard(g) {
         <div style="background:${isReady ? '#22c55e' : '#8b5cf6'};height:100%;width:${progressPct}%;border-radius:4px;transition:width 0.3s;"></div>
       </div>
     </div>
-    <div style="margin-top:12px;display:flex;justify-content:flex-end;">
-    </div>
   `;
 
   card.innerHTML = html;
 
-  // Assign button
-  const btnContainer = card.querySelector('div:last-child');
+  // Assign button at bottom
   const assignBtn = document.createElement('button');
-  assignBtn.style.cssText = `background:${isReady ? 'var(--purple)' : 'var(--bg-raised)'};color:${isReady ? '#fff' : 'var(--text-secondary)'};border:1px solid ${isReady ? 'var(--purple)' : 'var(--border)'};padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;`;
+  assignBtn.style.cssText = `margin-top:12px;width:100%;background:${isReady ? 'var(--purple)' : 'var(--bg-raised)'};color:${isReady ? '#fff' : 'var(--text-secondary)'};border:1px solid ${isReady ? 'var(--purple)' : 'var(--border)'};padding:8px 18px;border-radius:6px;cursor:pointer;font-weight:500;font-size:13px;`;
   assignBtn.textContent = 'Assign to Client';
   assignBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     openAssignToClientModal(g.pipeline_id || '', g.name);
   });
-  btnContainer.appendChild(assignBtn);
+  card.appendChild(assignBtn);
 
   // Card click navigates to detail
   card.addEventListener('click', (e) => {
