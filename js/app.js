@@ -209,8 +209,9 @@ function renderApp() {
 
 function updateActiveTab() {
   const view = store.get('currentView');
+  const match = view === 'client' ? 'overview' : view;
   document.querySelectorAll('.nav-tab').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === view);
+    btn.classList.toggle('active', btn.dataset.view === match);
   });
 }
 

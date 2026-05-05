@@ -5,7 +5,7 @@
  */
 
 const state = {
-  currentView: location.hash.replace('#', '') || 'overview',
+  currentView: location.hash.replace('#', '').split('/')[0] || 'overview',
   theme: localStorage.getItem('tht-infra-theme') || 'dark',
 
   // Data slices
@@ -103,7 +103,10 @@ const store = {
 
   setView(view) {
     state.currentView = view;
-    location.hash = view;
+    const currentBase = location.hash.replace('#', '').split('/')[0];
+    if (currentBase !== view) {
+      location.hash = view;
+    }
     notify('currentView');
   },
 
