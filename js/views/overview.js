@@ -156,9 +156,6 @@ function render() {
     return;
   }
 
-  // Store data for other views
-  store.set('overview', data);
-
   container.innerHTML = '';
   renderData(container, data, meta);
 }
