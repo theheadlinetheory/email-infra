@@ -11,6 +11,7 @@ const VIEW_MAP = {
   zapmail: () => import('../views/zapmail.js'),
   domains: () => import('../views/domains.js'),
   acquisition: () => import('../views/acquisition.js'),
+  sync: () => import('../views/sync.js'),
   client: () => import('../views/client-detail.js'),
 };
 

@@ -27,6 +27,10 @@ const state = {
   domainInventory: null,
   unassigned: null,
 
+  // UI state
+  mode: 'fulfillment',
+  sync: null,
+
   // Loading/error per slice
   loading: {},
   errors: {},
