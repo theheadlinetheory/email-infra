@@ -31,12 +31,10 @@ export function mount(el) {
   unsubs.push(store.subscribe('overview', render));
   unsubs.push(store.subscribe('loading', render));
   unsubs.push(store.subscribe('errors', render));
-  unsubs.push(store.subscribe('unassigned', render));
-  unsubs.push(store.subscribe('genericGroups', render));
-  unsubs.push(store.subscribe('acquisition', render));
-  unsubs.push(store.subscribe('domainInventory', render));
-  unsubs.push(store.subscribe('rotationStatus', render));
-  unsubs.push(store.subscribe('setupPipelines', render));
+  unsubs.push(store.subscribe('genericGroups', renderGenericGroupsSection));
+  unsubs.push(store.subscribe('rotationStatus', renderRotationSection));
+  unsubs.push(store.subscribe('setupPipelines', renderSetupPipelinesSection));
+  unsubs.push(store.subscribe('unassigned', renderUnassignedSection));
   load();
 }
 
@@ -52,18 +50,15 @@ export function destroy() {
 /* ─── Data Loading ─── */
 
 async function load() {
-  const fetches = [
-    fetchSlice('overview', '/api/overview').catch(() => null),
-    fetchSlice('unassigned', '/api/unassigned').catch(() => null),
-    fetchSlice('genericGroups', '/api/generic-groups').catch(() => null),
-    fetchSlice('acquisition', '/api/acquisition').catch(() => null),
-    fetchSlice('domainInventory', '/api/domain-inventory').catch(() => null),
-    fetchSlice('rotationStatus', '/api/rotation/status').catch(() => null),
-    fetchSlice('setupPipelines', '/api/setup-pipelines').catch(() => null),
-    loadUntaggedCount(),
-    loadGenericSetupStatus(),
-  ];
-  await Promise.all(fetches);
+  await fetchSlice('overview', '/api/overview').catch(() => null);
+  await loadUntaggedCount();
+
+  fetchSlice('genericGroups', '/api/generic-groups').catch(() => null);
+  fetchSlice('unassigned', '/api/unassigned').catch(() => null);
+  fetchSlice('domainInventory', '/api/domain-inventory').catch(() => null);
+  fetchSlice('rotationStatus', '/api/rotation/status').catch(() => null);
+  fetchSlice('setupPipelines', '/api/setup-pipelines').catch(() => null);
+  loadGenericSetupStatus();
 }
 
 let untaggedCount = 0;
@@ -373,20 +368,17 @@ function renderFulfillmentMode(el, data) {
   clients.forEach(cl => grid.appendChild(buildClientCard(cl)));
   el.appendChild(grid);
 
-  // ── Setup pipelines section ──
-  renderSetupPipelinesSection(el);
+  for (const id of ['setup-pipelines', 'generic-tracker', 'generic-groups', 'rotation', 'unassigned']) {
+    const div = document.createElement('div');
+    div.id = `section-${id}`;
+    el.appendChild(div);
+  }
 
-  // ── Generic setup tracker ──
-  renderGenericSetupTracker(el);
-
-  // ── Generic groups section ──
-  renderGenericGroupsSection(el);
-
-  // ── A/B Rotation section ──
-  renderRotationSection(el);
-
-  // ── Unassigned accounts section ──
-  renderUnassignedSection(el, data);
+  renderSetupPipelinesSection();
+  renderGenericSetupTracker();
+  renderGenericGroupsSection();
+  renderRotationSection();
+  renderUnassignedSection();
 }
 
 /* ─── Acquisition Mode ─── */
@@ -675,7 +667,11 @@ async function unassignGroupCampaign(groupClientId, groupName, campId, campName)
 
 /* ─── Generic Groups Section ─── */
 
-function renderGenericGroupsSection(el) {
+function renderGenericGroupsSection() {
+  const target = container?.querySelector('#section-generic-groups');
+  if (!target) return;
+  target.innerHTML = '';
+
   const genericData = store.get('genericGroups');
   if (!genericData?.groups?.length) return;
 
@@ -706,7 +702,7 @@ function renderGenericGroupsSection(el) {
   genericData.groups.forEach(g => grid.appendChild(buildGenericGroupCard(g)));
   section.appendChild(grid);
 
-  el.appendChild(section);
+  target.appendChild(section);
 }
 
 function buildGenericGroupCard(g) {
@@ -881,7 +877,11 @@ async function openAssignToClientModal(pipelineId, groupName) {
 
 /* ─── A/B Rotation Section ─── */
 
-function renderRotationSection(el) {
+function renderRotationSection() {
+  const target = container?.querySelector('#section-rotation');
+  if (!target) return;
+  target.innerHTML = '';
+
   const rotationData = store.get('rotationStatus');
   if (!rotationData?.rotations?.length) return;
 
@@ -972,13 +972,18 @@ function renderRotationSection(el) {
   });
 
   section.appendChild(grid);
-  el.appendChild(section);
+  target.appendChild(section);
 }
 
 /* ─── Unassigned Accounts Section ─── */
 
-function renderUnassignedSection(el, overviewData) {
+function renderUnassignedSection() {
+  const target = container?.querySelector('#section-unassigned');
+  if (!target) return;
+  target.innerHTML = '';
+
   const unassignedData = store.get('unassigned');
+  const overviewData = store.get('overview');
   if (!unassignedData || !unassignedData.count || unassignedData.count === 0) return;
 
   const section = document.createElement('div');
@@ -1092,7 +1097,7 @@ function renderUnassignedSection(el, overviewData) {
     }
   });
 
-  el.appendChild(section);
+  target.appendChild(section);
 }
 
 /* ─── Setup Pipelines Section ─── */
@@ -1150,7 +1155,11 @@ function setupPipelineStatusLine(p) {
   return p.status;
 }
 
-function renderSetupPipelinesSection(el) {
+function renderSetupPipelinesSection() {
+  const target = container?.querySelector('#section-setup-pipelines');
+  if (!target) return;
+  target.innerHTML = '';
+
   const pipelineData = store.get('setupPipelines');
   if (!pipelineData?.pipelines?.length) return;
 
@@ -1202,7 +1211,7 @@ function renderSetupPipelinesSection(el) {
   });
 
   section.appendChild(grid);
-  el.appendChild(section);
+  target.appendChild(section);
 
   // Auto-poll if running
   const hasRunning = pipelines.some(p => p.status === 'running');
@@ -1293,7 +1302,11 @@ const GENERIC_COMPLETED_MAP = {
   warmup_enabled: 'enable_warmup',
 };
 
-function renderGenericSetupTracker(el) {
+function renderGenericSetupTracker() {
+  const target = container?.querySelector('#section-generic-tracker');
+  if (!target) return;
+  target.innerHTML = '';
+
   if (!genericSetupData) return;
   if (!genericSetupData.running && genericSetupData.step === 'unknown') {
     if (genericTrackerInterval) { clearInterval(genericTrackerInterval); genericTrackerInterval = null; }
@@ -1345,13 +1358,13 @@ function renderGenericSetupTracker(el) {
     `}
   `;
   section.appendChild(card);
-  el.appendChild(section);
+  target.appendChild(section);
 
   // Auto-poll if running
   if (genericSetupData.running && !genericTrackerInterval) {
     genericTrackerInterval = setInterval(async () => {
       await loadGenericSetupStatus();
-      render();
+      renderGenericSetupTracker();
     }, 10000);
   } else if (!genericSetupData.running && genericTrackerInterval) {
     clearInterval(genericTrackerInterval);

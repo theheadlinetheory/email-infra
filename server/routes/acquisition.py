@@ -36,6 +36,31 @@ def post_rotation_swap(body, handler, **kwargs):
     return swap_client_group(client_name)
 
 
+def post_resolve_conflicts(body, handler, **kwargs):
+    from dashboard import api_acquisition, api_assign_group_campaign
+    data = api_acquisition()
+    conflicts = data.get("campaign_conflicts", [])
+    if not conflicts:
+        return {"resolved": 0, "message": "No conflicts found"}
+    results = []
+    for group in (data.get("groups") or []):
+        if not group.get("campaign_conflict"):
+            continue
+        active = group.get("active_campaigns", [])
+        if len(active) <= 1:
+            continue
+        keep = active[0]
+        for camp in active[1:]:
+            result = api_assign_group_campaign({
+                "group_client_id": group["id"],
+                "group_name": group["name"],
+                "campaign_id": camp["id"],
+                "action": "unassign",
+            })
+            results.append({"group": group["name"], "removed": camp["name"], "kept": keep["name"], "result": result})
+    return {"resolved": len(results), "results": results}
+
+
 def post_rotation_swap_all(body, handler, **kwargs):
     from dashboard import swap_client_group
     rotations = store.get_all_rotations()
@@ -62,6 +87,7 @@ GET_ROUTES = [
 
 POST_ROUTES = [
     ("/api/acquisition/assign-campaign", post_assign_campaign),
+    ("/api/acquisition/resolve-conflicts", post_resolve_conflicts),
     ("/api/rotation/swap", post_rotation_swap),
     ("/api/rotation/swap-all", post_rotation_swap_all),
 ]

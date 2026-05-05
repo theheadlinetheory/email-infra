@@ -86,6 +86,7 @@ function render() {
       conflicts.forEach(c => {
         html += `<div class="alert-item">${esc(c.group)} is in ${c.campaigns.length} active campaigns: ${esc(c.campaigns.join(', '))}</div>`;
       });
+      html += `<button id="resolve-conflicts-btn" style="margin-top:8px;background:var(--red);color:#fff;border:none;padding:8px 18px;border-radius:var(--radius);cursor:pointer;font-weight:600;font-size:13px;">Resolve All Conflicts</button>`;
       html += '</div>';
     }
     if (emptyCampaigns.length > 0) {
@@ -297,6 +298,12 @@ function bindEvents(groups, campaigns) {
     });
   });
 
+  // Resolve conflicts button
+  const resolveBtn = container.querySelector('#resolve-conflicts-btn');
+  if (resolveBtn) {
+    resolveBtn.addEventListener('click', handleResolveConflicts);
+  }
+
   // Swap all button
   const swapAllBtn = container.querySelector('#swap-all-btn');
   if (swapAllBtn) {
@@ -404,6 +411,23 @@ async function handleSwapAll() {
     }
   } catch (e) {
     showToast('Swap all failed: ' + e.message, 'error');
+  }
+  reload();
+}
+
+async function handleResolveConflicts() {
+  if (!confirm('Auto-resolve all campaign conflicts? Keeps the first campaign, removes duplicates.')) return;
+  const btn = container?.querySelector('#resolve-conflicts-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Resolving...'; }
+  try {
+    const result = await apiPost('/api/acquisition/resolve-conflicts', {});
+    if (result.resolved > 0) {
+      showToast(`Resolved ${result.resolved} conflict(s)`, 'success');
+    } else {
+      showToast(result.message || 'No conflicts to resolve', 'info');
+    }
+  } catch (e) {
+    showToast('Resolve failed: ' + e.message, 'error');
   }
   reload();
 }
