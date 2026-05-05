@@ -73,11 +73,10 @@ export function destroy() {
 async function load() {
   if (!clientId) return;
   const acctKey = `clientAccounts_${clientId}`;
-  const trendKey = `clientTrends_${clientId}`;
   try {
     await Promise.all([
       fetchSlice(acctKey, `/api/client/${clientId}/accounts`),
-      fetchSlice(trendKey, `/api/client/${clientId}/trends?days=${currentDays}`),
+      loadTrends(currentDays),
     ]);
   } catch (e) { /* errors managed by store */ }
 }
@@ -86,9 +85,14 @@ async function loadTrends(days) {
   if (!clientId) return;
   currentDays = days;
   const trendKey = `clientTrends_${clientId}`;
+  store.setLoading(trendKey, true);
   try {
-    await fetchSlice(trendKey, `/api/client/${clientId}/trends?days=${days}`);
-  } catch (e) { console.error('Trend load error:', e); }
+    const result = await apiGet(`/api/client/${clientId}/trends?days=${days}`);
+    store.setData(trendKey, result);
+  } catch (e) {
+    store.setError(trendKey, e.message);
+    store.setLoading(trendKey, false);
+  }
 }
 
 function onAccountsUpdate() {
@@ -494,7 +498,13 @@ function buildAccountRow(a) {
     warmupHtml += `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${a.warmup_days}d / 14d</div>`;
   }
   if (a.blocked_reason) {
-    warmupHtml += `<br><small style="color:var(--red)">${esc(a.blocked_reason)}</small>`;
+    let reason = a.blocked_reason;
+    if (reason.includes('<') && reason.length > 120) {
+      const titleMatch = reason.match(/<title[^>]*>([^<]+)<\/title>/i);
+      reason = titleMatch ? titleMatch[1].trim() : 'DNS/connection error';
+    }
+    if (reason.length > 80) reason = reason.slice(0, 77) + '...';
+    warmupHtml += `<br><small style="color:var(--red)">${esc(reason)}</small>`;
   }
   tdWarmup.innerHTML = warmupHtml;
   tr.appendChild(tdWarmup);
