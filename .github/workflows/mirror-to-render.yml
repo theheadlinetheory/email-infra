@@ -1,0 +1,23 @@
+name: Mirror to Render
+on:
+  push:
+    branches: [main]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to Render mirror
+        env:
+          DEPLOY_KEY: ${{ secrets.RENDER_MIRROR_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git remote add mirror git@github.com:aidan529/tht-dashboard.git
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key" git push mirror main --force
