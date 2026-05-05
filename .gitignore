@@ -8,3 +8,6 @@ headshots/
 __pycache__/
 *.pyc
 .claude/
+.vercel
+.superpowers/
+.superpowers/
