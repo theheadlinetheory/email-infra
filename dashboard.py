@@ -3799,7 +3799,8 @@ def main():
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
 
-    server = HTTPServer((host, port), DashboardHandler)
+    from server.app import DashboardHandler as NewHandler
+    server = HTTPServer((host, port), NewHandler)
     print(f"Dashboard running at http://{host}:{port}", flush=True)
 
     threading.Thread(target=_deferred_init, daemon=True).start()

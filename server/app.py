@@ -12,6 +12,7 @@ from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 from server.errors import APIError
 from server.middleware import error_response
+from server.auth import check_auth
 
 SCRIPT_DIR = Path(__file__).parent.parent
 
@@ -56,25 +57,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             cls.get_routes, cls.post_routes = create_route_table()
 
     def _check_auth(self):
-        """Password check via query param or cookie. Will be replaced by Firebase Auth."""
-        password = os.environ.get("DASHBOARD_PASSWORD", "")
-        if not password:
-            return True
-        parsed = urlparse(self.path)
-        params = parse_qs(parsed.query)
-        if params.get("pw", [None])[0] == password:
-            return True
-        cookie = self.headers.get("Cookie", "")
-        if f"dashboard_pw={password}" in cookie:
-            return True
-        self.send_response(401)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(b'<!DOCTYPE html><html><body style="background:#1a1a2e;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">'
-                         b'<form method="GET" style="text-align:center"><h2>THT Dashboard</h2>'
-                         b'<input name="pw" type="password" placeholder="Password" style="padding:8px;font-size:16px;border-radius:6px;border:1px solid #0f3460;background:#16213e;color:#eee;"><br><br>'
-                         b'<button type="submit" style="padding:8px 24px;background:#0f3460;color:#eee;border:1px solid #1a5276;border-radius:6px;cursor:pointer;">Login</button></form></body></html>')
-        return False
+        """Check auth via Firebase JWT or password fallback."""
+        return check_auth(self)
 
     def do_GET(self):
         if self.path == "/healthz":
@@ -91,7 +75,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed.query)
         pw = params.get("pw", [None])[0]
 
-        if path == "/" or path == "/dashboard.html":
+        if path == "/":
+            self._serve_file("index.html", "text/html", set_cookie=pw)
+            return
+        if path == "/dashboard.html":
             self._serve_file("dashboard.html", "text/html", set_cookie=pw)
             return
         if path.startswith("/css/") or path.startswith("/js/"):
