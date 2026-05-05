@@ -200,13 +200,6 @@ function renderData(el, data, meta) {
   const headerBar = document.createElement('div');
   headerBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;';
   headerBar.innerHTML = buildHeaderBar(data, inventoryData, meta);
-  headerBar.querySelectorAll('.mode-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      currentMode = btn.dataset.mode;
-      localStorage.setItem('dashboardMode', currentMode);
-      render();
-    });
-  });
   el.appendChild(headerBar);
 
   // ── Stale badge ──
@@ -220,7 +213,7 @@ function renderData(el, data, meta) {
   }
 
   // ── Untagged alert ──
-  if (currentMode === 'fulfillment' && untaggedCount > 0) {
+  if (untaggedCount > 0) {
     const alert = document.createElement('div');
     alert.className = 'alert-banner';
     alert.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -237,12 +230,7 @@ function renderData(el, data, meta) {
   buildSummaryStats(summaryRow, data);
   el.appendChild(summaryRow);
 
-  // ── Mode-specific content ──
-  if (currentMode === 'fulfillment') {
-    renderFulfillmentMode(el, data);
-  } else {
-    renderAcquisitionMode(el, data);
-  }
+  renderFulfillmentMode(el, data);
 }
 
 /* ─── Header Bar ─── */
@@ -268,33 +256,17 @@ function buildHeaderBar(data, inventoryData, meta) {
       <span style="color:var(--text-muted);font-size:13px;">Updated: ${esc(time)}</span>
       ${inventoryBadges}
     </div>
-    <div class="mode-switcher">
-      <button class="mode-btn ${fulfillActive}" data-mode="fulfillment">Fulfillment</button>
-      <button class="mode-btn ${acqActive}" data-mode="acquisition">Acquisition</button>
-    </div>
   `;
 }
 
 /* ─── Summary Stats ─── */
 
 function buildSummaryStats(summaryRow, data) {
-  const acqData = store.get('acquisition');
-  let items, countVal1, countLabel1, countVal2, countLabel2;
-
-  if (currentMode === 'fulfillment') {
-    items = data.clients || [];
-    countVal1 = data.total_accounts || 0;
-    countLabel1 = 'Total Accounts';
-    countVal2 = data.in_campaign || 0;
-    countLabel2 = 'In Campaigns';
-  } else {
-    if (!acqData) return;
-    items = acqData.groups || [];
-    countVal1 = acqData.total_accounts || 0;
-    countLabel1 = 'Total Accounts';
-    countVal2 = acqData.total_groups || 0;
-    countLabel2 = 'Active Groups';
-  }
+  const items = data.clients || [];
+  const countVal1 = data.total_accounts || 0;
+  const countLabel1 = 'Total Accounts';
+  const countVal2 = data.in_campaign || 0;
+  const countLabel2 = 'In Campaigns';
 
   const avgBounce = computeAverageRate(items, 'avg_bounce_rate');
   const avgReply = computeAverageRate(items, 'avg_reply_rate');
