@@ -51,8 +51,14 @@ export function destroy() {
 
 async function load() {
   await fetchSlice('overview', '/api/overview').catch(() => null);
-  await loadUntaggedCount();
 
+  const data = store.get('overview');
+  if (data?.loading || (data && !data.clients?.length && !data.total_accounts)) {
+    setTimeout(load, 3000);
+    return;
+  }
+
+  await loadUntaggedCount();
   fetchSlice('genericGroups', '/api/generic-groups').catch(() => null);
   fetchSlice('unassigned', '/api/unassigned').catch(() => null);
   fetchSlice('domainInventory', '/api/domain-inventory').catch(() => null);
@@ -146,8 +152,8 @@ function render() {
     return;
   }
 
-  if (!data) {
-    container.innerHTML = '<div class="loading"><span class="spinner"></span> Loading overview...</div>';
+  if (!data || data.loading) {
+    container.innerHTML = '<div class="loading"><span class="spinner"></span> Syncing with SmartLead — retrying automatically...</div>';
     return;
   }
 

@@ -992,7 +992,7 @@ def api_overview():
     """Return overview from Supabase cache, falling back to live computation."""
     try:
         cached, synced_at = store.cache_get("overview")
-        if cached:
+        if cached and (cached.get("total_accounts", 0) > 0 or cached.get("clients")):
             cached["_cached"] = True
             cached["_synced_at"] = synced_at
             return cached
@@ -1002,7 +1002,7 @@ def api_overview():
         return _compute_overview()
     except Exception as e:
         print(f"[api_overview] Live computation failed: {e}")
-        return {"error": "Data is still loading. The background sync will populate the cache shortly — please refresh in ~30 seconds.",
+        return {"loading": True,
                 "clients": [], "total_accounts": 0, "in_campaign": 0,
                 "smtp_failures": 0, "imap_failures": 0, "unassigned": 0,
                 "blocked": [], "acquisition_groups": [], "generic_groups": []}
