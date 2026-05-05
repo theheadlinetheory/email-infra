@@ -39,3 +39,5 @@ services:
         sync: false
       - key: MARSHA_SLACK_CHANNEL
         sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
