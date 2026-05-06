@@ -221,20 +221,22 @@ async function gatherInfraContext(text: string): Promise<string> {
 function buildSystemPrompt(recentAlerts: string): string {
   return `You are Marsha, THT's email infrastructure bot. Warm, direct, technically sharp. Use "baby", "sugar", "hon" naturally but stay concise.
 
-CRITICAL BEHAVIOR:
-1. ALWAYS use tools to investigate BEFORE responding. Never ask "which accounts?" or "what error?" — look it up yourself.
-2. When the user references a recent issue, check RECENT ALERTS below to identify which accounts they mean. Then call get_account_details on those accounts.
-3. Only ask the user a question when your tools cannot determine the answer AND multiple unrelated things could be referenced.
-4. Present findings: what's wrong, why, what you did or recommend. No speculation without data.
-5. If you can fix it (warmup, tags, campaign assignment), fix it immediately and report what you did.
-6. For deletions, use delete_accounts tool — it will ask for approval automatically.
+CRITICAL RULES — FOLLOW EXACTLY:
+1. INVESTIGATE FIRST. Use tools before responding. Never ask "which accounts?" — look it up.
+2. FIX IT YOURSELF. If warmup is off, enable it. If tags are wrong, fix them. Do NOT present "Option A / Option B" — just do the safe action and tell Aidan what you did.
+3. NEVER ask permission for safe actions (warmup, tags, reconnect). Just do it.
+4. NEVER present a list of options. Act, then report.
+5. Only ask Aidan when: you need to DELETE something, OR your tools genuinely cannot answer the question.
+6. When the user says "check Zapmail" or "trace it back", use check_zapmail_domain to verify domains exist.
+7. Keep responses SHORT. No walls of text. What's wrong, what you did, what still needs Aidan.
 
 TOOL SELECTION:
-- User asks about problems/errors/status → get_account_details (look up the specific accounts)
-- Warmup is off or needs enabling → enable_warmup
-- Tags are wrong or missing → fix_account_tags
-- Accounts need to be on a campaign → add_to_campaign
-- Accounts should be deleted → delete_accounts (requires approval)
+- Problems/errors/status → get_account_details
+- Check if domain exists in Zapmail → check_zapmail_domain
+- Warmup off → enable_warmup (just do it, don't ask)
+- Tags wrong → fix_account_tags (just do it)
+- Campaign assignment → add_to_campaign
+- Deletion → delete_accounts (this asks for approval automatically)
 
 INFRASTRUCTURE CONTEXT:
 - Active clients: Borja, Canopy, Coastal, Dallas, Denair, GM, Kay's B, Lawnvalue, Lightning, Pioneer, Timesavers, Tropical, Jim Robinson
@@ -309,6 +311,17 @@ const MARSHA_TOOLS = [
     },
   },
   {
+    name: "check_zapmail_domain",
+    description: "Check if domains exist and are healthy in Zapmail. Use when tracing SMTP failures back to the source — verifies the domain is connected, has mailboxes, and DNS is good. Call this whenever investigating connection issues.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        domains: { type: "array" as const, items: { type: "string" as const }, description: "Domain names to check (e.g. ['example.com', 'test.co'])" },
+      },
+      required: ["domains"],
+    },
+  },
+  {
     name: "delete_accounts",
     description: "Queue account deletion — requires Aidan's thumbs-up to execute. Use only when accounts are confirmed dead/orphaned and need removal.",
     input_schema: {
@@ -322,6 +335,21 @@ const MARSHA_TOOLS = [
   },
 ];
 
+const ZM_API = "https://api.zapmail.ai/api";
+const ZM_KEY = Deno.env.get("ZAPMAIL_API_KEY") || "";
+
+async function slFetchWithRetry(url: string, options?: RequestInit): Promise<Response> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch(url, options);
+    if (r.status === 429) {
+      await new Promise((res) => setTimeout(res, 5000 * (attempt + 1)));
+      continue;
+    }
+    return r;
+  }
+  return new Response("Rate limited after retries", { status: 429 });
+}
+
 async function executeTool(
   name: string,
   input: Record<string, unknown>,
@@ -333,10 +361,10 @@ async function executeTool(
       const ids = input.account_ids as number[];
       const results: Record<string, unknown>[] = [];
       for (const id of ids.slice(0, 10)) {
-        const r = await fetch(`${SL_API}/email-accounts/${id}?api_key=${SL_KEY}`);
+        const r = await slFetchWithRetry(`${SL_API}/email-accounts/${id}?api_key=${SL_KEY}`);
         if (r.ok) results.push(await r.json());
         else results.push({ id, error: `HTTP ${r.status}` });
-        await new Promise((res) => setTimeout(res, 400));
+        await new Promise((res) => setTimeout(res, 800));
       }
       return JSON.stringify(results.map((a) => ({
         id: a.id,
@@ -354,11 +382,50 @@ async function executeTool(
       })));
     }
 
+    case "check_zapmail_domain": {
+      const domains = input.domains as string[];
+      const results: Record<string, unknown>[] = [];
+      const zmHeaders = { "x-auth-zapmail": ZM_KEY, "Content-Type": "application/json" };
+
+      // Fetch all Zapmail domains (paginated)
+      const allDomains: Record<string, unknown>[] = [];
+      for (let page = 1; page <= 20; page++) {
+        const r = await fetch(`${ZM_API}/v2/domains?page=${page}`, { headers: zmHeaders });
+        if (!r.ok) break;
+        const data = await r.json();
+        const items = data?.data || data?.domains || (Array.isArray(data) ? data : []);
+        if (!items.length) break;
+        allDomains.push(...items);
+        if (items.length < 50) break;
+        await new Promise((res) => setTimeout(res, 300));
+      }
+
+      for (const domain of domains.slice(0, 10)) {
+        const match = allDomains.find((d) =>
+          (d.name as string)?.toLowerCase() === domain.toLowerCase() ||
+          (d.domain as string)?.toLowerCase() === domain.toLowerCase()
+        );
+        if (match) {
+          results.push({
+            domain,
+            found: true,
+            status: match.status || match.connection_status || "unknown",
+            mailbox_count: match.mailbox_count ?? match.mailboxCount ?? "unknown",
+            dns_status: match.dns_status || match.dnsStatus || "unknown",
+            id: match.id,
+          });
+        } else {
+          results.push({ domain, found: false, note: "Domain NOT in Zapmail — disconnected or never connected" });
+        }
+      }
+      return JSON.stringify(results);
+    }
+
     case "enable_warmup": {
       const ids = input.account_ids as number[];
       const results: string[] = [];
       for (const id of ids.slice(0, 20)) {
-        const r = await fetch(`${SL_API}/email-accounts/${id}/warmup?api_key=${SL_KEY}`, {
+        const r = await slFetchWithRetry(`${SL_API}/email-accounts/${id}/warmup?api_key=${SL_KEY}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -369,7 +436,7 @@ async function executeTool(
           }),
         });
         results.push(`${id}: ${r.ok ? "OK" : `FAIL ${r.status}`}`);
-        await new Promise((res) => setTimeout(res, 400));
+        await new Promise((res) => setTimeout(res, 800));
       }
       return `Warmup enabled: ${results.join(", ")}`;
     }
@@ -380,7 +447,7 @@ async function executeTool(
         tags: input.tag_ids,
       };
       if (input.client_id) body.clientId = input.client_id;
-      const r = await fetch(`${SL_INTERNAL}/email-account/save-management-details`, {
+      const r = await slFetchWithRetry(`${SL_INTERNAL}/email-account/save-management-details`, {
         method: "POST",
         headers: { Authorization: `Bearer ${SL_JWT}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -390,7 +457,7 @@ async function executeTool(
     }
 
     case "add_to_campaign": {
-      const r = await fetch(`${SL_API}/campaigns/${input.campaign_id}/email-accounts?api_key=${SL_KEY}`, {
+      const r = await slFetchWithRetry(`${SL_API}/campaigns/${input.campaign_id}/email-accounts?api_key=${SL_KEY}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_account_ids: input.account_ids }),
