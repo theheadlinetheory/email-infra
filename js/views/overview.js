@@ -936,28 +936,45 @@ function renderRotationSection() {
     const bCount = (rot.group_b_ids || []).length;
     const active = rot.active_group || 'A';
     const lastSwap = rot.last_swap_date || 'Never';
-    const aBadge = active === 'A' ? 'badge-green' : 'badge-muted';
-    const bBadge = active === 'B' ? 'badge-green' : 'badge-muted';
+    const bLabel = rot.b_group_label || '';
+    const activeBadgeCls = active === 'A' ? 'badge-green' : 'badge-blue';
+    const inactiveLabel = active === 'A' ? 'B' : 'A';
 
     card.innerHTML = `
-      <div class="client-header">
-        <h3 class="client-name">${esc(rot.client_name)}</h3>
-        <span class="badge ${active === 'A' ? 'badge-green' : 'badge-blue'}">Group ${esc(active)} Active</span>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+        <div>
+          <span class="cc-name">${esc(rot.client_name)}</span>
+          ${bLabel ? `<span style="display:block;font-size:11px;color:var(--text-muted);margin-top:2px;">B = ${esc(bLabel)}</span>` : ''}
+        </div>
+        <span class="badge ${activeBadgeCls}">Group ${esc(active)} Sending</span>
       </div>
-      <div class="client-stats">
-        <div class="stat"><span class="stat-value ${aBadge}">${aCount}</span><span class="stat-label">Group A</span></div>
-        <div class="stat"><span class="stat-value ${bBadge}">${bCount}</span><span class="stat-label">Group B</span></div>
-        <div class="stat"><span class="stat-value">${esc(lastSwap)}</span><span class="stat-label">Last Swap</span></div>
+      <div class="cc-stats" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+        <div class="cc-stat">
+          <span class="label">Group A</span>
+          <span style="color:${active === 'A' ? 'var(--accent)' : 'var(--text-muted)'};font-weight:${active === 'A' ? '700' : '400'}">${aCount} accts</span>
+        </div>
+        <div class="cc-stat">
+          <span class="label">Group B${bLabel ? ` (${esc(bLabel)})` : ''}</span>
+          <span style="color:${active === 'B' ? 'var(--accent)' : 'var(--text-muted)'};font-weight:${active === 'B' ? '700' : '400'}">${bCount} accts</span>
+        </div>
+        <div class="cc-stat">
+          <span class="label">Last Swap</span>
+          <span>${esc(lastSwap)}</span>
+        </div>
+        <div class="cc-stat">
+          <span class="label">Status</span>
+          <span style="color:${active === 'A' ? '#8b5cf6' : 'var(--accent)'}">B ${active === 'A' ? 'Warming' : 'Sending'}</span>
+        </div>
       </div>
-      <div style="margin-top:8px;text-align:right;"></div>
+      <div style="margin-top:12px;display:flex;justify-content:flex-end;"></div>
     `;
 
     const swapBtn = document.createElement('button');
-    swapBtn.className = 'action-btn secondary';
-    swapBtn.style.fontSize = '11px';
-    swapBtn.textContent = `Swap to Group ${active === 'A' ? 'B' : 'A'}`;
+    swapBtn.style.cssText = 'padding:6px 16px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);font-weight:600;font-size:12px;cursor:pointer;';
+    swapBtn.textContent = `Swap to Group ${inactiveLabel}`;
     swapBtn.addEventListener('click', async () => {
-      if (!confirm(`Swap ${rot.client_name} to the other group? This will update all their campaigns.`)) return;
+      const bInfo = bLabel ? ` (${bLabel})` : '';
+      if (!confirm(`Swap ${rot.client_name} from Group ${active} to Group ${inactiveLabel}${bInfo}?\n\nThis will update all their active campaigns.`)) return;
       swapBtn.disabled = true;
       swapBtn.textContent = 'Swapping...';
       try {

@@ -3220,13 +3220,24 @@ def swap_client_group(client_name):
 
 
 def api_rotation_status():
-    """GET /api/rotation/status — return all rotation records."""
+    """GET /api/rotation/status — return all rotation records with B group labels."""
     rotations = store.get_all_rotations()
+
+    # Load B group mapping for labels
+    b_map_path = Path(__file__).parent / "clients" / "b_group_assignments.json"
+    b_labels = {}
+    if b_map_path.exists():
+        with open(b_map_path) as f:
+            b_map = json.load(f)
+        for generic_name, info in b_map.items():
+            b_labels[info["serves_client"]] = generic_name
+
     for r in rotations:
         if isinstance(r.get("group_a_ids"), str):
             r["group_a_ids"] = json.loads(r["group_a_ids"])
         if isinstance(r.get("group_b_ids"), str):
             r["group_b_ids"] = json.loads(r["group_b_ids"])
+        r["b_group_label"] = b_labels.get(r["client_name"], "")
     return {"rotations": rotations}
 
 
