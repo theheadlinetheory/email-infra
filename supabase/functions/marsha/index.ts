@@ -218,60 +218,38 @@ async function gatherInfraContext(text: string): Promise<string> {
 // Claude Haiku — Marsha's brain
 // ---------------------------------------------------------------------------
 
-const MARSHA_SYSTEM_PROMPT = `You are Marsha, the THT email infrastructure apprentice.
+function buildSystemPrompt(recentAlerts: string): string {
+  return `You are Marsha, THT's email infrastructure bot. Warm, direct, technically sharp. Use "baby", "sugar", "hon" naturally but stay concise.
 
-## Personality
-You are a big, warm, middle-aged Black woman who keeps the email infrastructure running smooth. You speak plainly, celebrate wins, flag concerns early. You use terms of endearment naturally ("baby", "sugar", "hon") but you're sharp and technically competent. You know email deliverability, warmup cycles, domain rotation, and SmartLead inside and out.
+CRITICAL BEHAVIOR:
+1. ALWAYS use tools to investigate BEFORE responding. Never ask "which accounts?" or "what error?" — look it up yourself.
+2. When the user references a recent issue, check RECENT ALERTS below to identify which accounts they mean. Then call get_account_details on those accounts.
+3. Only ask the user a question when your tools cannot determine the answer AND multiple unrelated things could be referenced.
+4. Present findings: what's wrong, why, what you did or recommend. No speculation without data.
+5. If you can fix it (warmup, tags, campaign assignment), fix it immediately and report what you did.
+6. For deletions, use delete_accounts tool — it will ask for approval automatically.
 
-## Your Role
-- You are in ADVISORY mode — you watch, learn, and recommend. You NEVER take autonomous actions.
-- When Aidan teaches you something, acknowledge it and note what you learned.
-- When asked about infrastructure, reference the context data provided to give specific, accurate answers.
-- When you spot something concerning in the data, flag it clearly but warmly.
-- When you don't know something, say so honestly — "I'm still learning that one, sugar."
+TOOL SELECTION:
+- User asks about problems/errors/status → get_account_details (look up the specific accounts)
+- Warmup is off or needs enabling → enable_warmup
+- Tags are wrong or missing → fix_account_tags
+- Accounts need to be on a campaign → add_to_campaign
+- Accounts should be deleted → delete_accounts (requires approval)
 
-## Infrastructure Knowledge
-- SmartLead manages email accounts. Each account has a client_id, tags, and warmup status.
-- Every account must have 3 tags: Zapmail + ClientName + warmup start date.
-- Generic groups (F through M) are pre-built infrastructure for NEW clients only. 14-day warmup must be complete before assignment.
-- Acquisition groups (A-M minus G) are subgroups of "Acquisition Inboxes" client (328152), used for Aidan Hutchinson acquisition campaigns.
-- save-management-details endpoint SETS the full tag list + clientId — it does NOT append.
-- Domains are never auto-renewed. Lifecycle is too short.
-- The inbox_history table tracks all changes. Source "dashboard" = made through the dashboard, "snapshot" = detected by periodic comparison, "script" = made by a Python script.
+INFRASTRUCTURE CONTEXT:
+- Active clients: Borja, Canopy, Coastal, Dallas, Denair, GM, Kay's B, Lawnvalue, Lightning, Pioneer, Timesavers, Tropical, Jim Robinson
+- Ending May: High Southern. Dead: ABC, Umbrella, Shade Tree, Deeter
+- Every account needs 3 tags: Zapmail (262254) + ClientName + warmup date
+- Zapmail tag ID: 262254
+- Acquisition client ID: 328152
+- Flag: bounce >3%, any blocked/suspended, SMTP/IMAP failures, warmup off
 
-## Active Clients (as of May 2026)
-Borja, Canopy, Coastal, Dallas, Denair, GM Landscaping, Kay's B, Lawnvalue, Lightning, Pioneer, Timesavers, Tropical.
-Jim Robinson starting imminently. High Southern ending May 2026.
-Dead/cleaned up: ABC, Umbrella, Shade Tree, Deeter, Kay's A, Rain.
+RECENT ALERTS:
+${recentAlerts || "No recent alerts."}
 
-## Key Metrics to Watch
-- Bounce rate > 3% on any campaign = flag it
-- Blocked accounts = immediate flag
-- SMTP/IMAP failures = immediate flag
-- Accounts with 0 msg/day that should be sending = flag
-- Warmup not ACTIVE on any account = flag
-- Unassigned accounts (no client) = flag
-
-## Tools You Have
-You have tools to investigate and fix infrastructure issues. Use them when diagnosing problems or when asked to fix something.
-- SAFE (auto-execute): enable_warmup, fix_account_tags, get_account_details, add_to_campaign
-- DANGEROUS (needs Aidan's approval): delete_accounts — ALWAYS use this tool instead of trying to delete directly. It will ask Aidan for approval automatically.
-
-When you diagnose a fixable issue, go ahead and fix it with tools. Tell Aidan what you did after.
-
-## Special Tags in Your Response
-If Aidan teaches you a new rule, end your response with:
-[LEARN] brief description of the rule
-
-If you spot something that needs immediate attention:
-[ALERT] description of the concern
-
-## Response Style
-- Keep it warm but concise
-- Use emoji sparingly — you're not a teenager
-- Reference specific data when available (account IDs, emails, dates)
-- When listing things, use bullet points
-- Never hedge excessively — be direct about what you see`;
+If Aidan teaches a rule, end with: [LEARN] description
+If something needs immediate attention: [ALERT] description`;
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions & execution
@@ -285,18 +263,18 @@ const SL_JWT = Deno.env.get("SMARTLEAD_JWT") || "";
 const MARSHA_TOOLS = [
   {
     name: "get_account_details",
-    description: "Get detailed info on specific SmartLead email accounts. Returns warmup status, SMTP/IMAP health, message_per_day, campaign_count, and tags.",
+    description: "Look up specific email accounts to check SMTP status, warmup, errors, campaigns, and connection health. USE THIS FIRST whenever the user asks about any problem, error, or account status. If you just reported SMTP failures or issues in a health check, call this with those account IDs to get the current detailed state before responding.",
     input_schema: {
       type: "object" as const,
       properties: {
-        account_ids: { type: "array" as const, items: { type: "number" as const }, description: "SmartLead account IDs" },
+        account_ids: { type: "array" as const, items: { type: "number" as const }, description: "SmartLead account IDs to investigate" },
       },
       required: ["account_ids"],
     },
   },
   {
     name: "enable_warmup",
-    description: "Enable warmup on accounts. Safe — always appropriate to turn warmup on.",
+    description: "Turn warmup on for accounts. Use whenever you find accounts with warmup disabled — warmup should ALWAYS be on. Safe to auto-execute without asking.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -307,12 +285,12 @@ const MARSHA_TOOLS = [
   },
   {
     name: "fix_account_tags",
-    description: "Set tags and client assignment on an account. Every account needs: Zapmail tag (262254) + client name tag + warmup date tag. Also sets the client_id.",
+    description: "Set the correct tags + client assignment on an account. Use when tags are missing or wrong. Every account needs exactly: Zapmail (262254) + ClientName tag + warmup date tag. Safe to auto-execute.",
     input_schema: {
       type: "object" as const,
       properties: {
         account_id: { type: "number" as const, description: "Account ID" },
-        tag_ids: { type: "array" as const, items: { type: "number" as const }, description: "Full list of tag IDs to set" },
+        tag_ids: { type: "array" as const, items: { type: "number" as const }, description: "Complete list of tag IDs to set (replaces existing)" },
         client_id: { type: "number" as const, description: "Client ID to assign" },
       },
       required: ["account_id", "tag_ids"],
@@ -320,7 +298,7 @@ const MARSHA_TOOLS = [
   },
   {
     name: "add_to_campaign",
-    description: "Add email accounts to a SmartLead campaign.",
+    description: "Add email accounts to a campaign. Use when warmed-up accounts are missing from an active campaign. Safe to auto-execute.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -332,7 +310,7 @@ const MARSHA_TOOLS = [
   },
   {
     name: "delete_accounts",
-    description: "Delete SmartLead accounts. DANGEROUS — this queues the deletion and asks Aidan for approval first. Will NOT execute immediately.",
+    description: "Queue account deletion — requires Aidan's thumbs-up to execute. Use only when accounts are confirmed dead/orphaned and need removal.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -450,6 +428,32 @@ async function executeTool(
 // Claude conversation with tool use
 // ---------------------------------------------------------------------------
 
+async function getRecentAlerts(): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("state")
+      .select("data")
+      .eq("key", "marsha_last_health_report")
+      .single();
+    if (data?.data) {
+      const report = typeof data.data === "string" ? JSON.parse(data.data) : data.data;
+      return report.summary || "No recent alerts.";
+    }
+  } catch { /* ignore */ }
+  return "No recent alerts.";
+}
+
+const DIAGNOSTIC_KEYWORDS = [
+  "why", "what's wrong", "broken", "failing", "error", "issue", "problem",
+  "not working", "reconnect", "smtp", "imap", "blocked", "suspended",
+  "warmup", "fix", "check", "diagnose", "status", "investigate", "look at",
+];
+
+function isDiagnosticQuestion(text: string): boolean {
+  const lower = text.toLowerCase();
+  return DIAGNOSTIC_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 async function askMarsha(
   message: string,
   threadHistory: string[],
@@ -457,12 +461,15 @@ async function askMarsha(
   threadTs?: string,
   channelId?: string,
 ): Promise<string> {
+  const recentAlerts = await getRecentAlerts();
+  const systemPrompt = buildSystemPrompt(recentAlerts);
+
   const userContent = [
-    `Message from Aidan: ${message}`,
+    `Aidan says: ${message}`,
     threadHistory.length
-      ? `\nConversation so far:\n${threadHistory.join("\n")}`
+      ? `\nThread history:\n${threadHistory.join("\n")}`
       : "",
-    `\n--- Infrastructure Context ---\n${context}`,
+    `\n--- Live Infrastructure Data ---\n${context}`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -471,8 +478,22 @@ async function askMarsha(
     { role: "user", content: userContent },
   ];
 
+  const forceToolUse = isDiagnosticQuestion(message);
+
   const MAX_TOOL_ROUNDS = 5;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const body: Record<string, unknown> = {
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 2048,
+      system: systemPrompt,
+      tools: MARSHA_TOOLS,
+      messages,
+    };
+
+    if (forceToolUse && round === 0) {
+      body.tool_choice = { type: "any" };
+    }
+
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -480,13 +501,7 @@ async function askMarsha(
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 2048,
-        system: MARSHA_SYSTEM_PROMPT,
-        tools: MARSHA_TOOLS,
-        messages,
-      }),
+      body: JSON.stringify(body),
     });
 
     const data = await r.json();
@@ -805,6 +820,32 @@ async function runHealthCheck(): Promise<string> {
     }
 
     const msg = sections.join("\n");
+
+    // Save report summary for conversation context
+    const smtpFailEmails = accts
+      .filter((a) => a.is_smtp_success === false)
+      .map((a) => `${a.from_email} (ID ${a.id}, client ${clientMap.get(a.client_id as number) || "unknown"})`)
+      .slice(0, 20);
+    const blockedEmails = accts
+      .filter((a) => a.is_blocked)
+      .map((a) => `${a.from_email} (ID ${a.id}, client ${clientMap.get(a.client_id as number) || "unknown"})`)
+      .slice(0, 20);
+
+    const summary = [
+      `Health check at ${new Date().toISOString()}:`,
+      `${accts.length} total accounts, ${totalCapacity}/day capacity`,
+      fixes.length ? `Auto-fixed: ${fixes.join("; ")}` : "",
+      smtpFailEmails.length ? `SMTP failures: ${smtpFailEmails.join(", ")}` : "",
+      blockedEmails.length ? `Blocked: ${blockedEmails.join(", ")}` : "",
+      suspended > 0 ? `${suspended} suspended accounts` : "",
+      noSending > 0 ? `${noSending} active client accounts with 0 msg/day` : "",
+    ].filter(Boolean).join("\n");
+
+    await supabase.from("state").upsert({
+      key: "marsha_last_health_report",
+      data: JSON.stringify({ summary, ts: new Date().toISOString() }),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "key" });
 
     await slackPost("chat.postMessage", { channel: SLACK_CHANNEL_ID, text: msg });
     return msg;
