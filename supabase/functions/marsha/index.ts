@@ -252,6 +252,13 @@ Dead/cleaned up: ABC, Umbrella, Shade Tree, Deeter, Kay's A, Rain.
 - Warmup not ACTIVE on any account = flag
 - Unassigned accounts (no client) = flag
 
+## Tools You Have
+You have tools to investigate and fix infrastructure issues. Use them when diagnosing problems or when asked to fix something.
+- SAFE (auto-execute): enable_warmup, fix_account_tags, get_account_details, add_to_campaign
+- DANGEROUS (needs Aidan's approval): delete_accounts — ALWAYS use this tool instead of trying to delete directly. It will ask Aidan for approval automatically.
+
+When you diagnose a fixable issue, go ahead and fix it with tools. Tell Aidan what you did after.
+
 ## Special Tags in Your Response
 If Aidan teaches you a new rule, end your response with:
 [LEARN] brief description of the rule
@@ -266,10 +273,189 @@ If you spot something that needs immediate attention:
 - When listing things, use bullet points
 - Never hedge excessively — be direct about what you see`;
 
+// ---------------------------------------------------------------------------
+// Tool definitions & execution
+// ---------------------------------------------------------------------------
+
+const SL_API = "https://server.smartlead.ai/api/v1";
+const SL_INTERNAL = "https://server.smartlead.ai/api";
+const SL_KEY = Deno.env.get("SMARTLEAD_API_KEY") || "";
+const SL_JWT = Deno.env.get("SMARTLEAD_JWT") || "";
+
+const MARSHA_TOOLS = [
+  {
+    name: "get_account_details",
+    description: "Get detailed info on specific SmartLead email accounts. Returns warmup status, SMTP/IMAP health, message_per_day, campaign_count, and tags.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        account_ids: { type: "array" as const, items: { type: "number" as const }, description: "SmartLead account IDs" },
+      },
+      required: ["account_ids"],
+    },
+  },
+  {
+    name: "enable_warmup",
+    description: "Enable warmup on accounts. Safe — always appropriate to turn warmup on.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        account_ids: { type: "array" as const, items: { type: "number" as const }, description: "Account IDs to enable warmup on" },
+      },
+      required: ["account_ids"],
+    },
+  },
+  {
+    name: "fix_account_tags",
+    description: "Set tags and client assignment on an account. Every account needs: Zapmail tag (262254) + client name tag + warmup date tag. Also sets the client_id.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        account_id: { type: "number" as const, description: "Account ID" },
+        tag_ids: { type: "array" as const, items: { type: "number" as const }, description: "Full list of tag IDs to set" },
+        client_id: { type: "number" as const, description: "Client ID to assign" },
+      },
+      required: ["account_id", "tag_ids"],
+    },
+  },
+  {
+    name: "add_to_campaign",
+    description: "Add email accounts to a SmartLead campaign.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        campaign_id: { type: "number" as const, description: "Campaign ID" },
+        account_ids: { type: "array" as const, items: { type: "number" as const }, description: "Account IDs to add" },
+      },
+      required: ["campaign_id", "account_ids"],
+    },
+  },
+  {
+    name: "delete_accounts",
+    description: "Delete SmartLead accounts. DANGEROUS — this queues the deletion and asks Aidan for approval first. Will NOT execute immediately.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        account_ids: { type: "array" as const, items: { type: "number" as const }, description: "Account IDs to delete" },
+        reason: { type: "string" as const, description: "Why these should be deleted" },
+      },
+      required: ["account_ids", "reason"],
+    },
+  },
+];
+
+async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  threadTs?: string,
+  channelId?: string,
+): Promise<string> {
+  switch (name) {
+    case "get_account_details": {
+      const ids = input.account_ids as number[];
+      const results: Record<string, unknown>[] = [];
+      for (const id of ids.slice(0, 10)) {
+        const r = await fetch(`${SL_API}/email-accounts/${id}?api_key=${SL_KEY}`);
+        if (r.ok) results.push(await r.json());
+        else results.push({ id, error: `HTTP ${r.status}` });
+        await new Promise((res) => setTimeout(res, 400));
+      }
+      return JSON.stringify(results.map((a) => ({
+        id: a.id,
+        email: a.from_email,
+        client_id: a.client_id,
+        warmup_status: (a.warmup_details as Record<string, unknown>)?.status,
+        smtp_ok: a.is_smtp_success,
+        imap_ok: a.is_imap_success,
+        blocked: a.is_blocked,
+        suspended: a.is_suspended,
+        mpd: a.message_per_day,
+        campaigns: a.campaign_count,
+        blocked_reason: a.blocked_reason,
+        error: a.error,
+      })));
+    }
+
+    case "enable_warmup": {
+      const ids = input.account_ids as number[];
+      const results: string[] = [];
+      for (const id of ids.slice(0, 20)) {
+        const r = await fetch(`${SL_API}/email-accounts/${id}/warmup?api_key=${SL_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            warmup_enabled: true,
+            total_warmup_per_day: 15,
+            daily_rampup: 5,
+            reply_rate_percentage: 40,
+          }),
+        });
+        results.push(`${id}: ${r.ok ? "OK" : `FAIL ${r.status}`}`);
+        await new Promise((res) => setTimeout(res, 400));
+      }
+      return `Warmup enabled: ${results.join(", ")}`;
+    }
+
+    case "fix_account_tags": {
+      const body: Record<string, unknown> = {
+        id: input.account_id,
+        tags: input.tag_ids,
+      };
+      if (input.client_id) body.clientId = input.client_id;
+      const r = await fetch(`${SL_INTERNAL}/email-account/save-management-details`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${SL_JWT}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      return data?.ok ? `Tags set on account ${input.account_id}` : `Failed: ${JSON.stringify(data)}`;
+    }
+
+    case "add_to_campaign": {
+      const r = await fetch(`${SL_API}/campaigns/${input.campaign_id}/email-accounts?api_key=${SL_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_account_ids: input.account_ids }),
+      });
+      return r.ok
+        ? `Added ${(input.account_ids as number[]).length} accounts to campaign ${input.campaign_id}`
+        : `Failed: HTTP ${r.status}`;
+    }
+
+    case "delete_accounts": {
+      const ids = input.account_ids as number[];
+      const reason = (input.reason as string) || "No reason given";
+      await supabase.from("state").upsert({
+        key: "marsha_pending_delete",
+        data: JSON.stringify({ account_ids: ids, reason, requested_at: new Date().toISOString(), thread_ts: threadTs }),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "key" });
+
+      if (channelId && threadTs) {
+        await postThreadReply(
+          channelId,
+          threadTs,
+          `:lock: I'd like to delete *${ids.length} account(s)*.\n*Reason:* ${reason}\n\nReact with :thumbsup: on this message to approve, sugar.`,
+        );
+      }
+      return `Deletion of ${ids.length} accounts queued for approval. Waiting for Aidan's 👍.`;
+    }
+
+    default:
+      return `Unknown tool: ${name}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claude conversation with tool use
+// ---------------------------------------------------------------------------
+
 async function askMarsha(
   message: string,
   threadHistory: string[],
-  context: string
+  context: string,
+  threadTs?: string,
+  channelId?: string,
 ): Promise<string> {
   const userContent = [
     `Message from Aidan: ${message}`,
@@ -281,23 +467,61 @@ async function askMarsha(
     .filter(Boolean)
     .join("\n");
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      system: MARSHA_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userContent }],
-    }),
-  });
+  const messages: Array<Record<string, unknown>> = [
+    { role: "user", content: userContent },
+  ];
 
-  const data = await r.json();
-  return data?.content?.[0]?.text || "Hmm, I'm having a moment, baby. Try me again.";
+  const MAX_TOOL_ROUNDS = 5;
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2048,
+        system: MARSHA_SYSTEM_PROMPT,
+        tools: MARSHA_TOOLS,
+        messages,
+      }),
+    });
+
+    const data = await r.json();
+    const content = data?.content || [];
+    const stopReason = data?.stop_reason;
+
+    messages.push({ role: "assistant", content });
+
+    if (stopReason !== "tool_use") {
+      const textParts = content
+        .filter((b: Record<string, unknown>) => b.type === "text")
+        .map((b: Record<string, unknown>) => b.text as string);
+      return textParts.join("\n") || "Hmm, I'm having a moment, baby. Try me again.";
+    }
+
+    const toolResults: Array<Record<string, unknown>> = [];
+    for (const block of content) {
+      if (block.type === "tool_use") {
+        const result = await executeTool(
+          block.name as string,
+          block.input as Record<string, unknown>,
+          threadTs,
+          channelId,
+        );
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: result,
+        });
+      }
+    }
+    messages.push({ role: "user", content: toolResults });
+  }
+
+  return "I got a bit tangled up running through all those checks, sugar. Try asking me again.";
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +679,67 @@ async function runHealthCheck(): Promise<string> {
       if (cid && mpd === 0 && ACTIVE_CLIENT_IDS.has(cid)) noSending++;
     }
 
+    // --- Auto-remediation ---
+    const fixes: string[] = [];
+
+    // Auto-fix: re-enable warmup on accounts where it's off
+    const warmupOff = accts.filter(
+      (a) => a.client_id && !a.is_blocked && !a.is_suspended &&
+        (a.warmup_details as Record<string, unknown>)?.warmup_enabled === false
+    );
+    if (warmupOff.length > 0) {
+      let fixed = 0;
+      for (const a of warmupOff.slice(0, 20)) {
+        const r = await fetch(`${SL_API}/email-accounts/${a.id}/warmup?api_key=${SL_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ warmup_enabled: true, total_warmup_per_day: 15, daily_rampup: 5, reply_rate_percentage: 40 }),
+        });
+        if (r.ok) fixed++;
+        await new Promise((res) => setTimeout(res, 400));
+      }
+      if (fixed > 0) fixes.push(`:wrench: Re-enabled warmup on *${fixed}* account(s)`);
+      if (warmupOff.length > 20) fixes.push(`  _(${warmupOff.length - 20} more need warmup — will catch on next run)_`);
+    }
+
+    // Auto-fix: reconnect SMTP failures by re-saving connection
+    const smtpFailAccts = accts.filter((a) => a.is_smtp_success === false && !a.is_suspended && a.client_id);
+    if (smtpFailAccts.length > 0) {
+      let reconnected = 0;
+      let stillBroken = 0;
+      for (const a of smtpFailAccts.slice(0, 10)) {
+        const detailRes = await fetch(`${SL_API}/email-accounts/${a.id}?api_key=${SL_KEY}`);
+        if (!detailRes.ok) { stillBroken++; continue; }
+        const detail = await detailRes.json();
+        const smtp = detail.smtp_host && detail.smtp_port && detail.username && detail.password;
+        if (!smtp) { stillBroken++; continue; }
+
+        const reconnRes = await fetch(`${SL_API}/email-accounts/${a.id}?api_key=${SL_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from_name: detail.from_name,
+            from_email: detail.from_email,
+            username: detail.username,
+            password: detail.password,
+            smtp_host: detail.smtp_host,
+            smtp_port: detail.smtp_port,
+            imap_host: detail.imap_host,
+            imap_port: detail.imap_port,
+            max_email_per_day: detail.message_per_day || 15,
+          }),
+        });
+        if (reconnRes.ok) reconnected++;
+        else stillBroken++;
+        await new Promise((res) => setTimeout(res, 500));
+      }
+      if (reconnected > 0) fixes.push(`:electric_plug: Reconnected *${reconnected}* SMTP account(s)`);
+      if (stillBroken > 0) smtpFail = stillBroken;
+      else smtpFail = 0;
+    }
+
+    // --- Issues that need human attention ---
+
     // Blocked accounts
     if (blocked > 0) {
       const blockedAccts = accts.filter((a) => a.is_blocked);
@@ -467,8 +752,8 @@ async function runHealthCheck(): Promise<string> {
       issues.push(`:warning: *${suspended} suspended account(s)* — SMTP/IMAP connections down`);
     }
 
-    // SMTP/IMAP failures
-    if (smtpFail > 0) issues.push(`:envelope: *${smtpFail} SMTP failure(s)*`);
+    // SMTP/IMAP failures (after auto-fix attempt)
+    if (smtpFail > 0) issues.push(`:envelope: *${smtpFail} SMTP failure(s)* — could not auto-reconnect, needs manual check`);
     if (imapFail > 0) issues.push(`:mailbox_with_no_mail: *${imapFail} IMAP failure(s)*`);
 
     // Active client accounts with 0 sending
@@ -489,7 +774,7 @@ async function runHealthCheck(): Promise<string> {
     // Build the message
     const greeting = new Date().getHours() < 12 ? "Good morning, baby!" : new Date().getHours() < 17 ? "Hey there, sugar!" : "Evening, hon!";
 
-    if (issues.length === 0) {
+    if (issues.length === 0 && fixes.length === 0) {
       const msg = [
         `${greeting} Marsha here with the daily infrastructure report. :clipboard:\n`,
         `:white_check_mark: *All ${accts.length} accounts healthy* — ${totalCapacity.toLocaleString()}/day total capacity\n`,
@@ -500,15 +785,26 @@ async function runHealthCheck(): Promise<string> {
       return msg;
     }
 
-    const msg = [
+    const sections: string[] = [
       `${greeting} Marsha here with the daily infrastructure report. :clipboard:\n`,
       `*${accts.length} total accounts* — ${totalCapacity.toLocaleString()}/day capacity\n`,
-      `:rotating_light: *Issues found:*`,
-      ...issues,
-      `\n*Client breakdown:*`,
-      ...clientLines,
-      `\nI'll keep watching. Let me know if you need me to dig deeper on anything. :eyes:`,
-    ].join("\n");
+    ];
+
+    if (fixes.length > 0) {
+      sections.push(`:hammer_and_wrench: *Auto-fixed:*`, ...fixes, "");
+    }
+    if (issues.length > 0) {
+      sections.push(`:rotating_light: *Needs attention:*`, ...issues, "");
+    }
+    sections.push(`*Client breakdown:*`, ...clientLines);
+
+    if (issues.length > 0) {
+      sections.push(`\nI couldn't fix everything — flagging the rest for you, sugar. :eyes:`);
+    } else {
+      sections.push(`\nFixed everything myself this time. We're running smooth, baby. :white_check_mark:`);
+    }
+
+    const msg = sections.join("\n");
 
     await slackPost("chat.postMessage", { channel: SLACK_CHANNEL_ID, text: msg });
     return msg;
@@ -566,6 +862,40 @@ Deno.serve(async (req: Request) => {
     if (event.subtype) return new Response("ok");
     if (req.headers.get("x-slack-retry-num")) return new Response("ok");
 
+    // Reaction approval for pending deletes
+    if (event.type === "reaction_added" && event.reaction === "+1" && event.user === AIDAN_SLACK_USER_ID) {
+      try {
+        const { data: pending } = await supabase
+          .from("state")
+          .select("data")
+          .eq("key", "marsha_pending_delete")
+          .single();
+        if (pending?.data) {
+          const action = typeof pending.data === "string" ? JSON.parse(pending.data) : pending.data;
+          const ids = action.account_ids as number[];
+          if (ids?.length) {
+            const results: string[] = [];
+            for (const id of ids) {
+              const r = await fetch(`${SL_API}/email-accounts/${id}?api_key=${SL_KEY}`, { method: "DELETE" });
+              results.push(`${id}: ${r.ok ? "deleted" : `FAIL ${r.status}`}`);
+              await new Promise((res) => setTimeout(res, 400));
+            }
+            await supabase.from("state").delete().eq("key", "marsha_pending_delete");
+            const channel = event.item?.channel || SLACK_CHANNEL_ID;
+            const thread = action.thread_ts || event.item?.ts;
+            await postThreadReply(
+              channel,
+              thread,
+              `:white_check_mark: Approved! Deleted ${ids.length} account(s).\n${results.join("\n")}`,
+            );
+          }
+        }
+      } catch (err) {
+        console.error("Approval handler error:", err);
+      }
+      return new Response("ok");
+    }
+
     // Message in #marsha
     if (event.type === "message" && event.channel === SLACK_CHANNEL_ID) {
       try {
@@ -589,8 +919,8 @@ Deno.serve(async (req: Request) => {
             : Promise.resolve([]),
         ]);
 
-        // Ask Marsha
-        const response = await askMarsha(text, history, context);
+        // Ask Marsha (with tool use capabilities)
+        const response = await askMarsha(text, history, context, threadTs, event.channel);
 
         // Extract tags
         const learnIdx = response.indexOf("[LEARN]");
