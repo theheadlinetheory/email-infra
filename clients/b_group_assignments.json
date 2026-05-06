@@ -1,0 +1,56 @@
+{
+  "Generic F": {
+    "generic_client_id": 352787,
+    "generic_tag_id": 370966,
+    "serves_client": "Timesavers Landscaping",
+    "serves_client_id": 325076,
+    "account_count": 49,
+    "tags_applied": 49,
+    "warmup_enabled": 47
+  },
+  "Generic G": {
+    "generic_client_id": 352788,
+    "generic_tag_id": 365405,
+    "serves_client": "Coastal Lawn Care",
+    "serves_client_id": 325077,
+    "account_count": 48,
+    "tags_applied": 48,
+    "warmup_enabled": 48
+  },
+  "Generic H": {
+    "generic_client_id": 352789,
+    "generic_tag_id": 370967,
+    "serves_client": "Lightning Lawn Care",
+    "serves_client_id": 325078,
+    "account_count": 48,
+    "tags_applied": 48,
+    "warmup_enabled": 48
+  },
+  "Generic I": {
+    "generic_client_id": 352790,
+    "generic_tag_id": 370968,
+    "serves_client": "Canopy Land Solutions",
+    "serves_client_id": 350068,
+    "account_count": 47,
+    "tags_applied": 47,
+    "warmup_enabled": 47
+  },
+  "Generic J": {
+    "generic_client_id": 407482,
+    "generic_tag_id": 394514,
+    "serves_client": "Pioneer Landscaping",
+    "serves_client_id": 328149,
+    "account_count": 36,
+    "tags_applied": 36,
+    "warmup_enabled": 35
+  },
+  "Generic K": {
+    "generic_client_id": 407483,
+    "generic_tag_id": 394515,
+    "serves_client": "Dallas Land Care",
+    "serves_client_id": 325080,
+    "account_count": 33,
+    "tags_applied": 33,
+    "warmup_enabled": 33
+  }
+}
