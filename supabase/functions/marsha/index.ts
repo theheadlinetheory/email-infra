@@ -176,38 +176,36 @@ async function gatherInfraContext(text: string): Promise<string> {
     }
   }
 
-  // SmartLead account summary (aggregated, not full dump)
+  // SmartLead account summary (full paginated fetch)
   try {
-    const [accounts, clients] = await Promise.all([
-      slGetAllAccounts(),
-      slGetClients(),
+    const [accts, clientMap] = await Promise.all([
+      fetchAllAccounts(),
+      fetchClients(),
     ]);
-    const accts = accounts as Array<Record<string, unknown>>;
-    const clientMap = new Map(
-      (clients as Array<Record<string, unknown>>).map((c) => [c.id, c.name])
-    );
 
-    // Group by client_id
-    const byClient = new Map<string, number>();
+    const byClient = new Map<string, { count: number; blocked: number; capacity: number }>();
     let suspended = 0;
     let smtpFail = 0;
+    let blocked = 0;
     for (const a of accts) {
-      const cid = String(a.client_id || "unassigned");
-      const name = clientMap.get(a.client_id) || cid;
-      byClient.set(name as string, (byClient.get(name as string) || 0) + 1);
+      const cid = a.client_id as number;
+      const name = clientMap.get(cid) || `Unknown (${cid})`;
+      if (!byClient.has(name)) byClient.set(name, { count: 0, blocked: 0, capacity: 0 });
+      const entry = byClient.get(name)!;
+      entry.count++;
+      entry.capacity += (a.message_per_day as number) || 0;
+      if (a.is_blocked) { entry.blocked++; blocked++; }
       if (a.is_suspended) suspended++;
       if (a.is_smtp_success === false) smtpFail++;
     }
 
     parts.push(
-      `\n## SmartLead Summary: ${accts.length} accounts, ${suspended} suspended, ${smtpFail} SMTP failures`
+      `\n## SmartLead Summary: ${accts.length} accounts, ${blocked} blocked, ${suspended} suspended, ${smtpFail} SMTP failures`
     );
-    const sorted = [...byClient.entries()].sort((a, b) => b[1] - a[1]);
-    for (const [name, count] of sorted.slice(0, 15)) {
-      parts.push(`- ${name}: ${count} accounts`);
-    }
-    if (sorted.length > 15) {
-      parts.push(`- ...and ${sorted.length - 15} more clients`);
+    const sorted = [...byClient.entries()].sort((a, b) => b[1].count - a[1].count);
+    for (const [name, info] of sorted) {
+      const warn = info.blocked > 0 ? ` [${info.blocked} BLOCKED]` : "";
+      parts.push(`- ${name}: ${info.count} accounts, ${info.capacity}/day${warn}`);
     }
   } catch (err) {
     parts.push(`\n## SmartLead: unavailable (${(err as Error).message})`);
@@ -235,13 +233,24 @@ You are a big, warm, middle-aged Black woman who keeps the email infrastructure 
 ## Infrastructure Knowledge
 - SmartLead manages email accounts. Each account has a client_id, tags, and warmup status.
 - Every account must have 3 tags: Zapmail + ClientName + warmup start date.
-- A/B rotation model: each client has an A group (active sending) and B group (warming up). When B hits 100% warmup, swap.
-- Generic groups (A-I) are pre-built infrastructure for NEW clients only. 14-day warmup must be complete before assignment.
-- SR Acquisition groups (A-M) are subgroups of "Acquisition Inboxes" client (328152), split by domain.
+- Generic groups (F through M) are pre-built infrastructure for NEW clients only. 14-day warmup must be complete before assignment.
+- Acquisition groups (A-M minus G) are subgroups of "Acquisition Inboxes" client (328152), used for Aidan Hutchinson acquisition campaigns.
 - save-management-details endpoint SETS the full tag list + clientId — it does NOT append.
 - Domains are never auto-renewed. Lifecycle is too short.
-- Campaign conflicts only matter for campaigns with "acquisition" in the name.
 - The inbox_history table tracks all changes. Source "dashboard" = made through the dashboard, "snapshot" = detected by periodic comparison, "script" = made by a Python script.
+
+## Active Clients (as of May 2026)
+Borja, Canopy, Coastal, Dallas, Denair, GM Landscaping, Kay's B, Lawnvalue, Lightning, Pioneer, Timesavers, Tropical.
+Jim Robinson starting imminently. High Southern ending May 2026.
+Dead/cleaned up: ABC, Umbrella, Shade Tree, Deeter, Kay's A, Rain.
+
+## Key Metrics to Watch
+- Bounce rate > 3% on any campaign = flag it
+- Blocked accounts = immediate flag
+- SMTP/IMAP failures = immediate flag
+- Accounts with 0 msg/day that should be sending = flag
+- Warmup not ACTIVE on any account = flag
+- Unassigned accounts (no client) = flag
 
 ## Special Tags in Your Response
 If Aidan teaches you a new rule, end your response with:
@@ -363,85 +372,145 @@ async function saveLearnedRule(rule: string): Promise<void> {
 // Proactive health check (called by cron or manual trigger)
 // ---------------------------------------------------------------------------
 
+async function fetchAllAccounts(): Promise<Array<Record<string, unknown>>> {
+  const API = "https://server.smartlead.ai/api/v1";
+  const key = Deno.env.get("SMARTLEAD_API_KEY") || "";
+  const all: Array<Record<string, unknown>> = [];
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${API}/email-accounts/?api_key=${key}&offset=${offset}&limit=100`);
+    if (!r.ok) break;
+    const batch = (await r.json()) as Array<Record<string, unknown>>;
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < 100) break;
+    offset += 100;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return all;
+}
+
+async function fetchClients(): Promise<Map<number, string>> {
+  const API = "https://server.smartlead.ai/api/v1";
+  const key = Deno.env.get("SMARTLEAD_API_KEY") || "";
+  const r = await fetch(`${API}/client?api_key=${key}`);
+  if (!r.ok) return new Map();
+  const clients = (await r.json()) as Array<Record<string, unknown>>;
+  return new Map(clients.map((c) => [c.id as number, c.name as string]));
+}
+
+const ACTIVE_CLIENT_IDS = new Set([
+  350067, // Borja
+  350068, // Canopy
+  325077, // Coastal
+  325080, // Dallas
+  375372, // Denair
+  325117, // GM Landscaping
+  358743, // Kay's B
+  405344, // Lawnvalue
+  325078, // Lightning
+  328149, // Pioneer
+  325076, // Timesavers
+  325079, // Tropical
+  367028, // Jim Robinson
+  277143, // High Southern (ending May)
+]);
+
+const GENERIC_CLIENT_IDS = new Set([
+  352787, 352788, 352789, 352790, // F, G, H, I
+  407482, 407483, 407502, 407503, // J, K, L, M
+]);
+
+const ACQUISITION_CLIENT_ID = 328152;
+
 async function runHealthCheck(): Promise<string> {
-  const issues: string[] = [];
-
   try {
-    // Fetch first page only (100 accounts) to avoid rate limits and timeouts
-    const API = "https://server.smartlead.ai/api/v1";
-    const key = Deno.env.get("SMARTLEAD_API_KEY") || "";
-
-    const [acctRes, clientRes] = await Promise.all([
-      fetch(`${API}/email-accounts/?api_key=${key}&offset=0&limit=100`),
-      fetch(`${API}/client?api_key=${key}`),
+    const [accts, clientMap] = await Promise.all([
+      fetchAllAccounts(),
+      fetchClients(),
     ]);
 
-    if (!acctRes.ok || !clientRes.ok) {
-      return `SmartLead API returned ${acctRes.status}/${clientRes.status} — skipping health check.`;
+    const issues: string[] = [];
+    const byClient = new Map<string, Array<Record<string, unknown>>>();
+    let totalCapacity = 0;
+    let blocked = 0;
+    let suspended = 0;
+    let smtpFail = 0;
+    let imapFail = 0;
+    let noSending = 0;
+
+    for (const a of accts) {
+      const cid = a.client_id as number;
+      const cname = clientMap.get(cid) || `Unknown (${cid})`;
+      if (!byClient.has(cname)) byClient.set(cname, []);
+      byClient.get(cname)!.push(a);
+
+      const mpd = (a.message_per_day as number) || 0;
+      totalCapacity += mpd;
+
+      if (a.is_blocked) blocked++;
+      if (a.is_suspended) suspended++;
+      if (a.is_smtp_success === false) smtpFail++;
+      if (a.is_imap_success === false) imapFail++;
+      if (cid && mpd === 0 && ACTIVE_CLIENT_IDS.has(cid)) noSending++;
     }
 
-    const accts = (await acctRes.json()) as Array<Record<string, unknown>>;
-    const clients = (await clientRes.json()) as Array<Record<string, unknown>>;
-    const clientMap = new Map(clients.map((c) => [c.id, c.name]));
-
-    // Check for accounts with no client assigned
-    const unassigned = accts.filter(
-      (a) => !a.client_id || a.client_id === 0
-    );
-    if (unassigned.length > 0) {
-      issues.push(
-        `:question: ${unassigned.length} account(s) with no client assigned`
-      );
+    // Blocked accounts
+    if (blocked > 0) {
+      const blockedAccts = accts.filter((a) => a.is_blocked);
+      const examples = blockedAccts.slice(0, 5).map((a) => `\`${a.from_email}\``).join(", ");
+      issues.push(`:no_entry: *${blocked} blocked account(s)* — ${examples}${blocked > 5 ? ` +${blocked - 5} more` : ""}`);
     }
 
-    // Check for suspended accounts
-    const suspended = accts.filter((a) => a.is_suspended);
-    if (suspended.length > 0) {
-      issues.push(
-        `:warning: ${suspended.length} account(s) suspended — check SMTP/IMAP connections`
-      );
+    // Suspended
+    if (suspended > 0) {
+      issues.push(`:warning: *${suspended} suspended account(s)* — SMTP/IMAP connections down`);
     }
 
-    // Check for SMTP/IMAP failures
-    const smtpFail = accts.filter((a) => a.is_smtp_success === false);
-    const imapFail = accts.filter((a) => a.is_imap_success === false);
-    if (smtpFail.length > 0) {
-      issues.push(`:envelope: ${smtpFail.length} account(s) with SMTP failures`);
-    }
-    if (imapFail.length > 0) {
-      issues.push(`:mailbox_with_no_mail: ${imapFail.length} account(s) with IMAP failures`);
+    // SMTP/IMAP failures
+    if (smtpFail > 0) issues.push(`:envelope: *${smtpFail} SMTP failure(s)*`);
+    if (imapFail > 0) issues.push(`:mailbox_with_no_mail: *${imapFail} IMAP failure(s)*`);
+
+    // Active client accounts with 0 sending
+    if (noSending > 0) {
+      issues.push(`:mute: *${noSending} active client account(s)* with sending disabled (0 msg/day)`);
     }
 
-    // Check for accounts with 0 message_per_day (sending disabled)
-    const noSending = accts.filter(
-      (a) => a.client_id && (a.message_per_day === 0 || a.message_per_day === null)
-    );
-    if (noSending.length > 5) {
-      issues.push(
-        `:mute: ${noSending.length} assigned accounts have sending disabled (0 msg/day)`
-      );
+    // Per-client summary
+    const clientLines: string[] = [];
+    const sortedClients = [...byClient.entries()].sort((a, b) => b[1].length - a[1].length);
+    for (const [cname, clientAccts] of sortedClients) {
+      const cap = clientAccts.reduce((s, a) => s + ((a.message_per_day as number) || 0), 0);
+      const blk = clientAccts.filter((a) => a.is_blocked).length;
+      const status = blk > 0 ? ` :warning: ${blk} blocked` : "";
+      clientLines.push(`• *${cname}*: ${clientAccts.length} accts, ${cap}/day${status}`);
     }
 
-    // All clear
+    // Build the message
+    const greeting = new Date().getHours() < 12 ? "Good morning, baby!" : new Date().getHours() < 17 ? "Hey there, sugar!" : "Evening, hon!";
+
     if (issues.length === 0) {
-      const msg = `Hey sugar! Just ran my health check — sampled ${accts.length} accounts across ${clientMap.size} clients, everything looking good. :white_check_mark:`;
-      await slackPost("chat.postMessage", {
-        channel: SLACK_CHANNEL_ID,
-        text: msg,
-      });
+      const msg = [
+        `${greeting} Marsha here with the daily infrastructure report. :clipboard:\n`,
+        `:white_check_mark: *All ${accts.length} accounts healthy* — ${totalCapacity.toLocaleString()}/day total capacity\n`,
+        `*Client breakdown:*`,
+        ...clientLines,
+      ].join("\n");
+      await slackPost("chat.postMessage", { channel: SLACK_CHANNEL_ID, text: msg });
       return msg;
     }
 
     const msg = [
-      `Hey baby, I ran my check and spotted a few things:\n`,
+      `${greeting} Marsha here with the daily infrastructure report. :clipboard:\n`,
+      `*${accts.length} total accounts* — ${totalCapacity.toLocaleString()}/day capacity\n`,
+      `:rotating_light: *Issues found:*`,
       ...issues,
-      `\nMight want to take a look when you get a chance. :eyes:`,
+      `\n*Client breakdown:*`,
+      ...clientLines,
+      `\nI'll keep watching. Let me know if you need me to dig deeper on anything. :eyes:`,
     ].join("\n");
 
-    await slackPost("chat.postMessage", {
-      channel: SLACK_CHANNEL_ID,
-      text: msg,
-    });
+    await slackPost("chat.postMessage", { channel: SLACK_CHANNEL_ID, text: msg });
     return msg;
   } catch (err) {
     const errMsg = `Marsha health check error: ${(err as Error).message}`;

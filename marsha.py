@@ -204,15 +204,14 @@ CLIENT_TAGS = {
     "Dallas Land Care": 317210,
     "Lightning Lawn Care": 300713,
     "Coastal Lawn Care": 300714,
-    "Kay's Landscaping": 350275,
+    "Kay's Landscaping B": 374181,
     "Timesavers Landscaping": 348097,
     "Pioneer Landscaping": 356894,
     "GM Landscaping & Design": 356893,
     "Canopy Land Solutions": 370043,
     "Borja Landscaping Construction": 370045,
-    "High Southern Scapes": 275208,
-    "Umbrella Property Services": 318577,
-    "Shade Tree Landscaping": 319587,
+    "Denair HVAC": 382356,
+    "Lawnvalue": 392880,
 }
 
 SMARTLEAD_API_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
