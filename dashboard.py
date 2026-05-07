@@ -75,6 +75,55 @@ SPACESHIP_KEY = os.environ.get("SPACESHIP_API_KEY", "")
 SPACESHIP_SECRET = os.environ.get("SPACESHIP_SECRET_KEY", "")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
+CRM_SUPABASE_URL = os.environ.get("CRM_SUPABASE_URL", "").strip()
+CRM_SUPABASE_KEY = os.environ.get("CRM_SUPABASE_KEY", "").strip()
+
+_crm_client_cache = {"names": [], "fetched_at": 0}
+
+_CLIENT_NAME_ALIASES = {
+    "tropical landscaping": "tropical landscape",
+}
+
+def _normalize_client_name(name):
+    """Strip common suffixes for fuzzy matching."""
+    n = re.sub(r'\s+(llc|inc\.?|construction|landscaping\s+inc\.?|a|b)\s*$', '', name.lower().strip(), flags=re.IGNORECASE)
+    n = re.sub(r'[,.]', '', n)
+    n = re.sub(r'\s+', ' ', n).strip()
+    return _CLIENT_NAME_ALIASES.get(n, n)
+
+def get_crm_client_names():
+    """Fetch active client names from CRM Supabase. Cached 10 minutes. Fails silently."""
+    if time.time() - _crm_client_cache["fetched_at"] < 600 and _crm_client_cache["names"]:
+        return _crm_client_cache["names"]
+    if not CRM_SUPABASE_URL or not CRM_SUPABASE_KEY:
+        return []
+    try:
+        r = requests.get(
+            f"{CRM_SUPABASE_URL}/rest/v1/clients?select=name",
+            headers={"apikey": CRM_SUPABASE_KEY, "Authorization": f"Bearer {CRM_SUPABASE_KEY}"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            names = [c["name"].strip() for c in r.json() if c.get("name")]
+            _crm_client_cache["names"] = names
+            _crm_client_cache["fetched_at"] = time.time()
+            print(f"[CRM sync] Got {len(names)} active clients: {names}")
+            return names
+    except Exception as e:
+        print(f"[CRM sync] Failed to fetch client names: {e}")
+    return _crm_client_cache["names"] or []
+
+def is_crm_client(smartlead_name, crm_names):
+    """Check if a SmartLead client name matches any CRM client via fuzzy matching."""
+    if not crm_names:
+        return True
+    sl_norm = _normalize_client_name(smartlead_name)
+    for crm_name in crm_names:
+        crm_norm = _normalize_client_name(crm_name)
+        if sl_norm == crm_norm or sl_norm.startswith(crm_norm) or crm_norm.startswith(sl_norm):
+            return True
+    return False
+
 
 def sl_internal_headers():
     return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
@@ -509,12 +558,14 @@ def _compute_overview():
         and (a.get("warmup_details") or {}).get("blocked_reason")
     ]
 
-    EXCLUDED_CLIENTS = {"acquisition inboxes", "high southern scapes", "shade tree landscaping", "umbrella property services"}
+    crm_names = get_crm_client_names()
 
     client_summaries = []
     for cl in clients:
         cl_name = cl.get("name", "")
-        if _is_acquisition_group(cl_name) or _is_generic_group(cl_name) or cl_name.lower().strip() in EXCLUDED_CLIENTS:
+        if _is_acquisition_group(cl_name) or _is_generic_group(cl_name):
+            continue
+        if not is_crm_client(cl_name, crm_names):
             continue
         cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
         ws_date = warmup_dates.get(cl["name"].lower(), "")

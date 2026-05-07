@@ -41,3 +41,7 @@ services:
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT
         sync: false
+      - key: CRM_SUPABASE_URL
+        sync: false
+      - key: CRM_SUPABASE_KEY
+        sync: false
