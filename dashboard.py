@@ -75,8 +75,8 @@ SPACESHIP_KEY = os.environ.get("SPACESHIP_API_KEY", "")
 SPACESHIP_SECRET = os.environ.get("SPACESHIP_SECRET_KEY", "")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
-CRM_SUPABASE_URL = os.environ.get("CRM_SUPABASE_URL", "").strip()
-CRM_SUPABASE_KEY = os.environ.get("CRM_SUPABASE_KEY", "").strip()
+CRM_SUPABASE_URL = os.environ.get("CRM_SUPABASE_URL", "https://vjwkafnlgqidftxbeqjp.supabase.co").strip()
+CRM_SUPABASE_KEY = os.environ.get("CRM_SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZqd2thZm5sZ3FpZGZ0eGJlcWpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NTM3MzcsImV4cCI6MjA5MTQyOTczN30.27x_IdhtcJaAr0wdx6RhoWr1d6_o3zfzEPk9uneq1h8").strip()
 
 _crm_client_cache = {"names": [], "fetched_at": 0}
 
