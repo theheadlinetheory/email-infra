@@ -2151,7 +2151,8 @@ def api_remove_from_campaign(body):
         return {"error": f"{email} not found in campaign {campaign_id}"}
 
     dr = requests.delete(
-        f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
+        f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
+        json={"email_account_ids": [acc_id]},
         timeout=30,
     )
     return {"success": dr.status_code == 200, "email": email, "campaign_id": campaign_id}
@@ -3259,12 +3260,12 @@ def swap_client_group(client_name):
 
     # Remove outgoing accounts from campaigns
     for camp in campaigns_updated:
-        for old_id in outgoing_ids:
-            requests.delete(
-                f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts/{old_id}?api_key={SMARTLEAD_KEY}",
-                timeout=30,
-            )
-            time.sleep(0.3)
+        requests.delete(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
+            json={"email_account_ids": list(outgoing_ids)},
+            timeout=30,
+        )
+        time.sleep(0.3)
 
     # Update rotation record
     today = datetime.now().strftime("%Y-%m-%d")
