@@ -2213,10 +2213,19 @@ def api_generic_groups():
     all_accounts = get_all_accounts()
     health = get_health_metrics()
 
-    # Find generic clients (e.g. "Generic A", "Generic B", etc.)
+    # Load B group assignments to exclude assigned groups
+    b_assigned_client_ids = set()
+    b_map_path = Path(__file__).parent / "clients" / "b_group_assignments.json"
+    if b_map_path.exists():
+        with open(b_map_path) as f:
+            for info in json.load(f).values():
+                b_assigned_client_ids.add(info["generic_client_id"])
+
+    # Find generic clients, excluding those assigned as B groups
     generic_clients = [
         c for c in clients
         if c.get("name", "").lower().startswith("generic")
+        and c["id"] not in b_assigned_client_ids
     ]
 
     # Try to load pipeline data for pipeline IDs
