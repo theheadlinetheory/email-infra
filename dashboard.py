@@ -509,9 +509,12 @@ def _compute_overview():
         and (a.get("warmup_details") or {}).get("blocked_reason")
     ]
 
+    EXCLUDED_CLIENTS = {"acquisition inboxes", "high southern scapes", "shade tree landscaping", "umbrella property services"}
+
     client_summaries = []
     for cl in clients:
-        if _is_acquisition_group(cl.get("name", "")) or _is_generic_group(cl.get("name", "")):
+        cl_name = cl.get("name", "")
+        if _is_acquisition_group(cl_name) or _is_generic_group(cl_name) or cl_name.lower().strip() in EXCLUDED_CLIENTS:
             continue
         cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
         ws_date = warmup_dates.get(cl["name"].lower(), "")

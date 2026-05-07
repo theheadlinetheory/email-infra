@@ -940,33 +940,26 @@ function renderRotationSection() {
     const activeBadgeCls = active === 'A' ? 'badge-green' : 'badge-blue';
     const inactiveLabel = active === 'A' ? 'B' : 'A';
 
+    const aColor = active === 'A' ? '#22c55e' : 'var(--text-muted)';
+    const bColor = active === 'B' ? '#22c55e' : '#8b5cf6';
+    const statusColor = active === 'A' ? '#8b5cf6' : '#22c55e';
+    const statusText = active === 'A' ? 'B Warming' : 'B Sending';
+
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
         <div>
-          <span class="cc-name">${esc(rot.client_name)}</span>
-          ${bLabel ? `<span style="display:block;font-size:11px;color:var(--text-muted);margin-top:2px;">B = ${esc(bLabel)}</span>` : ''}
+          <div style="font-size:15px;font-weight:600;font-family:var(--font-display);">${esc(rot.client_name)}</div>
+          ${bLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">B = ${esc(bLabel)}</div>` : ''}
         </div>
         <span class="badge ${activeBadgeCls}">Group ${esc(active)} Sending</span>
       </div>
-      <div class="cc-stats" style="grid-template-columns:1fr 1fr 1fr 1fr;">
-        <div class="cc-stat">
-          <span class="label">Group A</span>
-          <span style="color:${active === 'A' ? 'var(--accent)' : 'var(--text-muted)'};font-weight:${active === 'A' ? '700' : '400'}">${aCount} accts</span>
-        </div>
-        <div class="cc-stat">
-          <span class="label">Group B${bLabel ? ` (${esc(bLabel)})` : ''}</span>
-          <span style="color:${active === 'B' ? 'var(--accent)' : 'var(--text-muted)'};font-weight:${active === 'B' ? '700' : '400'}">${bCount} accts</span>
-        </div>
-        <div class="cc-stat">
-          <span class="label">Last Swap</span>
-          <span>${esc(lastSwap)}</span>
-        </div>
-        <div class="cc-stat">
-          <span class="label">Status</span>
-          <span style="color:${active === 'A' ? '#8b5cf6' : 'var(--accent)'}">B ${active === 'A' ? 'Warming' : 'Sending'}</span>
-        </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Group A</span><span style="color:${aColor};font-weight:${active === 'A' ? '700' : '400'}">${aCount} accts</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Group B</span><span style="color:${bColor};font-weight:${active === 'B' ? '700' : '400'}">${bCount} accts</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Last Swap</span><span>${esc(lastSwap)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Status</span><span style="color:${statusColor}">${statusText}</span></div>
       </div>
-      <div style="margin-top:12px;display:flex;justify-content:flex-end;"></div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;"></div>
     `;
 
     const swapBtn = document.createElement('button');
