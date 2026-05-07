@@ -619,6 +619,26 @@ function renderRotation(data) {
     grid.innerHTML = html;
 }
 
+async function swapClient(clientName) {
+    if (!confirm('Swap active group for ' + clientName + '?')) return;
+    try {
+        var resp = await fetch('/api/rotation/swap', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName})
+        });
+        var result = await resp.json();
+        if (result.error) {
+            alert('Swap failed: ' + result.error);
+            return;
+        }
+        showToast(clientName + ' swapped to Group ' + result.new_group, 'success');
+        loadOverview();
+    } catch (err) {
+        alert('Swap failed: ' + err.message);
+    }
+}
+
 function applyModeVisibility(mode) {
     // 1. Button active states
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
