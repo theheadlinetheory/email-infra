@@ -2247,6 +2247,78 @@ def api_domain_inventory():
     }
 
 
+def api_aging_pool():
+    """Aging domain pool — batches of domains waiting to build reputation."""
+    pool_path = Path(__file__).parent / "state" / "aging_pool.json"
+    old_path = Path(__file__).parent / "state" / "generic_aging_domains.json"
+
+    if not pool_path.exists() and old_path.exists():
+        with open(old_path) as f:
+            old = json.load(f)
+        pool = {
+            "threshold_days": 30,
+            "batches": [{
+                "id": f"{old.get('purchased', '2026-05-08')}-info-{len(old.get('domains', []))}",
+                "name": old.get("description", "Imported batch"),
+                "purchased": old.get("purchased", "2026-05-08"),
+                "cost": 231.70,
+                "ns_provider": "CloudNS",
+                "status": "aging",
+                "domains": old.get("domains", []),
+            }],
+        }
+        with open(pool_path, "w") as f:
+            json.dump(pool, f, indent=2)
+
+    if not pool_path.exists():
+        return {"threshold_days": 30, "total_domains": 0, "total_ready": 0, "total_b_groups_possible": 0, "batches": []}
+
+    with open(pool_path) as f:
+        pool = json.load(f)
+
+    threshold = pool.get("threshold_days", 30)
+    now = datetime.now()
+    total_domains = 0
+    total_ready = 0
+
+    for batch in pool.get("batches", []):
+        if batch.get("status") == "activated":
+            batch["domain_count"] = 0
+            batch["days_aged"] = 0
+            batch["days_remaining"] = 0
+            batch["progress_pct"] = 100
+            batch["ready"] = True
+            batch["b_groups_possible"] = 0
+            continue
+
+        count = len(batch.get("domains", []))
+        batch["domain_count"] = count
+        total_domains += count
+
+        try:
+            purchased = datetime.strptime(batch["purchased"], "%Y-%m-%d")
+            days_aged = (now - purchased).days
+        except (KeyError, ValueError):
+            days_aged = 0
+
+        batch["days_aged"] = days_aged
+        batch["days_remaining"] = max(0, threshold - days_aged)
+        batch["progress_pct"] = min(100, round(days_aged / threshold * 100)) if threshold > 0 else 100
+        batch["ready"] = days_aged >= threshold
+        batch["b_groups_possible"] = count // 14
+
+        if batch["ready"]:
+            total_ready += count
+
+    return {
+        "threshold_days": threshold,
+        "total_domains": total_domains,
+        "total_ready": total_ready,
+        "total_b_groups_possible": total_domains // 14,
+        "batches": pool.get("batches", []),
+    }
+
+
 def api_placement_tests():
     """Get placement test results."""
     return zm_get_placement_results()
@@ -3523,6 +3595,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         result.update(status)
                         result["running"] = status.get("step") != "complete"
                     self._json_response(result)
+                elif path == "/api/aging-pool":
+                    self._json_response(api_aging_pool())
                 else:
                     self._error(404, "Not found")
             except Exception as e:
