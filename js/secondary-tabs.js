@@ -1,3 +1,161 @@
+// ── Aging Pool ──
+
+var agingPoolData = null;
+
+async function loadAgingPool() {
+    try {
+        var resp = await fetch('/api/aging-pool');
+        agingPoolData = await resp.json();
+        renderAgingPool();
+    } catch (err) {
+        document.getElementById('aging-pool-section').innerHTML = '';
+    }
+}
+
+function renderAgingPool() {
+    var d = agingPoolData;
+    if (!d || !d.batches || d.batches.length === 0) {
+        document.getElementById('aging-pool-section').innerHTML = '';
+        return;
+    }
+
+    var activeBatches = d.batches.filter(function(b) { return b.status !== 'activated'; });
+    if (activeBatches.length === 0) {
+        document.getElementById('aging-pool-section').innerHTML = '';
+        return;
+    }
+
+    var nearestDays = Math.min.apply(null, activeBatches.map(function(b) { return b.days_remaining; }));
+
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+        '<h2 class="section-title" style="margin:0;">Aging Pool</h2>' +
+        '<button class="action-btn secondary" onclick="showAddBatchModal()" style="font-size:12px;">+ Add Batch</button>' +
+        '</div>';
+
+    html += '<div class="summary-row">' +
+        statCard(d.total_domains, 'Domains Aging', 'good') +
+        statCard(d.total_b_groups_possible, 'Future B Groups', 'good') +
+        statCard(d.total_ready > 0 ? d.total_ready + ' ready' : nearestDays + 'd left', d.total_ready > 0 ? 'Ready to Activate' : 'Until Ready', d.total_ready > 0 ? 'good' : 'warn') +
+        '</div>';
+
+    activeBatches.forEach(function(batch) {
+        var progressColor = batch.ready ? '#22c55e' : '#f59e0b';
+        var statusBadge = batch.ready
+            ? '<span class="badge badge-green">Ready</span>'
+            : '<span class="badge badge-yellow">Aging</span>';
+        var cardId = 'aging-' + batch.id.replace(/[^a-zA-Z0-9]/g, '_');
+
+        html += '<div class="client-card" style="margin-bottom:12px;">' +
+            '<div class="client-header" onclick="document.getElementById(\'' + cardId + '\').style.display = document.getElementById(\'' + cardId + '\').style.display === \'none\' ? \'block\' : \'none\'">' +
+            '<div style="display:flex;align-items:center;gap:12px;">' +
+            '<h3 style="margin:0;font-size:14px;font-weight:600;color:var(--text-primary);">' + batch.name + '</h3>' +
+            statusBadge +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:16px;font-size:13px;color:var(--text-muted);">' +
+            '<span>' + batch.domain_count + ' domains</span>' +
+            '<span>$' + (batch.cost || 0).toFixed(2) + '</span>' +
+            '<span>Purchased ' + batch.purchased + '</span>' +
+            '<span>' + batch.days_aged + ' / ' + d.threshold_days + ' days</span>' +
+            '</div>' +
+            '</div>' +
+            '<div style="margin:8px 16px 12px;background:var(--bg-input);border-radius:6px;height:8px;overflow:hidden;">' +
+            '<div style="height:100%;width:' + batch.progress_pct + '%;background:' + progressColor + ';border-radius:6px;transition:width .3s;"></div>' +
+            '</div>';
+
+        if (batch.ready) {
+            html += '<div style="padding:0 16px 12px;display:flex;gap:8px;">' +
+                '<button class="action-btn primary" onclick="activateAgingBatch(\'' + batch.id + '\', 14)" style="font-size:12px;">Activate 14 (1 B Group)</button>' +
+                '</div>';
+        }
+
+        html += '<div id="' + cardId + '" style="display:none;padding:0 16px 12px;">' +
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:12px;font-family:var(--font-mono);color:var(--text-muted);">';
+        (batch.domains || []).forEach(function(dom) {
+            html += '<span style="background:var(--bg-input);padding:2px 8px;border-radius:4px;">' + dom + '</span>';
+        });
+        html += '</div></div></div>';
+    });
+
+    document.getElementById('aging-pool-section').innerHTML = html;
+}
+
+async function activateAgingBatch(batchId, count) {
+    if (!confirm('Activate ' + count + ' domains from this batch? They will be removed from the aging pool.')) return;
+    try {
+        var result = await apiPost('/api/aging-pool/activate', {batch_id: batchId, count: count});
+        if (result.error) {
+            showToast('Error: ' + result.error, 'error');
+        } else {
+            showToast('Activated ' + result.activated_domains.length + ' domains. ' + result.remaining + ' remaining.', 'success');
+            loadAgingPool();
+        }
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function showAddBatchModal() {
+    var overlay = document.getElementById('add-batch-overlay');
+    var modal = document.getElementById('add-batch-modal');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'add-batch-overlay';
+        overlay.className = 'modal-overlay';
+        overlay.onclick = closeAddBatchModal;
+        document.body.appendChild(overlay);
+
+        modal = document.createElement('div');
+        modal.id = 'add-batch-modal';
+        modal.className = 'modal-panel';
+        modal.innerHTML =
+            '<h2>Add Aging Batch</h2>' +
+            '<div style="margin-bottom:16px;"><label>Batch Name</label><input id="ab-name" type="text" placeholder="e.g. Service Industry .info"></div>' +
+            '<div style="margin-bottom:16px;"><label>Purchase Date</label><input id="ab-date" type="date" value="' + new Date().toISOString().split('T')[0] + '"></div>' +
+            '<div style="margin-bottom:16px;"><label>Cost ($)</label><input id="ab-cost" type="number" step="0.01" min="0" placeholder="0.00"></div>' +
+            '<div style="margin-bottom:16px;"><label>NS Provider</label><input id="ab-ns" type="text" value="CloudNS"></div>' +
+            '<div style="margin-bottom:16px;"><label>Domains (one per line)</label><textarea id="ab-domains" rows="8" style="width:100%;font-family:var(--font-mono);font-size:12px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius);padding:8px;" placeholder="domain1.info&#10;domain2.info"></textarea></div>' +
+            '<div class="btn-row"><button class="btn btn-cancel" onclick="closeAddBatchModal()">Cancel</button><button class="btn btn-primary" onclick="submitAddBatch()">Add Batch</button></div>' +
+            '<div id="ab-status" style="margin-top:12px;font-size:13px;"></div>';
+        document.body.appendChild(modal);
+    }
+    overlay.style.display = 'block';
+    modal.style.display = 'block';
+}
+
+function closeAddBatchModal() {
+    var overlay = document.getElementById('add-batch-overlay');
+    var modal = document.getElementById('add-batch-modal');
+    if (overlay) overlay.style.display = 'none';
+    if (modal) modal.style.display = 'none';
+}
+
+async function submitAddBatch() {
+    var name = document.getElementById('ab-name').value.trim();
+    var purchased = document.getElementById('ab-date').value;
+    var cost = parseFloat(document.getElementById('ab-cost').value) || 0;
+    var nsProvider = document.getElementById('ab-ns').value.trim();
+    var domainsText = document.getElementById('ab-domains').value.trim();
+    var domains = domainsText.split('\n').map(function(d) { return d.trim(); }).filter(function(d) { return d.length > 0; });
+
+    if (!name || !purchased || domains.length === 0) {
+        document.getElementById('ab-status').innerHTML = '<span style="color:var(--red);">Name, date, and at least one domain required.</span>';
+        return;
+    }
+
+    try {
+        var result = await apiPost('/api/aging-pool/add', {name: name, purchased: purchased, cost: cost, ns_provider: nsProvider, domains: domains});
+        if (result.error) {
+            document.getElementById('ab-status').innerHTML = '<span style="color:var(--red);">' + result.error + '</span>';
+        } else {
+            showToast('Added batch: ' + result.domain_count + ' domains', 'success');
+            closeAddBatchModal();
+            loadAgingPool();
+        }
+    } catch (err) {
+        document.getElementById('ab-status').innerHTML = '<span style="color:var(--red);">Error: ' + err.message + '</span>';
+    }
+}
+
 // ── Secondary Tabs (ZapMail, Domains, Sync, Wallet) ──
 
 // --- ZapMail ---
@@ -108,6 +266,7 @@ async function cancelSelectedDomains(cardId) {
 
 async function loadDomains() {
     document.getElementById('dom-content').innerHTML = '<div class="loading"><span class="spinner"></span> Loading domain registrar data...</div>';
+    loadAgingPool();
     try {
         var resp = await fetch('/api/domains');
         domData = await resp.json();
