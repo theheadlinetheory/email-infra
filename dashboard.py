@@ -2319,6 +2319,75 @@ def api_aging_pool():
     }
 
 
+def api_aging_pool_add(body):
+    """Add a new batch of aging domains."""
+    domains = body.get("domains", [])
+    name = body.get("name", "").strip()
+    purchased = body.get("purchased", "")
+    if not domains or not name or not purchased:
+        return {"error": "name, purchased, and domains required"}
+
+    pool_path = Path(__file__).parent / "state" / "aging_pool.json"
+    if pool_path.exists():
+        with open(pool_path) as f:
+            pool = json.load(f)
+    else:
+        pool = {"threshold_days": 30, "batches": []}
+
+    batch_id = f"{purchased}-{len(domains)}"
+    batch = {
+        "id": batch_id,
+        "name": name,
+        "purchased": purchased,
+        "cost": body.get("cost", 0),
+        "ns_provider": body.get("ns_provider", "CloudNS"),
+        "status": "aging",
+        "domains": [d.strip() for d in domains if d.strip()],
+    }
+    pool["batches"].append(batch)
+
+    with open(pool_path, "w") as f:
+        json.dump(pool, f, indent=2)
+
+    return {"ok": True, "batch_id": batch_id, "domain_count": len(batch["domains"])}
+
+
+def api_aging_pool_activate(body):
+    """Remove domains from an aging batch for activation."""
+    batch_id = body.get("batch_id", "")
+    count = body.get("count", 14)
+    if not batch_id:
+        return {"error": "batch_id required"}
+
+    pool_path = Path(__file__).parent / "state" / "aging_pool.json"
+    if not pool_path.exists():
+        return {"error": "no aging pool found"}
+
+    with open(pool_path) as f:
+        pool = json.load(f)
+
+    batch = None
+    for b in pool.get("batches", []):
+        if b["id"] == batch_id:
+            batch = b
+            break
+    if not batch:
+        return {"error": f"batch {batch_id} not found"}
+    if batch.get("status") == "activated":
+        return {"error": "batch already fully activated"}
+
+    available = batch.get("domains", [])
+    to_activate = available[:count]
+    batch["domains"] = available[count:]
+    if not batch["domains"]:
+        batch["status"] = "activated"
+
+    with open(pool_path, "w") as f:
+        json.dump(pool, f, indent=2)
+
+    return {"ok": True, "activated_domains": to_activate, "remaining": len(batch["domains"]), "batch_status": batch["status"]}
+
+
 def api_placement_tests():
     """Get placement test results."""
     return zm_get_placement_results()
@@ -3856,6 +3925,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response({"ok": ok})
         elif path == "/api/acquisition/assign-campaign":
             result = api_assign_group_campaign(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/aging-pool/add":
+            result = api_aging_pool_add(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/aging-pool/activate":
+            result = api_aging_pool_activate(body)
             self._json_response(result, 400 if "error" in result else 200)
         else:
             self._error(404, "Not found")
