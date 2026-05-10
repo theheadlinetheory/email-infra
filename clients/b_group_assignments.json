@@ -6,7 +6,7 @@
     "serves_client_id": 328149,
     "account_count": 49,
     "tags_applied": 49,
-    "warmup_enabled": 47
+    "warmup_enabled": 49
   },
   "Generic G": {
     "generic_client_id": 352788,
@@ -14,8 +14,8 @@
     "serves_client": "Canopy Land Solutions",
     "serves_client_id": 350068,
     "account_count": 48,
-    "tags_applied": 48,
-    "warmup_enabled": 48
+    "tags_applied": 66,
+    "warmup_enabled": 66
   },
   "Generic H": {
     "generic_client_id": 352789,
@@ -42,7 +42,7 @@
     "serves_client_id": 325078,
     "account_count": 36,
     "tags_applied": 36,
-    "warmup_enabled": 35
+    "warmup_enabled": 36
   },
   "Generic K": {
     "generic_client_id": 407483,
@@ -52,5 +52,41 @@
     "account_count": 33,
     "tags_applied": 33,
     "warmup_enabled": 33
+  },
+  "GM Landscaping B": {
+    "generic_client_id": 411912,
+    "generic_tag_id": 397368,
+    "serves_client": "Gm Landscaping & Design",
+    "serves_client_id": 325117,
+    "account_count": 42,
+    "tags_applied": 42,
+    "warmup_enabled": 42
+  },
+  "Tropical Landscaping B": {
+    "generic_client_id": 411913,
+    "generic_tag_id": 397369,
+    "serves_client": "Tropical Landscaping",
+    "serves_client_id": 325079,
+    "account_count": 42,
+    "tags_applied": 42,
+    "warmup_enabled": 42
+  },
+  "Kays Landscaping C": {
+    "generic_client_id": 411914,
+    "generic_tag_id": 397370,
+    "serves_client": "Kay's Landscaping A",
+    "serves_client_id": 325082,
+    "account_count": 42,
+    "tags_applied": 42,
+    "warmup_enabled": 42
+  },
+  "Denair HVAC B": {
+    "generic_client_id": 411915,
+    "generic_tag_id": 397371,
+    "serves_client": "Denair HVAC",
+    "serves_client_id": 375372,
+    "account_count": 42,
+    "tags_applied": 42,
+    "warmup_enabled": 42
   }
 }

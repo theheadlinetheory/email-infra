@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
 
@@ -502,9 +503,56 @@ def _format_campaign_audit(result):
     return "\n".join(lines)
 
 
+def sync_b_group_state():
+    """Refresh b_group_assignments.json from live SmartLead data."""
+    state_path = Path(__file__).parent / "clients" / "b_group_assignments.json"
+    if not state_path.exists():
+        return
+    assignments = json.loads(state_path.read_text())
+    updated = False
+
+    for group_name, info in assignments.items():
+        tag_id = info.get("generic_tag_id")
+        if not tag_id:
+            continue
+        tagged_ids = _gql_tagged_ids(tag_id)
+        new_tags_applied = len(tagged_ids)
+        if new_tags_applied != info.get("tags_applied"):
+            info["tags_applied"] = new_tags_applied
+            updated = True
+
+        warmup_count = 0
+        for acc_id in tagged_ids:
+            try:
+                r = requests.get(
+                    f"{SL_BASE}/email-account/fetch-warmup-details-by-email-account-id/{acc_id}",
+                    headers={"Authorization": f"Bearer {SMARTLEAD_JWT}"},
+                    timeout=15,
+                )
+                if r.status_code == 200:
+                    wd = r.json().get("message", {})
+                    if wd.get("status") == "ACTIVE":
+                        warmup_count += 1
+            except Exception:
+                pass
+            time.sleep(0.05)
+
+        if warmup_count != info.get("warmup_enabled"):
+            info["warmup_enabled"] = warmup_count
+            updated = True
+
+    if updated:
+        state_path.write_text(json.dumps(assignments, indent=2))
+        log.info("Synced b_group_assignments.json from live SmartLead data")
+
+
 def run_daily_audit(fix=False):
     """Run the full daily audit and post results to Slack."""
     log.info("Marsha daily audit starting")
+    try:
+        sync_b_group_state()
+    except Exception as e:
+        log.warning("State sync failed (non-fatal): %s", e)
     result = run_campaign_audit(fix=fix)
     msg = _format_campaign_audit(result)
     post_to_slack(msg)
