@@ -11,11 +11,11 @@
   "Generic G": {
     "generic_client_id": 352788,
     "generic_tag_id": 365405,
-    "serves_client": "Canopy Land Solutions",
-    "serves_client_id": 350068,
-    "account_count": 48,
-    "tags_applied": 66,
-    "warmup_enabled": 66
+    "serves_client": "Unassigned",
+    "serves_client_id": null,
+    "account_count": 33,
+    "tags_applied": 33,
+    "warmup_enabled": 33
   },
   "Generic H": {
     "generic_client_id": 352789,
@@ -88,5 +88,23 @@
     "account_count": 42,
     "tags_applied": 42,
     "warmup_enabled": 42
+  },
+  "Generic G2": {
+    "generic_client_id": null,
+    "generic_tag_id": 398739,
+    "serves_client": "Unassigned",
+    "serves_client_id": null,
+    "account_count": 33,
+    "tags_applied": 33,
+    "warmup_enabled": 33
+  },
+  "Canopy Generic": {
+    "generic_client_id": null,
+    "generic_tag_id": 398740,
+    "serves_client": "Unassigned",
+    "serves_client_id": null,
+    "account_count": 51,
+    "tags_applied": 51,
+    "warmup_enabled": 51
   }
 }
