@@ -220,6 +220,10 @@ SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
 GQL_URL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
 SL_BASE = "https://server.smartlead.ai/api"
 
+from setup import _RateLimiter
+_sl_rest_limiter = _RateLimiter(max_requests=180, window_seconds=60)
+_sl_gql_limiter = _RateLimiter(max_requests=300, window_seconds=60)
+
 
 def _gql_tagged_ids(tag_id):
     """Get all email_account_ids with a given tag via GraphQL."""
@@ -227,6 +231,7 @@ def _gql_tagged_ids(tag_id):
         "{ email_account_tag_mappings(where: {tag_id: {_eq: %d}}) "
         "{ email_account_id } }" % tag_id
     )
+    _sl_gql_limiter.wait()
     r = requests.post(
         GQL_URL,
         headers={"Authorization": f"Bearer {SMARTLEAD_JWT}"},
@@ -242,6 +247,7 @@ def _gql_tagged_ids(tag_id):
 
 def _campaign_account_ids(campaign_id):
     """Get all email_account_ids on a campaign."""
+    _sl_rest_limiter.wait()
     r = requests.get(
         f"{SL_BASE}/v1/campaigns/{campaign_id}/email-accounts",
         params={"api_key": SMARTLEAD_API_KEY},
@@ -252,6 +258,7 @@ def _campaign_account_ids(campaign_id):
 
 def _active_client_campaigns():
     """Return list of active campaigns whose name contains 'client'."""
+    _sl_rest_limiter.wait()
     r = requests.get(
         f"{SL_BASE}/v1/campaigns",
         params={"api_key": SMARTLEAD_API_KEY},
@@ -287,6 +294,7 @@ def _get_warmup_ready_ids(tag_id):
         " email_account_id email_account {"
         " email_account_tag_mappings { tag { name } } } } }" % tag_id
     )
+    _sl_gql_limiter.wait()
     r = requests.post(
         GQL_URL,
         headers={"Authorization": f"Bearer {SMARTLEAD_JWT}"},
@@ -385,6 +393,7 @@ def run_campaign_audit(fix=False):
 
             if fix:
                 try:
+                    _sl_rest_limiter.wait()
                     r = requests.post(
                         f"{SL_BASE}/v1/campaigns/{cid}/email-accounts",
                         params={"api_key": SMARTLEAD_API_KEY},
@@ -524,6 +533,7 @@ def sync_b_group_state():
         warmup_count = 0
         for acc_id in tagged_ids:
             try:
+                _sl_rest_limiter.wait()
                 r = requests.get(
                     f"{SL_BASE}/email-account/fetch-warmup-details-by-email-account-id/{acc_id}",
                     headers={"Authorization": f"Bearer {SMARTLEAD_JWT}"},
@@ -535,7 +545,6 @@ def sync_b_group_state():
                         warmup_count += 1
             except Exception:
                 pass
-            time.sleep(0.05)
 
         if warmup_count != info.get("warmup_enabled"):
             info["warmup_enabled"] = warmup_count

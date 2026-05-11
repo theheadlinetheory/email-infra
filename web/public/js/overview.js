@@ -409,8 +409,8 @@ function renderGenericGroups(groups) {
             <div class="cc-stats">
                 <div class="cc-stat"><span class="label">Domains</span><span>${g.domains}</span></div>
                 <div class="cc-stat"><span class="label">Capacity</span><span>${g.daily_capacity}/day</span></div>
-                <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
-                <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${rateColor(g.avg_bounce_rate, {bad: 3, warn: 1})}">${rateDisplay(g.avg_bounce_rate)}</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${rateColor(g.avg_reply_rate, {ascending: true, good: 5, warn: 2})}">${rateDisplay(g.avg_reply_rate)}</span></div>
                 <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#22c55e' : g.health_score >= 60 ? '#f59e0b' : '#ef4444'}">${g.health_score}</span></div>
                 <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#22c55e'}">${g.smtp_failures}</span></div>
             </div>
@@ -594,11 +594,10 @@ function renderRotation(data) {
         var inactiveLabel = active === 'A' ? 'B' : 'A';
         var aColor = active === 'A' ? '#22c55e' : 'var(--text-muted)';
         var bColor = active === 'B' ? '#22c55e' : '#8b5cf6';
-        var statusText = active === 'A' ? 'B Warming' : 'B Sending';
         var statusColor = active === 'A' ? '#8b5cf6' : '#22c55e';
+        var statusText = active === 'A' ? 'B Warming' : 'B Sending';
 
         html += '<div class="client-card">';
-        // Header
         html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">';
         html += '<div>';
         html += '<div style="font-size:15px;font-weight:600;font-family:var(--font-display);">' + rot.client_name + '</div>';
@@ -606,20 +605,38 @@ function renderRotation(data) {
         html += '</div>';
         html += '<span class="badge ' + (active === 'A' ? 'badge-green' : 'badge-blue') + '">Group ' + active + ' Sending</span>';
         html += '</div>';
-        // Stats — 2x2 grid with explicit inline styles
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:13px;">';
         html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Group A</span><span style="color:' + aColor + ';font-weight:' + (active === 'A' ? '700' : '400') + '">' + aCount + ' accts</span></div>';
         html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Group B</span><span style="color:' + bColor + ';font-weight:' + (active === 'B' ? '700' : '400') + '">' + bCount + ' accts</span></div>';
         html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Last Swap</span><span>' + lastSwap + '</span></div>';
         html += '<div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-muted);font-size:12px;">Status</span><span style="color:' + statusColor + '">' + statusText + '</span></div>';
         html += '</div>';
-        // Swap button
         html += '<div style="margin-top:14px;text-align:right;">';
         html += '<button class="action-btn secondary" style="padding:6px 16px;font-size:12px;font-weight:600;" onclick="swapClient(\'' + rot.client_name.replace(/'/g, "\\'") + '\')">Swap to Group ' + inactiveLabel + '</button>';
         html += '</div>';
         html += '</div>';
     }
     grid.innerHTML = html;
+}
+
+async function swapClient(clientName) {
+    if (!confirm('Swap active group for ' + clientName + '?')) return;
+    try {
+        var resp = await fetch('/api/rotation/swap', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({client_name: clientName})
+        });
+        var result = await resp.json();
+        if (result.error) {
+            alert('Swap failed: ' + result.error);
+            return;
+        }
+        showToast(clientName + ' swapped to Group ' + result.new_group, 'success');
+        loadOverview();
+    } catch (err) {
+        alert('Swap failed: ' + err.message);
+    }
 }
 
 function applyModeVisibility(mode) {

@@ -409,8 +409,8 @@ function renderGenericGroups(groups) {
             <div class="cc-stats">
                 <div class="cc-stat"><span class="label">Domains</span><span>${g.domains}</span></div>
                 <div class="cc-stat"><span class="label">Capacity</span><span>${g.daily_capacity}/day</span></div>
-                <div class="cc-stat"><span class="label">Warmup Start</span><span>${g.warmup_start || '—'}</span></div>
-                <div class="cc-stat"><span class="label">${isReady ? 'Ready Since' : 'Ready Date'}</span><span>${g.ready_date || '—'}</span></div>
+                <div class="cc-stat"><span class="label">Bounce Rate</span><span style="color:${rateColor(g.avg_bounce_rate, {bad: 3, warn: 1})}">${rateDisplay(g.avg_bounce_rate)}</span></div>
+                <div class="cc-stat"><span class="label">Reply Rate</span><span style="color:${rateColor(g.avg_reply_rate, {ascending: true, good: 5, warn: 2})}">${rateDisplay(g.avg_reply_rate)}</span></div>
                 <div class="cc-stat"><span class="label">Health</span><span style="color:${g.health_score >= 85 ? '#22c55e' : g.health_score >= 60 ? '#f59e0b' : '#ef4444'}">${g.health_score}</span></div>
                 <div class="cc-stat"><span class="label">SMTP Fail</span><span style="color:${g.smtp_failures > 0 ? '#ef4444' : '#22c55e'}">${g.smtp_failures}</span></div>
             </div>

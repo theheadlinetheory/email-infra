@@ -95,7 +95,21 @@ function renderDetailTable(data, trends) {
         </div>`;
     }
 
-    var html = recHtml + chartHtml + idleHtml;
+    var bounceVal = data.avg_bounce_rate !== null && data.avg_bounce_rate !== undefined ? data.avg_bounce_rate.toFixed(1) + '%' : '—';
+    var replyVal = data.avg_reply_rate !== null && data.avg_reply_rate !== undefined ? data.avg_reply_rate.toFixed(1) + '%' : '—';
+    var bounceColor = data.avg_bounce_rate !== null ? (data.avg_bounce_rate > 3 ? '#ef4444' : data.avg_bounce_rate > 1 ? '#f59e0b' : '#22c55e') : '#9ca3af';
+    var replyColor = data.avg_reply_rate !== null ? (data.avg_reply_rate >= 5 ? '#22c55e' : data.avg_reply_rate >= 2 ? '#f59e0b' : '#ef4444') : '#9ca3af';
+
+    var statsHtml = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;">
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 14px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Bounce Rate</div><div style="font-size:20px;font-weight:700;color:${bounceColor};">${bounceVal}</div></div>
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 14px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Reply Rate</div><div style="font-size:20px;font-weight:700;color:${replyColor};">${replyVal}</div></div>
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 14px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Capacity</div><div style="font-size:20px;font-weight:700;color:var(--accent);">${(data.daily_capacity || 0).toLocaleString()}/day</div></div>
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 14px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Sent (7d)</div><div style="font-size:20px;font-weight:700;color:var(--text-primary);">${(data.total_sent || 0).toLocaleString()}</div></div>
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 14px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">In Campaign</div><div style="font-size:20px;font-weight:700;color:var(--text-primary);">${data.in_campaign_count || 0}/${accounts.length}</div></div>
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 14px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">SMTP OK</div><div style="font-size:20px;font-weight:700;color:${data.smtp_ok_count === accounts.length ? '#22c55e' : '#ef4444'};">${data.smtp_ok_count || 0}/${accounts.length}</div></div>
+    </div>`;
+
+    var html = recHtml + statsHtml + chartHtml + idleHtml;
     html += '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
     html += '<thead><tr><th>Email</th><th>Health</th><th>Warmup</th><th>Rep</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>Campaigns</th><th>SMTP</th></tr></thead><tbody>';
 

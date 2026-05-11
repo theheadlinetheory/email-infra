@@ -892,6 +892,16 @@ def _compute_client_accounts(client_id):
     by_domain = group_accounts_by_domain(result)
     flagged_domains = [d for d, accs in by_domain.items() if any(a["health_flags"] for a in accs)]
     flagged_inbox_count = sum(len(by_domain[d]) for d in flagged_domains)
+
+    bounce_rates = [parse_rate(a["bounce_rate"]) for a in result if parse_rate(a["bounce_rate"]) is not None]
+    reply_rates = [parse_rate(a["reply_rate"]) for a in result if parse_rate(a["reply_rate"]) is not None]
+    total_sent = sum(a.get("health_sent", 0) or 0 for a in result)
+    total_bounced = sum(a.get("health_bounced", 0) or 0 for a in result)
+    total_replied = sum(a.get("health_replied", 0) or 0 for a in result)
+    smtp_ok = sum(1 for a in result if a.get("smtp_ok"))
+    active_warmup = sum(1 for a in result if a.get("warmup_status") == "ACTIVE")
+    in_campaign = sum(1 for a in result if (a.get("campaign_count") or 0) > 0)
+
     return {
         "client_id": int(client_id),
         "client_name": client_name,
@@ -900,6 +910,15 @@ def _compute_client_accounts(client_id):
         "flagged_inbox_count": flagged_inbox_count,
         "replacement_domains_needed": len(flagged_domains),
         "replacement_inboxes": len(flagged_domains) * 3,
+        "avg_bounce_rate": round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None,
+        "avg_reply_rate": round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None,
+        "total_sent": total_sent,
+        "total_bounced": total_bounced,
+        "total_replied": total_replied,
+        "smtp_ok_count": smtp_ok,
+        "active_warmup_count": active_warmup,
+        "in_campaign_count": in_campaign,
+        "daily_capacity": sum(1 for a in result if a.get("smtp_ok") and a.get("warmup_status") == "ACTIVE") * 15,
     }
 
 
@@ -2442,6 +2461,8 @@ def api_generic_groups():
         warmup_dates = []
         health_scores = []
 
+        bounce_rates = []
+        reply_rates = []
         for acc in cl_accounts:
             email = acc.get("from_email", "")
             domain = email.split("@")[-1] if "@" in email else ""
@@ -2457,9 +2478,20 @@ def api_generic_groups():
             # Health score
             hs = calculate_health_score(acc, health)
             health_scores.append(hs["score"])
+            # Bounce/reply rates
+            h = health.get(email)
+            if h:
+                br = parse_rate(h.get("bounce_rate"))
+                if br is not None:
+                    bounce_rates.append(br)
+                rr = parse_rate(h.get("reply_rate"))
+                if rr is not None:
+                    reply_rates.append(rr)
 
         total_capacity += daily_cap
         avg_health = round(sum(health_scores) / len(health_scores)) if health_scores else 100
+        avg_bounce = round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None
+        avg_reply = round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None
 
         # Calculate warmup progress
         earliest_warmup = min(warmup_dates) if warmup_dates else None
@@ -2499,6 +2531,8 @@ def api_generic_groups():
             "daily_capacity": daily_cap,
             "smtp_failures": smtp_fail,
             "health_score": avg_health,
+            "avg_bounce_rate": avg_bounce,
+            "avg_reply_rate": avg_reply,
             "warmup_start": warmup_start_str,
             "ready_date": ready_date_str,
             "days_warming": days_warming,

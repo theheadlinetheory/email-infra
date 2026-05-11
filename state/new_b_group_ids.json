@@ -1,0 +1,39 @@
+{
+  "clients": {
+    "GM Landscaping B": 411912,
+    "Tropical Landscaping B": 411913,
+    "Generic K": 411914,
+    "Denair HVAC B": 411915
+  },
+  "tags": {
+    "GM Landscaping B": {
+      "id": 397368,
+      "name": "GM Landscaping B",
+      "color": "#D0FCB1"
+    },
+    "Tropical Landscaping B": {
+      "id": 397369,
+      "name": "Tropical Landscaping B",
+      "color": "#D0FCB1"
+    },
+    "Generic K": {
+      "id": 397370,
+      "name": "Generic K",
+      "color": "#D0FCB1"
+    },
+    "Denair HVAC B": {
+      "id": 397371,
+      "name": "Denair HVAC B",
+      "color": "#D0FCB1"
+    }
+  },
+  "date_tag": {
+    "name": "5/8/26",
+    "id": {
+      "id": 397367,
+      "name": "5/8/26",
+      "color": "#D0FCB1"
+    }
+  },
+  "zapmail_tag_id": 262254
+}

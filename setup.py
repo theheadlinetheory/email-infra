@@ -323,6 +323,28 @@ def zm_headers(workspace_key=None):
     h["x-service-provider"] = "GOOGLE"
     return h
 
+class _RateLimiter:
+    """Sliding-window rate limiter. Tracks timestamps and sleeps proactively to stay under the limit."""
+    def __init__(self, max_requests, window_seconds):
+        self.max_requests = max_requests
+        self.window = window_seconds
+        self.timestamps = []
+
+    def wait(self):
+        now = time.time()
+        cutoff = now - self.window
+        self.timestamps = [t for t in self.timestamps if t > cutoff]
+        if len(self.timestamps) >= self.max_requests:
+            sleep_until = self.timestamps[0] + self.window
+            delay = sleep_until - now + 0.1
+            if delay > 0:
+                log(f"  Rate limiter: pacing {delay:.1f}s to stay under {self.max_requests}/{self.window}s", "INFO")
+                time.sleep(delay)
+        self.timestamps.append(time.time())
+
+_sl_rest_limiter = _RateLimiter(max_requests=180, window_seconds=60)
+_sl_gql_limiter = _RateLimiter(max_requests=300, window_seconds=60)
+
 def _api_retry(fn, max_retries=3, backoff=10):
     """Retry wrapper for API calls — handles timeouts and transient failures."""
     for attempt in range(1, max_retries + 1):
@@ -513,6 +535,7 @@ def sl_url(path):
 def sl_create_email_account(from_name, from_email, username, password,
                              smtp_host="smtp.gmail.com", smtp_port=465,
                              imap_host="imap.gmail.com", imap_port=993):
+    _sl_rest_limiter.wait()
     body = {
         "from_name": from_name,
         "from_email": from_email,
@@ -533,18 +556,17 @@ def sl_create_email_account(from_name, from_email, username, password,
 
 def sl_set_warmup(account_id):
     """Set warmup via internal save-warmup endpoint (full control over all settings)."""
-    # First enable warmup via public API
     def _public_warmup():
+        _sl_rest_limiter.wait()
         r = requests.post(sl_url(f"/email-accounts/{account_id}/warmup"),
                           json=GOOGLE_WARMUP, timeout=30)
         return r.json()
     result = _api_retry(_public_warmup)
 
-    # Then configure all settings via internal API (rampup toggle, reply limit, etc.)
     if SMARTLEAD_JWT:
         headers = sl_internal_headers()
-        # Get warmup key ID
         def _get_warmup_key():
+            _sl_rest_limiter.wait()
             wd = requests.get(
                 f"{SMARTLEAD_INTERNAL_API}/email-account/fetch-warmup-details-by-email-account-id/{account_id}",
                 headers=headers, timeout=30
@@ -572,6 +594,7 @@ def sl_set_warmup(account_id):
                 "warmupKeyId": warmup_key
             }
             def _save_warmup():
+                _sl_rest_limiter.wait()
                 return requests.post(
                     f"{SMARTLEAD_INTERNAL_API}/email-account/save-warmup",
                     headers=headers, json=body, timeout=30
@@ -594,6 +617,7 @@ def sl_internal_headers():
 def sl_gql(query, variables=None):
     """Execute a GraphQL query against SmartLead's Hasura endpoint."""
     def _call():
+        _sl_gql_limiter.wait()
         body = {"query": query}
         if variables:
             body["variables"] = variables
@@ -701,6 +725,7 @@ def sl_dedup_check():
 
     # ── Check clients ──
     try:
+        _sl_rest_limiter.wait()
         sl_clients = requests.get(
             f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
         ).json()
@@ -743,6 +768,7 @@ def sl_dedup_check():
                 log(f"  CANNOT auto-delete '{remove['name']}' (ID: {remove['id']}) — {usage[remove['id']]} accounts assigned. Resolve manually.", "ERROR")
                 sys.exit(1)
             log(f"  Deleting unused duplicate: '{remove['name']}' (ID: {remove['id']}), keeping '{keep['name']}' (ID: {keep['id']}, {u1 if keep == c1 else u2} accounts)")
+            _sl_rest_limiter.wait()
             r = requests.post(
                 f"{SMARTLEAD_INTERNAL_API}/client/delete",
                 headers=sl_internal_headers(),
@@ -760,6 +786,7 @@ def sl_dedup_check():
 
 def sl_tag_account(account_id, tag_ids, client_id=None):
     """Apply tags to an email account via the internal save-management-details endpoint."""
+    _sl_rest_limiter.wait()
     body = {"id": account_id, "tags": tag_ids, "clientId": client_id}
     r = requests.post(f"{SMARTLEAD_INTERNAL_API}/email-account/save-management-details",
                       headers=sl_internal_headers(), json=body, timeout=30)
@@ -780,6 +807,7 @@ def sl_tag_accounts_bulk(account_ids, tag_ids, client_id=None):
 
 def sl_list_accounts(offset=0, limit=100):
     def _call():
+        _sl_rest_limiter.wait()
         url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}"
         r = requests.get(url, timeout=30)
         return r.json()
@@ -787,12 +815,14 @@ def sl_list_accounts(offset=0, limit=100):
 
 def sl_get_account(account_id):
     def _call():
+        _sl_rest_limiter.wait()
         url = f"{SMARTLEAD_API}/email-accounts/{account_id}/?api_key={SMARTLEAD_KEY}"
         r = requests.get(url, timeout=30)
         return r.json()
     return _api_retry(_call)
 
 def sl_update_account(account_id, data):
+    _sl_rest_limiter.wait()
     r = requests.post(sl_url(f"/email-accounts/{account_id}"), json=data, timeout=30)
     return r.json()
 
@@ -801,6 +831,7 @@ def sl_verify_warmup(account_id):
     """Verify warmup settings via internal API. Returns (ok, issues_dict)."""
     if not SMARTLEAD_JWT:
         return True, {}
+    _sl_rest_limiter.wait()
     headers = sl_internal_headers()
     r = requests.get(
         f"{SMARTLEAD_INTERNAL_API}/email-account/fetch-warmup-details-by-email-account-id/{account_id}",
@@ -1966,6 +1997,7 @@ def run_pipeline(config, config_path):
             # Find or create SmartLead client for clientId assignment
             sl_client_id = None
             try:
+                _sl_rest_limiter.wait()
                 sl_clients = requests.get(
                     f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
                 ).json()
@@ -1979,6 +2011,7 @@ def run_pipeline(config, config_path):
                 if not sl_client_id:
                     slug = client.lower().replace("'", "").replace(" ", "").replace("&", "")
                     cl_email = f"tht.{slug}.client@gmail.com"
+                    _sl_rest_limiter.wait()
                     cr = requests.post(
                         f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
                         json={"name": client, "email": cl_email, "password": "THTclient2026!"},
