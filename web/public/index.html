@@ -95,6 +95,23 @@
             <div id="acquisition-section" style="display:none;margin-top:28px;">
                 <h2 class="section-title">Acquisition Groups</h2>
                 <div id="acq-conflict-banner"></div>
+                <div id="acq-assignments-wrap" style="margin-bottom:24px;">
+                    <div id="acq-volume-summary" style="margin-bottom:12px;"></div>
+                    <table class="unassigned-table" id="acq-assignments-table" style="width:100%;">
+                        <thead>
+                            <tr>
+                                <th>Group</th>
+                                <th>Campaign</th>
+                                <th>Status</th>
+                                <th>Accounts</th>
+                                <th>Capacity</th>
+                                <th>Health</th>
+                            </tr>
+                        </thead>
+                        <tbody id="acq-assignments-body"></tbody>
+                    </table>
+                </div>
+                <h3 style="font-size:15px;color:var(--text-primary);margin-bottom:12px;">Group Health</h3>
                 <div class="summary-row" id="acquisition-stats"></div>
                 <div class="clients-grid" id="acquisition-grid"></div>
                 <div id="acq-unassigned-section" style="display:none;margin-top:24px;">

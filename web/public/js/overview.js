@@ -136,6 +136,7 @@ function renderAcquisitionSection(acquisitionData) {
     document.getElementById('acquisition-stats').innerHTML = html;
     renderAcqAlerts(acquisitionData);
     renderAcquisitionGroups(acquisitionData.groups);
+    loadAcqAssignments();
 }
 
 function renderSetupPipelineSection(setupPipelineData) {
@@ -441,6 +442,7 @@ async function loadAcquisition() {
                 statCard(data.total_groups, 'Active Groups');
             renderAcqAlerts(data);
             renderAcquisitionGroups(data.groups);
+            loadAcqAssignments();
         }
     } catch (e) {
         console.error('loadAcquisition error:', e);
@@ -574,6 +576,60 @@ async function unassignGroupCampaign(groupClientId, groupName, campId, campName)
     }
     acqCampaignsCache = null;
     loadAcquisition();
+}
+
+async function loadAcqAssignments() {
+    try {
+        var resp = await fetch('/api/acquisition/assignments');
+        var data = await resp.json();
+        renderAcqAssignments(data);
+    } catch (e) {
+        console.error('loadAcqAssignments error:', e);
+    }
+}
+
+function renderAcqAssignments(data) {
+    if (!data || !data.rows) return;
+    var rows = data.rows;
+
+    var statusColor = function(s) {
+        if (s === 'ACTIVE') return '#22c55e';
+        if (s === 'PAUSED') return '#f59e0b';
+        if (s === 'CONFLICT') return '#ef4444';
+        return 'var(--text-muted)';
+    };
+    var healthColor = function(score) {
+        if (score >= 90) return '#22c55e';
+        if (score >= 70) return '#f59e0b';
+        return '#ef4444';
+    };
+
+    var volHtml = '<div style="display:flex;gap:16px;flex-wrap:wrap;">';
+    volHtml += statCard(data.active_groups + '/' + data.total_groups, 'Groups Active');
+    volHtml += statCard(data.total_volume + '/day', 'Sending Volume', data.total_volume < 2000 ? 'warn' : 'good');
+    volHtml += statCard(data.available_groups, 'Available', data.available_groups > 0 ? 'warn' : 'good');
+    if (data.conflicts > 0) volHtml += statCard(data.conflicts, 'Conflicts', 'alert');
+    volHtml += '</div>';
+    document.getElementById('acq-volume-summary').innerHTML = volHtml;
+
+    var tbody = document.getElementById('acq-assignments-body');
+    tbody.innerHTML = rows.map(function(r) {
+        var campDisplay = r.campaign_name || '<span style="color:var(--text-muted);">—</span>';
+        if (r.status === 'CONFLICT') {
+            campDisplay = '<span style="color:#ef4444;">' + r.conflict_campaigns.join(', ') + '</span>';
+        }
+        var statusBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#fff;background:' + statusColor(r.status) + ';">' + r.status + '</span>';
+        var healthBadge = r.health_score != null ? '<span style="color:' + healthColor(r.health_score) + ';">' + r.health_score + '</span>' : '—';
+
+        return '<tr style="cursor:pointer;" onclick="openDetail(' + r.group_id + ',\'' + r.group.replace(/'/g, "\\'") + '\')">' +
+            '<td style="font-weight:600;">' + r.group + '</td>' +
+            '<td>' + campDisplay + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + r.accounts + '</td>' +
+            '<td>' + r.daily_capacity + '/day</td>' +
+            '<td>' + healthBadge + '</td>' +
+            '</tr>';
+    }).join('');
 }
 
 function renderRotation(data) {

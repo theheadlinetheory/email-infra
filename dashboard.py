@@ -1551,6 +1551,65 @@ def api_acquisition():
     }
 
 
+def api_acquisition_assignments():
+    """Return the group→campaign assignment table for the Acquisition tab.
+
+    Reads live data from SmartLead and merges with Supabase-persisted state.
+    Returns a flat list suitable for a simple 3-column UI table.
+    """
+    acq_data = api_acquisition()
+    groups = acq_data.get("groups", [])
+
+    # Build the flat table
+    rows = []
+    total_volume = 0
+    for g in groups:
+        active = g.get("active_campaigns") or []
+        paused = g.get("paused_campaigns") or []
+        campaign = active[0] if len(active) == 1 else None
+        status = "ACTIVE" if campaign else ("CONFLICT" if len(active) > 1 else "Available")
+        if status == "Available" and paused:
+            status = "PAUSED"
+            campaign = paused[0]
+
+        row = {
+            "group": g["name"],
+            "group_id": g["id"],
+            "accounts": g["accounts"],
+            "daily_capacity": g["daily_capacity"],
+            "campaign_id": campaign["id"] if campaign else None,
+            "campaign_name": campaign["name"] if campaign else None,
+            "status": status,
+            "conflict_campaigns": [c["name"] for c in active] if len(active) > 1 else [],
+            "avg_bounce_rate": g.get("avg_bounce_rate"),
+            "avg_reply_rate": g.get("avg_reply_rate"),
+            "health_score": g.get("health_score"),
+        }
+        if status == "ACTIVE":
+            total_volume += g["daily_capacity"]
+        rows.append(row)
+
+    # Sort: ACTIVE first, then CONFLICT, then PAUSED, then Available
+    order = {"ACTIVE": 0, "CONFLICT": 1, "PAUSED": 2, "Available": 3}
+    rows.sort(key=lambda r: (order.get(r["status"], 9), r["group"]))
+
+    # Persist current state to Supabase
+    state = {r["group"]: {"campaign_id": r["campaign_id"], "campaign_name": r["campaign_name"], "status": r["status"]} for r in rows}
+    try:
+        store.set_state("acquisition_assignments", state)
+    except Exception:
+        pass
+
+    return {
+        "rows": rows,
+        "total_volume": total_volume,
+        "total_groups": len(rows),
+        "active_groups": sum(1 for r in rows if r["status"] == "ACTIVE"),
+        "available_groups": sum(1 for r in rows if r["status"] == "Available"),
+        "conflicts": sum(1 for r in rows if r["status"] == "CONFLICT"),
+    }
+
+
 def _find_empty_acquisition_campaigns():
     """Find ACTIVE acquisition campaigns that have zero email accounts assigned."""
     campaign_details = get_global_campaign_details()
@@ -3700,6 +3759,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_acquisition())
                 elif path == "/api/acquisition-campaigns":
                     self._json_response(api_acquisition_campaigns())
+                elif path == "/api/acquisition/assignments":
+                    self._json_response(api_acquisition_assignments())
                 elif path == "/api/generic-groups":
                     self._json_response(api_generic_groups())
                 elif path == "/api/clients/list":
