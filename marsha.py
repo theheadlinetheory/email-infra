@@ -11,6 +11,8 @@ import json
 import logging
 import os
 import time
+import warnings
+warnings.filterwarnings("ignore")
 from datetime import datetime, timedelta
 from pathlib import Path
 

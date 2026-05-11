@@ -25,6 +25,8 @@ import time
 import random
 import string
 import subprocess
+import warnings
+warnings.filterwarnings("ignore")
 import requests
 from datetime import datetime, timedelta
 from pathlib import Path

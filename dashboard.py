@@ -4,6 +4,9 @@
 Works both locally (reads .env file) and hosted (reads environment variables).
 """
 
+import warnings
+warnings.filterwarnings("ignore")
+
 import gc
 import json
 import os
@@ -128,8 +131,12 @@ def is_crm_client(smartlead_name, crm_names):
 def sl_internal_headers():
     return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
 
+from setup import _RateLimiter
+_sl_rate = _RateLimiter(max_requests=180, window_seconds=60)
+
 
 def sl_list_accounts(offset=0, limit=100):
+    _sl_rate.wait()
     r = requests.get(
         f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}",
         timeout=30,
@@ -279,6 +286,7 @@ def get_clients():
     now = time.time()
     if _clients_cache["data"] is not None and now - _clients_cache["time"] < 120:
         return _clients_cache["data"]
+    _sl_rate.wait()
     r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
     result = r.json() if r.status_code == 200 else []
     if result:
@@ -291,6 +299,7 @@ def get_accounts_by_client(client_id):
     accounts = []
     offset = 0
     while True:
+        _sl_rate.wait()
         r = requests.get(
             f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}"
             f"&client_id={client_id}&offset={offset}&limit=100",
@@ -338,6 +347,7 @@ def assign_accounts_to_client(account_ids, client_id, old_client_id=None,
     history_events = []
     for acc_id in account_ids:
         body = {"id": acc_id, "clientId": client_id}
+        _sl_rate.wait()
         r = requests.post(
             f"{SMARTLEAD_INTERNAL_API}/email-account/save-management-details",
             headers=sl_internal_headers(),
@@ -371,6 +381,7 @@ def get_health_metrics(days=7):
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     try:
+        _sl_rate.wait()
         r = requests.get(
             f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
             headers=sl_internal_headers(),
@@ -1098,6 +1109,7 @@ def get_global_campaign_counts():
     counts = {}
     details = {}  # email → list of {id, name, status}
     try:
+        _sl_rate.wait()
         r = requests.get(
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=60,
@@ -1124,6 +1136,7 @@ def get_global_campaign_counts():
                 "status": camp.get("status", ""),
             }
             try:
+                _sl_rate.wait()
                 cr = requests.get(
                     f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
                     timeout=8,
@@ -1550,6 +1563,7 @@ def _find_empty_acquisition_campaigns():
 
     # Get all campaigns to find acquisition ones
     try:
+        _sl_rate.wait()
         r = requests.get(
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=60,
@@ -1578,6 +1592,7 @@ def api_acquisition_campaigns():
     if _acq_campaigns_cache["data"] and now - _acq_campaigns_cache["time"] < 300:
         return {"campaigns": _acq_campaigns_cache["data"]}
     try:
+        _sl_rate.wait()
         r = requests.get(
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=60,
@@ -1693,6 +1708,7 @@ def api_assign_group_campaign(body):
 
         # Add accounts to campaign (with retry on rate limit)
         for attempt in range(3):
+            _sl_rate.wait()
             r = requests.post(
                 f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
                 json={"email_account_ids": account_ids},
@@ -1717,6 +1733,7 @@ def api_assign_group_campaign(body):
     elif action == "unassign":
         # Remove accounts from campaign (with retry on rate limit)
         for attempt in range(3):
+            _sl_rate.wait()
             r = requests.delete(
                 f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
                 json={"email_account_ids": account_ids},
@@ -2125,12 +2142,14 @@ def api_pipeline_skip_step(body):
 
 def api_inbox_campaigns(email):
     """List active campaigns containing this inbox."""
+    _sl_rate.wait()
     r = requests.get(f"{SMARTLEAD_API}/campaign?api_key={SMARTLEAD_KEY}", timeout=30)
     campaigns = r.json() if r.status_code == 200 else []
     active = [c for c in campaigns if c.get("status") == "ACTIVE"]
 
     found = []
     for camp in active:
+        _sl_rate.wait()
         cr = requests.get(
             f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
             timeout=30,
@@ -2152,6 +2171,7 @@ def api_remove_from_campaign(body):
     if not email or not campaign_id:
         return {"error": "email and campaign_id required"}
 
+    _sl_rate.wait()
     cr = requests.get(
         f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
         timeout=30,
@@ -2169,6 +2189,7 @@ def api_remove_from_campaign(body):
     if not acc_id:
         return {"error": f"{email} not found in campaign {campaign_id}"}
 
+    _sl_rate.wait()
     dr = requests.delete(
         f"{SMARTLEAD_API}/campaigns/{campaign_id}/email-accounts?api_key={SMARTLEAD_KEY}",
         json={"email_account_ids": [acc_id]},
@@ -2558,6 +2579,7 @@ def _get_all_campaigns():
     if _campaigns_cache["data"] is not None and now - _campaigns_cache["time"] < 120:
         return _campaigns_cache["data"]
     try:
+        _sl_rate.wait()
         r = requests.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
         campaigns = r.json() if r.status_code == 200 else []
         if not isinstance(campaigns, list):
@@ -2580,6 +2602,7 @@ def debug_client_trends(client_id):
 
     # Raw campaign list via public API
     try:
+        _sl_rate.wait()
         camp_resp = requests.get(
             f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}",
             timeout=30,
@@ -2617,6 +2640,7 @@ def debug_client_trends(client_id):
     start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     end_date = datetime.now().strftime("%Y-%m-%d")
     try:
+        _sl_rate.wait()
         stats_resp = requests.get(
             f"{SMARTLEAD_INTERNAL_API}/analytics/day-wise-overall-stats",
             headers=sl_internal_headers(),
@@ -2706,6 +2730,7 @@ def api_client_trends(client_id, days):
 
     # Fetch day-wise stats from SmartLead
     try:
+        _sl_rate.wait()
         stats_resp = requests.get(
             f"{SMARTLEAD_INTERNAL_API}/analytics/day-wise-overall-stats",
             headers=sl_internal_headers(),
@@ -2868,6 +2893,7 @@ def delete_client_infra_sse(client_id, client_name):
         } for acc in accounts])
         # Bulk delete via API
         for acc_id in account_ids:
+            _sl_rate.wait()
             r = requests.delete(
                 f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}",
                 timeout=30,
@@ -2922,6 +2948,7 @@ def delete_client_infra_sse(client_id, client_name):
     # ── Step 5: Delete SmartLead client ──
     yield event(5, "running")
     try:
+        _sl_rate.wait()
         r = requests.post(
             f"{SMARTLEAD_INTERNAL_API}/client/delete",
             headers=sl_internal_headers(),
@@ -2965,6 +2992,7 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
     yield event(1, "running")
     sl_client_id = None
     try:
+        _sl_rate.wait()
         sl_clients = requests.get(
             f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
         ).json()
@@ -2982,6 +3010,7 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
         if not sl_client_id:
             slug = new_client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
             cl_email = f"tht.{slug}.client@gmail.com"
+            _sl_rate.wait()
             cr = requests.post(
                 f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
                 json={"name": new_client_name, "email": cl_email, "password": "THTclient2026!"},
@@ -3025,6 +3054,7 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
     yield event(3, "running")
     try:
         if accounts:
+            _sl_rate.wait()
             sample = requests.get(
                 f"{SMARTLEAD_API}/email-accounts/{accounts[0]['id']}/?api_key={SMARTLEAD_KEY}",
                 timeout=30,
@@ -3103,6 +3133,7 @@ def api_clients_list():
     names = set()
     # SmartLead clients
     try:
+        _sl_rate.wait()
         sl_clients = requests.get(
             f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
         ).json()
@@ -3152,6 +3183,7 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
     yield event(1, "running")
     sl_client_id = None
     try:
+        _sl_rate.wait()
         sl_clients = requests.get(
             f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30
         ).json()
@@ -3170,6 +3202,7 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         if not sl_client_id:
             slug = client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
             cl_email = f"tht.{slug}.client@gmail.com"
+            _sl_rate.wait()
             cr = requests.post(
                 f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
                 json={"name": client_name, "email": cl_email, "password": "THTclient2026!"},
@@ -3219,6 +3252,7 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         our_accounts = []
         offset = 0
         while True:
+            _sl_rate.wait()
             batch = requests.get(
                 f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100",
                 timeout=30,
@@ -3280,6 +3314,7 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         # Already handled in step 2 via client_id param in sl_tag_account
         # Verify a sample account
         if our_accounts:
+            _sl_rate.wait()
             sample = requests.get(
                 f"{SMARTLEAD_API}/email-accounts/{our_accounts[0]['id']}/?api_key={SMARTLEAD_KEY}",
                 timeout=30,
@@ -3402,6 +3437,7 @@ def swap_client_group(client_name):
         return {"error": f"Group {new_active} has no accounts — cannot swap"}
 
     # Find all campaigns
+    _sl_rate.wait()
     r = requests.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
     all_campaigns = r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
     active_campaigns = [c for c in all_campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
@@ -3409,6 +3445,7 @@ def swap_client_group(client_name):
     # Find campaigns containing outgoing accounts
     campaigns_updated = []
     for camp in active_campaigns:
+        _sl_rate.wait()
         cr = requests.get(
             f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
             timeout=30,
@@ -3426,6 +3463,7 @@ def swap_client_group(client_name):
 
     # Add incoming accounts to campaigns
     for camp in campaigns_updated:
+        _sl_rate.wait()
         requests.post(
             f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
             json={"email_account_ids": incoming_ids},
@@ -3435,6 +3473,7 @@ def swap_client_group(client_name):
 
     # Remove outgoing accounts from campaigns
     for camp in campaigns_updated:
+        _sl_rate.wait()
         requests.delete(
             f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts?api_key={SMARTLEAD_KEY}",
             json={"email_account_ids": list(outgoing_ids)},
@@ -3500,6 +3539,7 @@ def build_pipeline_config(body: dict) -> dict:
     sl_client_id = body.get("smartlead_client_id")
     if not sl_client_id:
         try:
+            _sl_rate.wait()
             sl_clients = requests.get(
                 f"{SMARTLEAD_API}/client", params={"api_key": SMARTLEAD_KEY}, timeout=30
             ).json()
@@ -3511,6 +3551,7 @@ def build_pipeline_config(body: dict) -> dict:
                     break
             if not sl_client_id:
                 slug = name.lower().replace("'", "").replace(" ", "").replace("&", "")
+                _sl_rate.wait()
                 cr = requests.post(
                     f"{SMARTLEAD_API}/client/save",
                     params={"api_key": SMARTLEAD_KEY},
@@ -3541,6 +3582,7 @@ def next_generic_name() -> str:
     """Return the next available 'Generic X' name."""
     # Check existing SmartLead clients
     try:
+        _sl_rate.wait()
         sl_clients = requests.get(
             f"{SMARTLEAD_API}/client", params={"api_key": SMARTLEAD_KEY}, timeout=30
         ).json()
