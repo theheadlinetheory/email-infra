@@ -960,6 +960,72 @@ def _compute_client_accounts(client_id):
     }
 
 
+def _check_inbox_group_drift(overview: dict):
+    """Compare Supabase inbox_groups against live SmartLead state from overview.
+
+    Runs after each sync cycle. Uses already-fetched data — no extra API calls.
+    Populates drift_flags on mismatched groups and logs events to history.
+    """
+    try:
+        groups = store.get_all_inbox_groups()
+    except Exception as e:
+        print(f"[drift] Could not load inbox_groups: {e}")
+        return
+
+    if not groups:
+        return
+
+    all_accounts = _accounts_cache.get("data") or []
+    if not all_accounts:
+        return
+
+    live_by_client = {}
+    for a in all_accounts:
+        cid = a.get("client_id")
+        if cid:
+            live_by_client.setdefault(cid, []).append(a["id"])
+
+    drift_count = 0
+    for g in groups:
+        if g["status"] == "retired":
+            continue
+
+        sl_cid = g["smartlead_client_id"]
+        expected_ids = set(g.get("account_ids") or [])
+        live_ids = set(live_by_client.get(sl_cid, []))
+
+        flags = []
+        missing = expected_ids - live_ids
+        extra = live_ids - expected_ids
+
+        if missing:
+            flags.append(f"{len(missing)} accounts missing from SmartLead (expected but not found)")
+        if extra:
+            flags.append(f"{len(extra)} unexpected accounts in SmartLead (not in Supabase)")
+        if len(expected_ids) > 0 and len(live_ids) == 0:
+            flags.append("SmartLead client has 0 accounts — group may have been emptied")
+        if len(expected_ids) == 0 and len(live_ids) > 0:
+            flags.append(f"Supabase shows 0 accounts but SmartLead has {len(live_ids)}")
+
+        old_flags = g.get("drift_flags") or []
+        if flags != old_flags:
+            store.update_inbox_group(g["id"], drift_flags=flags)
+            if flags and not old_flags:
+                store.log_group_event(g["id"], "drift_detected", {
+                    "flags": flags,
+                    "expected_count": len(expected_ids),
+                    "live_count": len(live_ids),
+                })
+                drift_count += 1
+            elif not flags and old_flags:
+                store.log_group_event(g["id"], "drift_resolved", {
+                    "previous_flags": old_flags,
+                })
+
+    if drift_count:
+        print(f"[drift] Detected drift in {drift_count} group(s)")
+
+
 def _sync_smartlead_data():
     """Fetch all SmartLead data and write to Supabase cache."""
     global _sync_running
@@ -982,6 +1048,12 @@ def _sync_smartlead_data():
 
         print(f"[sync] Sync complete at {datetime.now().strftime('%H:%M:%S')} — "
               f"{len(overview.get('clients', []))} clients cached")
+
+        # Drift detection: compare Supabase inbox_groups against live SmartLead state
+        try:
+            _check_inbox_group_drift(overview)
+        except Exception as e:
+            print(f"[sync] Drift check error: {e}")
     except Exception as e:
         print(f"[sync] Sync error: {e}")
     finally:
@@ -1567,6 +1639,22 @@ def api_acquisition():
             "smtp_ok": a.get("is_smtp_success", False),
         })
 
+    # Add drift flags from inbox_groups source of truth
+    drift_alerts = []
+    try:
+        ig_groups = store.get_all_inbox_groups()
+        for ig in ig_groups:
+            if ig.get("drift_flags"):
+                drift_alerts.append({
+                    "group_letter": ig["group_letter"],
+                    "batch": ig["batch"],
+                    "smartlead_client_name": ig["smartlead_client_name"],
+                    "assigned_client": ig.get("assigned_client"),
+                    "flags": ig["drift_flags"],
+                })
+    except Exception:
+        pass
+
     return {
         "groups": groups,
         "total_accounts": total_accounts,
@@ -1574,6 +1662,34 @@ def api_acquisition():
         "campaign_conflicts": conflicts,
         "empty_campaigns": empty_campaigns,
         "unassigned_acq": unassigned_acq,
+        "drift_alerts": drift_alerts,
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
+def api_inbox_groups():
+    """Return all inbox groups from Supabase — the source of truth.
+
+    No SmartLead API calls. Fast, reliable, always available.
+    """
+    groups = store.get_all_inbox_groups()
+
+    client_groups = [g for g in groups if g.get("assigned_client")]
+    generic_groups = [g for g in groups if not g.get("assigned_client") and g["group_letter"].startswith("GEN")]
+    acq_groups = [g for g in groups if g["group_letter"].startswith("ACQ")]
+    other_groups = [g for g in groups if not g.get("assigned_client")
+                    and not g["group_letter"].startswith(("GEN", "ACQ"))
+                    and g["group_letter"] not in ("KAY", "GM", "TROPICAL", "DENAIR")]
+
+    drift_count = sum(1 for g in groups if g.get("drift_flags"))
+
+    return {
+        "client_groups": client_groups,
+        "generic_groups": generic_groups + other_groups,
+        "acquisition_groups": acq_groups,
+        "total_groups": len(groups),
+        "total_accounts": sum(len(g.get("account_ids") or []) for g in groups),
+        "drift_count": drift_count,
         "generated_at": datetime.now().isoformat(),
     }
 

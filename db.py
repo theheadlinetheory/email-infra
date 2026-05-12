@@ -393,3 +393,97 @@ def get_inbox_history(account_id: int = None, limit: int = 100) -> list[dict]:
     if account_id:
         params["account_id"] = f"eq.{account_id}"
     return _parse_history_rows(_request("GET", "/inbox_history", params=params))
+
+
+# ---------------------------------------------------------------------------
+# Inbox Groups (source of truth for group state)
+# ---------------------------------------------------------------------------
+
+def get_all_inbox_groups(status: str = None) -> list[dict]:
+    """Get all inbox groups, optionally filtered by status."""
+    params = {"select": "*", "order": "group_letter,batch"}
+    if status:
+        params["status"] = f"eq.{status}"
+    rows = _request("GET", "/inbox_groups", params=params)
+    for r in rows:
+        for col in ("account_ids", "account_emails", "domains", "campaign_ids", "tag_ids", "drift_flags"):
+            if isinstance(r.get(col), str):
+                r[col] = json.loads(r[col])
+    return rows
+
+
+def get_inbox_group(group_letter: str, batch: int = 1) -> dict | None:
+    """Get a single inbox group by letter + batch."""
+    rows = _request("GET", "/inbox_groups", params={
+        "select": "*",
+        "group_letter": f"eq.{group_letter}",
+        "batch": f"eq.{batch}",
+    })
+    if not rows:
+        return None
+    r = rows[0]
+    for col in ("account_ids", "account_emails", "domains", "campaign_ids", "tag_ids", "drift_flags"):
+        if isinstance(r.get(col), str):
+            r[col] = json.loads(r[col])
+    return r
+
+
+def get_inbox_group_by_id(group_id: int) -> dict | None:
+    """Get a single inbox group by primary key."""
+    rows = _request("GET", "/inbox_groups", params={
+        "select": "*",
+        "id": f"eq.{group_id}",
+    })
+    if not rows:
+        return None
+    r = rows[0]
+    for col in ("account_ids", "account_emails", "domains", "campaign_ids", "tag_ids", "drift_flags"):
+        if isinstance(r.get(col), str):
+            r[col] = json.loads(r[col])
+    return r
+
+
+def upsert_inbox_group(data: dict) -> dict:
+    """Insert or update an inbox group. Returns the upserted row."""
+    data["updated_at"] = datetime.utcnow().isoformat()
+    for col in ("account_ids", "account_emails", "domains", "campaign_ids", "tag_ids", "drift_flags"):
+        if col in data and not isinstance(data[col], str):
+            data[col] = json.dumps(data[col])
+    result = _request("POST", "/inbox_groups", json_body=data, headers={
+        "Prefer": "resolution=merge-duplicates,return=representation",
+    })
+    return result[0] if result else data
+
+
+def update_inbox_group(group_id: int, **fields) -> None:
+    """Update specific fields on an inbox group by ID."""
+    fields["updated_at"] = datetime.utcnow().isoformat()
+    for col in ("account_ids", "account_emails", "domains", "campaign_ids", "tag_ids", "drift_flags"):
+        if col in fields and not isinstance(fields[col], str):
+            fields[col] = json.dumps(fields[col])
+    _request("PATCH", "/inbox_groups", params={
+        "id": f"eq.{group_id}",
+    }, json_body=fields)
+
+
+def log_group_event(group_id: int, event: str, details: dict, previous_state: dict = None) -> None:
+    """Append an event to inbox_group_history."""
+    _request("POST", "/inbox_group_history", json_body={
+        "group_id": group_id,
+        "event": event,
+        "details": json.dumps(details) if not isinstance(details, str) else details,
+        "previous_state": json.dumps(previous_state or {}) if not isinstance(previous_state or {}, str) else (previous_state or "{}"),
+    })
+
+
+def get_group_history(group_id: int = None, limit: int = 100) -> list[dict]:
+    """Get group history. Per-group if group_id given, global otherwise."""
+    params = {"select": "*", "order": "created_at.desc", "limit": str(limit)}
+    if group_id:
+        params["group_id"] = f"eq.{group_id}"
+    rows = _request("GET", "/inbox_group_history", params=params)
+    for r in rows:
+        for col in ("details", "previous_state"):
+            if isinstance(r.get(col), str):
+                r[col] = json.loads(r[col])
+    return rows

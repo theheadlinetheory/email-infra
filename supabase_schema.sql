@@ -80,6 +80,45 @@ create table if not exists setup_pipelines (
 
 create index if not exists idx_setup_pipelines_status on setup_pipelines (status);
 
+-- Inbox Groups: source of truth for all inbox group state
+create table if not exists inbox_groups (
+    id serial primary key,
+    group_letter text not null,
+    batch int not null default 1,
+    smartlead_client_id int not null,
+    smartlead_client_name text not null,
+    assigned_client text,
+    role text not null default 'generic',
+    status text not null default 'warming',
+    account_ids jsonb not null default '[]',
+    account_emails jsonb not null default '[]',
+    domains jsonb not null default '[]',
+    campaign_ids jsonb not null default '[]',
+    tag_ids jsonb not null default '[]',
+    daily_capacity int not null default 0,
+    warmup_started date,
+    warmup_ready date,
+    drift_flags jsonb not null default '[]',
+    updated_at timestamptz not null default now(),
+    unique(group_letter, batch)
+);
+
+create index if not exists idx_inbox_groups_status on inbox_groups(status);
+create index if not exists idx_inbox_groups_assigned_client on inbox_groups(assigned_client);
+
+-- Inbox Group History: append-only audit log
+create table if not exists inbox_group_history (
+    id serial primary key,
+    group_id int not null references inbox_groups(id),
+    event text not null,
+    details jsonb not null default '{}',
+    previous_state jsonb not null default '{}',
+    created_at timestamptz not null default now()
+);
+
+create index if not exists idx_inbox_group_history_group_id on inbox_group_history(group_id);
+create index if not exists idx_inbox_group_history_created_at on inbox_group_history(created_at);
+
 -- Disable RLS on all tables (we use the service_role key which bypasses RLS,
 -- but direct PostgREST calls may still be blocked by default RLS policies)
 alter table pipelines disable row level security;
@@ -89,3 +128,5 @@ alter table monitor_log disable row level security;
 alter table state disable row level security;
 alter table client_rotations disable row level security;
 alter table setup_pipelines disable row level security;
+alter table inbox_groups disable row level security;
+alter table inbox_group_history disable row level security;

@@ -18,6 +18,11 @@ def get_generic_groups(**kwargs):
     return api_generic_groups()
 
 
+def get_inbox_groups(**kwargs):
+    from dashboard import api_inbox_groups
+    return api_inbox_groups()
+
+
 def get_rotation_status(**kwargs):
     from dashboard import api_rotation_status
     return api_rotation_status()
@@ -82,6 +87,7 @@ GET_ROUTES = [
     ("/api/acquisition", get_acquisition),
     ("/api/acquisition-campaigns", get_acquisition_campaigns),
     ("/api/generic-groups", get_generic_groups),
+    ("/api/inbox-groups", get_inbox_groups),
     ("/api/rotation/status", get_rotation_status),
 ]
 
