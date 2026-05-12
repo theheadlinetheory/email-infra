@@ -137,10 +137,15 @@ _sl_rate = _RateLimiter(max_requests=180, window_seconds=60)
 
 def sl_list_accounts(offset=0, limit=100):
     _sl_rate.wait()
-    r = requests.get(
-        f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}",
-        timeout=30,
-    )
+    try:
+        r = requests.get(
+            f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit={limit}",
+            timeout=30,
+        )
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        return None
+    if r.status_code == 429:
+        return None
     if r.status_code != 200 or not r.text.strip():
         return []
     try:
@@ -287,7 +292,12 @@ def get_clients():
     if _clients_cache["data"] is not None and now - _clients_cache["time"] < 120:
         return _clients_cache["data"]
     _sl_rate.wait()
-    r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
+    try:
+        r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        return _clients_cache["data"] or []
+    if r.status_code == 429:
+        return _clients_cache["data"] or []
     result = r.json() if r.status_code == 200 else []
     if result:
         _clients_cache["data"] = result
@@ -300,11 +310,16 @@ def get_accounts_by_client(client_id):
     offset = 0
     while True:
         _sl_rate.wait()
-        r = requests.get(
-            f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}"
-            f"&client_id={client_id}&offset={offset}&limit=100",
-            timeout=30,
-        )
+        try:
+            r = requests.get(
+                f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}"
+                f"&client_id={client_id}&offset={offset}&limit=100",
+                timeout=30,
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            break
+        if r.status_code == 429:
+            break
         batch = r.json() if r.status_code == 200 else []
         if not isinstance(batch, list):
             break
@@ -316,28 +331,40 @@ def get_accounts_by_client(client_id):
 
 
 _accounts_cache = {"data": None, "time": 0}
+_accounts_lock = threading.Lock()
 
 def get_all_accounts():
-    """Fetch all accounts with 30-second cache to prevent duplicate fetches."""
+    """Fetch all accounts with 120-second cache. Thread-safe — only one fetch at a time."""
     now = time.time()
     if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 120:
         return _accounts_cache["data"]
-    accounts = []
-    offset = 0
-    while True:
-        batch = sl_list_accounts(offset=offset, limit=100)
-        if isinstance(batch, list):
+    if not _accounts_lock.acquire(timeout=90):
+        return _accounts_cache["data"] or []
+    try:
+        # Re-check cache after acquiring lock (another thread may have populated it)
+        now = time.time()
+        if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 120:
+            return _accounts_cache["data"]
+        accounts = []
+        offset = 0
+        while True:
+            batch = sl_list_accounts(offset=offset, limit=100)
+            if batch is None:
+                if _accounts_cache["data"] is not None:
+                    print(f"[accounts] Rate limited at offset {offset}, returning stale cache ({len(_accounts_cache['data'])} accounts)")
+                    return _accounts_cache["data"]
+                print(f"[accounts] Rate limited at offset {offset}, no cache available, returning partial {len(accounts)}")
+                break
             accounts.extend(batch)
             if len(batch) < 100:
                 break
             offset += 100
-        else:
-            break
-    # Only cache non-empty results (empty likely means rate-limited)
-    if accounts:
-        _accounts_cache["data"] = accounts
-        _accounts_cache["time"] = now
-    return accounts
+        if accounts:
+            _accounts_cache["data"] = accounts
+            _accounts_cache["time"] = now
+        return accounts
+    finally:
+        _accounts_lock.release()
 
 
 def assign_accounts_to_client(account_ids, client_id, old_client_id=None,
@@ -1459,7 +1486,7 @@ def _enrich_groups_with_campaigns(groups, group_emails):
 def api_acquisition():
     """Acquisition inbox groups with health metrics and campaign assignments."""
     clients = get_clients()
-    all_accounts = get_all_accounts()  # uses 30s cache — no extra API calls
+    all_accounts = get_all_accounts()
     health = get_health_metrics()
     sr_mapping = _load_sr_groups()
     domain_to_group = (sr_mapping or {}).get("domain_to_group", {})
