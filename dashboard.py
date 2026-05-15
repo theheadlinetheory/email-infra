@@ -45,6 +45,11 @@ from setup import (
     Spaceship, SPACESHIP_API, SPACESHIP_KEY, SPACESHIP_SECRET,
 )
 import db as store
+from tag_utils import (
+    parse_group_tag, get_group_tag_from_account, build_client_group_tag,
+    build_acquisition_tag, build_generic_tag, group_accounts_by_tag,
+    ZAPMAIL_TAG_ID,
+)
 import inbox_history
 import marsha
 import pipeline_engine
@@ -3357,7 +3362,7 @@ def api_clients_list():
     return {"clients": sorted(n for n in names if n and not n.lower().startswith("generic"))}
 
 
-def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client):
+def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client, ab_group="A"):
     """Generator that yields SSE events for each step of the reassignment process."""
     import traceback
 
@@ -3427,7 +3432,7 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         all_tags = sl_get_all_tags()
 
         # 1. Find/create client tag
-        client_tag_id = sl_find_or_create_tag(client_name, existing_tags=all_tags)
+        # Group tag replaces the old client-name-only tag
 
         # 2. Find Zapmail tag (ID 262254)
         zapmail_tag_id = None
@@ -3492,12 +3497,15 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
                 except ValueError:
                     pass
 
-        # Build the required 3-tag list
+        # Build the required 3-tag list: [Zapmail, GroupTag, WarmupDate]
+        group_tag_name = build_client_group_tag(client_name, ab_group)
+        group_tag_id = sl_find_or_create_tag(group_tag_name, existing_tags=all_tags)
+
         required_tags = []
         if zapmail_tag_id:
             required_tags.append(zapmail_tag_id)
-        if client_tag_id:
-            required_tags.append(client_tag_id)
+        if group_tag_id:
+            required_tags.append(group_tag_id)
         if date_tag_id:
             required_tags.append(date_tag_id)
 
@@ -3596,6 +3604,23 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
         pipeline["original_group"] = original_name
         pipeline["updated_at"] = datetime.now().isoformat()
         store.save_pipeline(pipeline)
+
+        # Update inbox_group record with new group_tag
+        ig = store.get_inbox_group_by_tag(original_name)
+        if ig:
+            store.update_inbox_group(ig["id"],
+                group_tag=group_tag_name,
+                assigned_client=client_name,
+                role="client",
+                status="active",
+            )
+            store.log_group_event(ig["id"], "assigned_to_client", {
+                "client_name": client_name,
+                "ab_group": ab_group,
+                "old_tag": original_name,
+                "new_tag": group_tag_name,
+            })
+
         yield event(7, "done")
     except Exception as e:
         yield event(7, "error", str(e))
@@ -4099,6 +4124,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             client_name = body.get("client_name", "").strip()
             forwarding_domain = body.get("forwarding_domain", "").strip()
             is_new_client = body.get("is_new_client", False)
+            ab_group = body.get("ab_group", "A")
             if not pipeline_id or not client_name or not forwarding_domain:
                 self._error(400, "pipeline_id, client_name, and forwarding_domain required")
                 return
@@ -4110,7 +4136,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
-                for chunk in assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client):
+                for chunk in assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client, ab_group):
                     self.wfile.write(chunk.encode())
                     self.wfile.flush()
             except Exception as e:
