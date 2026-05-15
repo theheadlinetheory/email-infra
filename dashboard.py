@@ -2630,24 +2630,18 @@ def api_subscriptions():
 
 def api_generic_groups():
     """Generic group status with warmup progress for the dashboard."""
-    clients = get_clients()
     all_accounts = get_all_accounts()
     health = get_health_metrics()
 
-    # Load B group assignments to exclude assigned groups
-    b_assigned_client_ids = set()
-    b_map_path = Path(__file__).parent / "clients" / "b_group_assignments.json"
-    if b_map_path.exists():
-        with open(b_map_path) as f:
-            for info in json.load(f).values():
-                b_assigned_client_ids.add(info["generic_client_id"])
-
-    # Find generic clients, excluding those assigned as B groups
-    generic_clients = [
-        c for c in clients
-        if c.get("name", "").lower().startswith("generic")
-        and c["id"] not in b_assigned_client_ids
-    ]
+    # Group accounts by tag, filter for generic
+    tag_groups = group_accounts_by_tag(all_accounts)
+    generic_tags = {}
+    for tag_name, accs in tag_groups.items():
+        if tag_name == "__untagged__":
+            continue
+        parsed = parse_group_tag(tag_name)
+        if parsed["role"] == "generic":
+            generic_tags[tag_name] = accs
 
     # Try to load pipeline data for pipeline IDs
     try:
@@ -2658,8 +2652,8 @@ def api_generic_groups():
     groups = []
     total_accounts = 0
     total_capacity = 0
-    for cl in sorted(generic_clients, key=lambda x: x.get("name", "")):
-        cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
+    for cl_name in sorted(generic_tags.keys()):
+        cl_accounts = generic_tags[cl_name]
         if not cl_accounts:
             continue
 
@@ -2725,15 +2719,15 @@ def api_generic_groups():
 
         # Find matching pipeline ID
         pipeline_id = ""
-        cl_name_lower = cl["name"].lower().strip()
+        cl_name_lower = cl_name.lower().strip()
         for p in all_pipelines:
             if p.get("client_name", "").lower().strip() == cl_name_lower:
                 pipeline_id = p.get("id", "")
                 break
 
         groups.append({
-            "name": cl["name"],
-            "client_id": cl["id"],
+            "name": cl_name,
+            "client_id": cl_accounts[0].get("client_id", 0) if cl_accounts else 0,
             "pipeline_id": pipeline_id,
             "accounts": len(cl_accounts),
             "domains": len(domains),
@@ -3756,14 +3750,15 @@ def api_rotation_status():
     """GET /api/rotation/status — return all rotation records with B group labels."""
     rotations = store.get_all_rotations()
 
-    # Load B group mapping for labels
-    b_map_path = Path(__file__).parent / "clients" / "b_group_assignments.json"
+    # B group labels from tags
     b_labels = {}
-    if b_map_path.exists():
-        with open(b_map_path) as f:
-            b_map = json.load(f)
-        for generic_name, info in b_map.items():
-            b_labels[info["serves_client"]] = generic_name
+    all_groups = store.get_all_inbox_groups()
+    for g in all_groups:
+        tag = g.get("group_tag", "")
+        if tag:
+            parsed = parse_group_tag(tag)
+            if parsed["role"] == "client" and parsed["group_letter"] == "B":
+                b_labels[parsed["client_name"]] = tag
 
     for r in rotations:
         if isinstance(r.get("group_a_ids"), str):
