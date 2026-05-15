@@ -122,7 +122,7 @@ The `inbox_groups` table in Supabase is the authoritative record of where every 
 | `status` | `warming`, `ready`, `active`, `resting` |
 | `role` | `generic`, `client`, `acquisition` |
 
-**Exclusivity rule: a group can only be in one active campaign at a time.**
+**Exclusivity rule: a group can only be in one active campaign at a time. Multiple groups CAN be in the same campaign.**
 
 Enforcement happens at two levels:
 
