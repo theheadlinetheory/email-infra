@@ -3237,19 +3237,26 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
     yield event(2, "running")
     try:
         all_tags = sl_get_all_tags()
-        new_tag_id = sl_find_or_create_tag(new_client_name, existing_tags=all_tags)
-        old_tag_id = None
-        for tag_name, tag_data in all_tags.items():
-            if tag_name.lower().strip() == client_name.lower().strip():
-                old_tag_id = tag_data["id"]
-                break
 
         for acc in accounts:
             acc_id = acc["id"]
-            current_tags = [t["id"] for t in acc.get("tags", [])] if acc.get("tags") else []
-            new_tags = [t for t in current_tags if t != old_tag_id]
-            if new_tag_id and new_tag_id not in new_tags:
-                new_tags.append(new_tag_id)
+            # Get current group tag to determine A/B designation
+            old_group_tag = get_group_tag_from_account(acc)
+            parsed = parse_group_tag(old_group_tag or "")
+            ab = parsed["group_letter"] if parsed["role"] == "client" else "A"
+
+            new_group_tag_name = build_client_group_tag(new_client_name, ab)
+            new_group_tag_id = sl_find_or_create_tag(new_group_tag_name, existing_tags=all_tags)
+
+            # Rebuild: [Zapmail, new group tag, warmup date]
+            new_tags = []
+            for t in acc.get("tags", []):
+                if t.get("name", "").lower() == "zapmail":
+                    new_tags.append(t["id"])
+                elif re.match(r'^\d{1,2}/\d{1,2}/\d{2}$', t.get("name", "")):
+                    new_tags.append(t["id"])
+            if new_group_tag_id not in new_tags:
+                new_tags.append(new_group_tag_id)
             sl_tag_account(acc_id, new_tags, client_id=sl_client_id)
 
         yield event(2, "done")
@@ -3328,6 +3335,21 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
     except Exception as e:
         yield event(6, "error", str(e))
         return
+
+    # Update inbox_group records with new group tag
+    try:
+        all_ig = store.get_all_inbox_groups()
+        for ig in all_ig:
+            if ig.get("assigned_client") == client_name:
+                parsed = parse_group_tag(ig.get("group_tag", ""))
+                ab = parsed.get("group_letter", "A")
+                new_tag = build_client_group_tag(new_client_name, ab)
+                store.update_inbox_group(ig["id"],
+                    group_tag=new_tag,
+                    assigned_client=new_client_name,
+                )
+    except Exception:
+        pass
 
     invalidate_cache()
     yield event(0, "complete")
