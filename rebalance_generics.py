@@ -26,6 +26,7 @@ from setup import (
     sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
     SMARTLEAD_API, SMARTLEAD_KEY,
     _RateLimiter,
+    zm_list_domains,
 )
 from tag_utils import ZAPMAIL_TAG_ID
 import db as store
@@ -96,8 +97,14 @@ def rebalance():
     exclude_ids = k_b2_ids | canopy_ids
     print(f"  Excluding {len(k_b2_ids)} K-batch-2 + {len(canopy_ids)} Canopy = {len(exclude_ids)} accounts")
 
+    print("Fetching Zapmail domains for whitelist...")
+    zm_domains = zm_list_domains()
+    zapmail_domain_names = {d.get("domain", "") for d in zm_domains}
+    print(f"  {len(zapmail_domain_names)} Zapmail domains loaded")
+
     # Build pool of ready generic accounts
     generic_accs = []
+    skipped_non_zapmail = 0
     for acc in all_accounts:
         acc_id = acc["id"]
         if acc_id in exclude_ids:
@@ -110,6 +117,10 @@ def rebalance():
         group = "Generic G" if client_name == "Generic G2" else client_name
 
         domain = acc.get("from_email", "").split("@")[-1] if "@" in acc.get("from_email", "") else ""
+
+        if domain not in zapmail_domain_names:
+            skipped_non_zapmail += 1
+            continue
         wd = acc.get("warmup_details") or {}
         wdate = warmup_date_tag(wd.get("warmup_created_at", ""))
 
@@ -145,7 +156,7 @@ def rebalance():
     n_groups = len(GROUP_NAMES)
     base_size = total_domains // n_groups
     remainder = total_domains % n_groups
-    print(f"  Pool: {total_domains} domains, {len(generic_accs)} accounts")
+    print(f"  Pool: {total_domains} domains, {len(generic_accs)} accounts (skipped {skipped_non_zapmail} non-Zapmail)")
     print(f"  Target: {n_groups} groups, {base_size} domains each + {remainder} groups with {base_size + 1}")
 
     # Assign target sizes: give the +1 to groups already at or above base_size+1
