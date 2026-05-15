@@ -22,7 +22,9 @@ The group tag is the single source of truth for account identity. The dashboard 
 - **Client A group**: tag ends with ` A` (e.g., `Kay's Landscaping A`)
 - **Client B group**: tag ends with ` B` (e.g., `Kay's Landscaping B`)
 
-Client name is derived by stripping the last ` A` or ` B` suffix. Parsing splits on the final space + single letter to avoid false matches in client names.
+- **Acquisition group**: tag starts with "Acquisition" (e.g., `Acquisition A`, `Acquisition H`)
+
+Client name is derived by stripping the last ` A` or ` B` suffix. Parsing splits on the final space + single letter to avoid false matches in client names. Acquisition groups are identified by the "Acquisition" prefix.
 
 SmartLead `client_id` still gets set (SmartLead needs it internally) but the dashboard never reads it to determine group membership. Tags drive everything.
 
@@ -34,6 +36,22 @@ Tag transitions:
 - Assign to client as A group: tag swaps to `Kay's Landscaping A`
 - Assign to client as B group: tag swaps to `Kay's Landscaping B`
 - Tags never change after client assignment. Rotation is campaign-level, not tag-level.
+
+### Acquisition Groups
+
+Acquisition groups follow the same tag model. Each acquisition account gets 3 tags:
+
+| Tag | Example | Changes? |
+|-----|---------|----------|
+| Zapmail | `Zapmail` (ID 262254) | Never |
+| Group | `Acquisition A` | Never (acquisition groups don't reassign) |
+| Warmup Date | `4/16/26` | Never |
+
+Current acquisition groups (A through L, G reserved for Lars) keep their letter identity. The group tag replaces the current SmartLead client name (e.g., "A Group (250/day)") with a cleaner `Acquisition A` format.
+
+The dashboard Acquisition tab reads group tags to build the view — same as the Clients tab reads client group tags. Each acquisition group card shows accounts, capacity, and which campaign it's assigned to.
+
+Zapmail domain tags mirror the SmartLead group tag: `Acquisition A`, `Acquisition B`, etc.
 
 ### Group Standard
 
@@ -108,5 +126,11 @@ For existing generics:
 
 - Verify group tag matches the SmartLead client name (e.g., `Generic F`)
 - Fix any that are missing or wrong
+
+For existing acquisition groups:
+
+- Find all accounts by current `client_id` (e.g., client "A Group (250/day)")
+- Set group tag to `Acquisition {letter}` (e.g., `Acquisition A`)
+- Update Zapmail domain tags to match
 
 This migration runs once. After that, the new model is live.
