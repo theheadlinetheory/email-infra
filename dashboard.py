@@ -1580,56 +1580,26 @@ def _enrich_groups_with_campaigns(groups, group_emails):
 
 def api_acquisition():
     """Acquisition inbox groups with health metrics and campaign assignments."""
-    clients = get_clients()
     all_accounts = get_all_accounts()
     health = get_health_metrics()
-    sr_mapping = _load_sr_groups()
-    domain_to_group = (sr_mapping or {}).get("domain_to_group", {})
 
-    # Find acquisition clients (e.g. "A Group (250/day)", "Acquisition Inboxes")
-    group_clients = [
-        c for c in clients
-        if ("group" in c.get("name", "").lower() and ("/" in c.get("name", "") or "day" in c.get("name", "").lower()))
-        or c.get("name", "").lower() == "acquisition inboxes"
-    ]
+    # Group ALL accounts by their tag, then filter for acquisition
+    tag_groups = group_accounts_by_tag(all_accounts)
 
     groups = []
     group_emails = {}  # group name → list of emails (for campaign cross-ref)
     total_accounts = 0
-    for cl in sorted(group_clients, key=lambda x: x.get("name", "")):
-        cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
-        if not cl_accounts:
+    for tag_name in sorted(tag_groups.keys()):
+        if tag_name == "__untagged__":
             continue
-
-        # Split "Acquisition Inboxes" into SR sub-groups by domain
-        if cl.get("name", "").lower() == "acquisition inboxes" and domain_to_group:
-            sr_buckets = {}
-            remainder = []
-            for acc in cl_accounts:
-                email = acc.get("from_email", "")
-                domain = email.split("@")[-1] if "@" in email else ""
-                sr_group = domain_to_group.get(domain)
-                if sr_group:
-                    sr_buckets.setdefault(sr_group, []).append(acc)
-                else:
-                    remainder.append(acc)
-
-            for sr_name in sorted(sr_buckets):
-                sr_accounts = sr_buckets[sr_name]
-                total_accounts += len(sr_accounts)
-                groups.append(_compute_group_stats(sr_name, cl["id"], sr_accounts, health))
-                group_emails[sr_name] = [a.get("from_email", "") for a in sr_accounts]
-
-            # Remaining accounts (e.g. .info domains) stay under original name
-            if remainder:
-                total_accounts += len(remainder)
-                groups.append(_compute_group_stats(cl["name"], cl["id"], remainder, health))
-                group_emails[cl["name"]] = [a.get("from_email", "") for a in remainder]
+        parsed = parse_group_tag(tag_name)
+        if parsed["role"] != "acquisition":
             continue
-
-        total_accounts += len(cl_accounts)
-        groups.append(_compute_group_stats(cl["name"], cl["id"], cl_accounts, health))
-        group_emails[cl["name"]] = [a.get("from_email", "") for a in cl_accounts]
+        accs = tag_groups[tag_name]
+        total_accounts += len(accs)
+        group_id = accs[0].get("client_id", 0) if accs else 0
+        groups.append(_compute_group_stats(tag_name, group_id, accs, health))
+        group_emails[tag_name] = [a.get("from_email", "") for a in accs]
 
     # Enrich groups with campaign assignment data
     conflicts = _enrich_groups_with_campaigns(groups, group_emails)
@@ -1638,7 +1608,12 @@ def api_acquisition():
     empty_campaigns = _find_empty_acquisition_campaigns()
 
     # Find unassigned acquisition inboxes (headlinetheory domains not in any acq group)
-    acq_client_ids = {cl["id"] for cl in group_clients}
+    acq_tagged_ids = set()
+    for tag_name, accs in tag_groups.items():
+        parsed = parse_group_tag(tag_name)
+        if parsed["role"] == "acquisition":
+            acq_tagged_ids.update(a["id"] for a in accs)
+
     unassigned_acq = []
     for a in all_accounts:
         email = a.get("from_email", "")
@@ -1648,7 +1623,7 @@ def api_acquisition():
         name_lower = (a.get("from_name") or email.split("@")[0]).lower()
         if "aidan" not in name_lower and "lars" not in name_lower:
             continue
-        if a.get("client_id") and a["client_id"] in acq_client_ids:
+        if a["id"] in acq_tagged_ids:
             continue
         wd = a.get("warmup_details") or {}
         unassigned_acq.append({
