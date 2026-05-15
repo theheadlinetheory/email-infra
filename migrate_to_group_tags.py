@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from setup import (
     sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
     SMARTLEAD_API, SMARTLEAD_KEY,
+    _RateLimiter, _api_retry,
 )
 from tag_utils import (
     get_group_tag_from_account, parse_group_tag,
@@ -25,6 +26,9 @@ from tag_utils import (
 import db as store
 
 DRY_RUN = "--dry-run" in sys.argv
+
+_sl_rate = _RateLimiter(max_requests=150, window_seconds=60)
+RATE_LIMIT_COOLDOWN = 45
 
 ACQ_CLIENT_MAP = {
     "A Group (250/day)": "A",
@@ -43,25 +47,42 @@ ACQ_CLIENT_MAP = {
 }
 
 
+def _sl_request(method, path, **kwargs):
+    """SmartLead request with proactive rate limiting and 429 auto-retry."""
+    _sl_rate.wait()
+    url = f"{SMARTLEAD_API}{path}"
+    if "?" in url:
+        url += f"&api_key={SMARTLEAD_KEY}"
+    else:
+        url += f"?api_key={SMARTLEAD_KEY}"
+    r = requests.request(method, url, timeout=30, **kwargs)
+    if r.status_code == 429:
+        print(f"  Rate limited — cooling down {RATE_LIMIT_COOLDOWN}s...")
+        time.sleep(RATE_LIMIT_COOLDOWN)
+        _sl_rate.wait()
+        r = requests.request(method, url, timeout=30, **kwargs)
+    return r
+
+
 def get_all_sl_accounts():
     accounts = []
     offset = 0
     while True:
-        r = requests.get(
-            f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100",
-            timeout=30,
-        )
+        r = _sl_request("GET", f"/email-accounts/?offset={offset}&limit=100")
         batch = r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
+        if r.status_code == 429:
+            print(f"  Still rate limited at offset {offset}, waiting another {RATE_LIMIT_COOLDOWN}s...")
+            time.sleep(RATE_LIMIT_COOLDOWN)
+            continue
         accounts.extend(batch)
         if len(batch) < 100:
             break
         offset += 100
-        time.sleep(0.3)
     return accounts
 
 
 def get_sl_clients():
-    r = requests.get(f"{SMARTLEAD_API}/client?api_key={SMARTLEAD_KEY}", timeout=30)
+    r = _sl_request("GET", "/client")
     return r.json() if r.status_code == 200 else []
 
 
@@ -142,6 +163,7 @@ def migrate():
             continue
 
         try:
+            _sl_rate.wait()
             tag_id = sl_find_or_create_tag(target_tag, existing_tags=all_tags)
             new_tag_ids = [ZAPMAIL_TAG_ID, tag_id]
             for t in acc.get("tags", []):
@@ -149,14 +171,24 @@ def migrate():
                     new_tag_ids.append(t["id"])
                     break
 
-            sl_tag_account(acc_id, new_tag_ids, client_id=client_id)
+            for attempt in range(3):
+                _sl_rate.wait()
+                try:
+                    sl_tag_account(acc_id, new_tag_ids, client_id=client_id)
+                    break
+                except Exception as tag_err:
+                    if "429" in str(tag_err) and attempt < 2:
+                        print(f"  Rate limited tagging {email}, cooling down {RATE_LIMIT_COOLDOWN}s...")
+                        time.sleep(RATE_LIMIT_COOLDOWN)
+                    else:
+                        raise
+
             all_tags[target_tag] = {"id": tag_id, "name": target_tag}
 
             if "acquisition" in target_tag.lower():
                 stats["acquisition_migrated"] += 1
             else:
                 stats["client_migrated"] += 1
-            time.sleep(0.2)
         except Exception as e:
             print(f"  ERROR on {email}: {e}")
             stats["errors"] += 1
