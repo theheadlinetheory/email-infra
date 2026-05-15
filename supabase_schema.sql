@@ -89,6 +89,7 @@ create table if not exists inbox_groups (
     smartlead_client_name text not null,
     assigned_client text,
     role text not null default 'generic',
+    group_tag text,
     status text not null default 'warming',
     account_ids jsonb not null default '[]',
     account_emails jsonb not null default '[]',
@@ -105,6 +106,7 @@ create table if not exists inbox_groups (
 
 create index if not exists idx_inbox_groups_status on inbox_groups(status);
 create index if not exists idx_inbox_groups_assigned_client on inbox_groups(assigned_client);
+create index if not exists idx_inbox_groups_group_tag on inbox_groups(group_tag);
 
 -- Inbox Group History: append-only audit log
 create table if not exists inbox_group_history (

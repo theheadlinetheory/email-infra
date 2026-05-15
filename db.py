@@ -466,6 +466,38 @@ def update_inbox_group(group_id: int, **fields) -> None:
     }, json_body=fields)
 
 
+def check_campaign_exclusivity(group_id: int, campaign_id: int) -> dict | None:
+    """Check if a group is already in an active campaign.
+
+    Returns None if clear, or a dict with the conflicting campaign info.
+    """
+    group = get_inbox_group_by_id(group_id)
+    if not group:
+        return None
+    existing = group.get("campaign_ids") or []
+    if isinstance(existing, str):
+        existing = json.loads(existing)
+    for cid in existing:
+        if cid != campaign_id and cid:
+            return {"group_id": group_id, "group_tag": group.get("group_tag", ""), "conflicting_campaign_id": cid}
+    return None
+
+
+def get_inbox_group_by_tag(group_tag: str) -> dict | None:
+    """Get an inbox group by its group_tag."""
+    rows = _request("GET", "/inbox_groups", params={
+        "select": "*",
+        "group_tag": f"eq.{group_tag}",
+    })
+    if not rows:
+        return None
+    r = rows[0]
+    for col in ("account_ids", "account_emails", "domains", "campaign_ids", "tag_ids", "drift_flags"):
+        if isinstance(r.get(col), str):
+            r[col] = json.loads(r[col])
+    return r
+
+
 def log_group_event(group_id: int, event: str, details: dict, previous_state: dict = None) -> None:
     """Append an event to inbox_group_history."""
     _request("POST", "/inbox_group_history", json_body={
