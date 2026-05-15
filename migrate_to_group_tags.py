@@ -115,7 +115,6 @@ def migrate():
         email = acc.get("from_email", "")
         client_id = acc.get("client_id")
         client_name = client_map.get(client_id, "")
-        current_group_tag = get_group_tag_from_account(acc)
 
         target_tag = None
 
@@ -128,32 +127,33 @@ def migrate():
                 continue
 
         elif client_name.lower().startswith("generic"):
-            if current_group_tag and current_group_tag.lower() == client_name.lower():
-                stats["generic_ok"] += 1
-                continue
             target_tag = client_name
 
         elif client_name:
-            if acc_id in b_account_ids:
-                ab = "B"
-            elif acc_id in a_account_ids:
-                ab = "A"
+            # SmartLead client names may already contain A/B suffix
+            # (e.g., "Denair HVAC B", "Pioneer Landscaping").
+            # Parse to detect embedded suffix, then reconcile with rotation records.
+            parsed = parse_group_tag(client_name)
+            if parsed["role"] == "client" and parsed["group_letter"] in ("A", "B"):
+                # Client name already encodes A/B (e.g., "Denair HVAC B")
+                ab = parsed["group_letter"]
+                base_name = parsed["client_name"]
             else:
-                ab = "A"
-            target_tag = build_client_group_tag(client_name, ab)
+                # Plain client name — determine A/B from rotation records
+                base_name = client_name
+                if acc_id in b_account_ids:
+                    ab = "B"
+                elif acc_id in a_account_ids:
+                    ab = "A"
+                else:
+                    ab = "A"
+            target_tag = build_client_group_tag(base_name, ab)
 
         else:
             stats["skipped"] += 1
             continue
 
-        if current_group_tag == target_tag:
-            if client_name.lower().startswith("generic"):
-                stats["generic_ok"] += 1
-            else:
-                stats["skipped"] += 1
-            continue
-
-        print(f"  {email}: '{current_group_tag}' -> '{target_tag}'")
+        print(f"  {email}: client='{client_name}' -> tag='{target_tag}'")
 
         if DRY_RUN:
             if "acquisition" in (target_tag or "").lower():
@@ -204,18 +204,22 @@ def migrate():
         if role == "generic" and not assigned:
             new_tag = old_name
         elif assigned:
-            rotation = rotation_map.get(assigned)
-            ab = "A"
-            if rotation:
-                a_ids = rotation.get("group_a_ids", [])
-                b_ids = rotation.get("group_b_ids", [])
-                if isinstance(a_ids, str):
-                    a_ids = json.loads(a_ids)
-                if isinstance(b_ids, str):
-                    b_ids = json.loads(b_ids)
-                ig_account_ids = set(ig.get("account_ids") or [])
-                if ig_account_ids & set(b_ids):
-                    ab = "B"
+            parsed_old = parse_group_tag(old_name)
+            if parsed_old["role"] == "client" and parsed_old["group_letter"] in ("A", "B"):
+                ab = parsed_old["group_letter"]
+            else:
+                ab = "A"
+                rotation = rotation_map.get(assigned)
+                if rotation:
+                    a_ids = rotation.get("group_a_ids", [])
+                    b_ids = rotation.get("group_b_ids", [])
+                    if isinstance(a_ids, str):
+                        a_ids = json.loads(a_ids)
+                    if isinstance(b_ids, str):
+                        b_ids = json.loads(b_ids)
+                    ig_account_ids = set(ig.get("account_ids") or [])
+                    if ig_account_ids & set(b_ids):
+                        ab = "B"
             new_tag = build_client_group_tag(assigned, ab)
         else:
             new_tag = old_name
