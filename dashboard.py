@@ -1874,45 +1874,27 @@ def api_assign_group_campaign(body):
     if not group_client_id or not campaign_id:
         return {"error": "group_client_id and campaign_id required"}
 
-    # Get all accounts for this group
+    # Get accounts for this group by tag
     all_accounts = get_all_accounts()
-    group_accounts = [a for a in all_accounts if a.get("client_id") == group_client_id]
-
-    # For SR sub-groups within "Acquisition Inboxes", filter by domain mapping
-    sr_mapping = _load_sr_groups()
-    domain_to_group = (sr_mapping or {}).get("domain_to_group", {})
-    if domain_to_group and group_name:
-        filtered = []
-        for acc in group_accounts:
-            email = acc.get("from_email", "")
-            domain = email.split("@")[-1] if "@" in email else ""
-            sr_group = domain_to_group.get(domain, "")
-            if sr_group == group_name or (not sr_group and group_name.lower() == "acquisition inboxes"):
-                filtered.append(acc)
-        if filtered:
-            group_accounts = filtered
+    tag_groups = group_accounts_by_tag(all_accounts)
+    group_accounts = tag_groups.get(group_name, [])
 
     if not group_accounts:
         return {"error": f"No accounts found for group {group_name or group_client_id}"}
 
     account_ids = [a["id"] for a in group_accounts]
 
+    group_tag = get_group_tag_from_account(group_accounts[0]) if group_accounts else None
+    ig = store.get_inbox_group_by_tag(group_tag) if group_tag else None
+
     if action == "assign":
-        # Conflict check: ensure no account is already in another ACTIVE acquisition campaign
-        # (client fulfillment campaigns are legitimate generic group assignments, not conflicts)
-        campaign_details = get_global_campaign_details()
-        conflicts = set()
-        for a in group_accounts:
-            email = a.get("from_email", "")
-            for camp in campaign_details.get(email, []):
-                if (camp["status"] == "ACTIVE" and camp["id"] != campaign_id
-                        and "acquisition" in camp.get("name", "").lower()):
-                    conflicts.add(camp["name"])
-        if conflicts:
-            return {
-                "error": f"Cannot assign — group is already in active campaign(s): {', '.join(conflicts)}",
-                "conflicts": list(conflicts),
-            }
+        # Exclusivity check: use Supabase inbox_groups as source of truth
+        if ig:
+            conflict = store.check_campaign_exclusivity(ig["id"], campaign_id)
+            if conflict:
+                return {
+                    "error": f"Group is already active in campaign {conflict['conflicting_campaign_id']}. Remove it first.",
+                }
 
         # Add accounts to campaign (with retry on rate limit)
         for attempt in range(3):
@@ -1932,6 +1914,8 @@ def api_assign_group_campaign(body):
                     "old_value": None,
                     "new_value": {"campaign_id": campaign_id, "group": group_name},
                 } for a in group_accounts])
+                if ig:
+                    store.update_inbox_group(ig["id"], campaign_ids=[campaign_id], status="active")
                 return {"ok": True, "action": "assigned", "accounts": len(account_ids)}
             if r.status_code == 429 and attempt < 2:
                 time.sleep(30)
@@ -1959,6 +1943,8 @@ def api_assign_group_campaign(body):
                 "old_value": {"campaign_id": campaign_id, "group": group_name},
                 "new_value": None,
             } for a in group_accounts])
+            if ig:
+                store.update_inbox_group(ig["id"], campaign_ids=[], status="ready")
             return {"ok": True, "action": "unassigned", "accounts": len(account_ids)}
         return {"error": f"SmartLead error: {r.status_code} {r.text[:200]}"}
 
