@@ -4258,6 +4258,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             })
             self._json_response({"ok": True})
         elif path == "/api/setup-pipeline/create":
+            if body.get("type") == "generic":
+                domain_count = len([d.strip() for d in body.get("domains", "").split("\n") if d.strip()])
+                if domain_count != 14:
+                    self._json_response({
+                        "error": f"Generic groups must have exactly 14 domains (got {domain_count}). Standard: 14 domains / 42 accounts.",
+                    }, status=400)
+                    return
             try:
                 config = build_pipeline_config(body)
                 pid = pipeline_engine.create_and_start(
