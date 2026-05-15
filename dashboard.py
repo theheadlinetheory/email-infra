@@ -568,19 +568,25 @@ def _compute_overview():
         email = a.get("from_email", "")
         a["campaign_count"] = campaign_counts.get(email, 0)
 
-    # Classify clients as acquisition vs client/generic
-    def _is_acquisition_group(name):
-        nl = name.lower()
-        return ("group" in nl and ("/" in name or "day" in nl)) or nl == "acquisition inboxes"
-
-    def _is_generic_group(name):
-        return name.lower().startswith("generic")
-
-    acq_client_ids = {cl["id"] for cl in clients if _is_acquisition_group(cl.get("name", ""))}
-
-    # Split accounts into client+generic vs acquisition
-    client_accounts = [a for a in all_accounts if a.get("client_id") not in acq_client_ids]
-    acq_accounts = [a for a in all_accounts if a.get("client_id") in acq_client_ids]
+    # Classify accounts by parsing their group tag
+    client_accounts = []
+    acq_accounts = []
+    generic_accounts = []
+    untagged_accounts = []
+    for a in all_accounts:
+        group_tag = get_group_tag_from_account(a)
+        a["_group_tag"] = group_tag  # cache for later use
+        if not group_tag:
+            untagged_accounts.append(a)
+        else:
+            parsed = parse_group_tag(group_tag)
+            a["_parsed_tag"] = parsed
+            if parsed["role"] == "acquisition":
+                acq_accounts.append(a)
+            elif parsed["role"] == "generic":
+                generic_accounts.append(a)
+            else:
+                client_accounts.append(a)
 
     total = len(all_accounts)
     client_total = len(client_accounts)
@@ -590,7 +596,7 @@ def _compute_overview():
     in_campaign = client_in_campaign + acq_in_campaign
     smtp_fail = sum(1 for a in all_accounts if not a.get("is_smtp_success"))
     imap_fail = sum(1 for a in all_accounts if not a.get("is_imap_success"))
-    unassigned = sum(1 for a in all_accounts if not a.get("client_id"))
+    unassigned = len(untagged_accounts)
     blocked = [
         {
             "email": a["from_email"],
@@ -603,15 +609,19 @@ def _compute_overview():
 
     crm_names = get_crm_client_names()
 
+    # Group client accounts by client name (derived from tag)
+    client_groups = {}
+    for a in client_accounts:
+        parsed = a.get("_parsed_tag", {})
+        cl_name = parsed.get("client_name", "")
+        if cl_name:
+            client_groups.setdefault(cl_name, []).append(a)
+
     client_summaries = []
-    for cl in clients:
-        cl_name = cl.get("name", "")
-        if _is_acquisition_group(cl_name) or _is_generic_group(cl_name):
-            continue
+    for cl_name, cl_accounts in client_groups.items():
         if not is_crm_client(cl_name, crm_names):
             continue
-        cl_accounts = [a for a in all_accounts if a.get("client_id") == cl["id"]]
-        ws_date = warmup_dates.get(cl["name"].lower(), "")
+        ws_date = warmup_dates.get(cl_name.lower(), "")
         ready_date = ""
         days_left = None
         if ws_date:
@@ -758,9 +768,13 @@ def _compute_overview():
             warmup_days_done = None
             warmup_progress = "—"
 
+        # Split into A and B groups by tag
+        a_group = [a for a in cl_accounts if a.get("_parsed_tag", {}).get("group_letter") == "A"]
+        b_group = [a for a in cl_accounts if a.get("_parsed_tag", {}).get("group_letter") == "B"]
+
         client_summaries.append({
-            "id": cl["id"],
-            "name": cl["name"],
+            "id": cl_accounts[0].get("client_id", 0) if cl_accounts else 0,
+            "name": cl_name,
             "accounts": len(cl_accounts),
             "production_ready": cl_production,
             "warming": cl_still_warming,
@@ -787,6 +801,10 @@ def _compute_overview():
             "warmup_days_done": warmup_days_done,
             "idle_inboxes": cl_idle,
             "batches": batches,
+            "group_a_count": len(a_group),
+            "group_b_count": len(b_group),
+            "group_a_tag": f"{cl_name} A" if a_group else None,
+            "group_b_tag": f"{cl_name} B" if b_group else None,
         })
 
     client_summaries.sort(
