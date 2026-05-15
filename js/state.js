@@ -26,7 +26,7 @@ var pipelinePollingInterval = null;
 
 var ASSIGN_STEPS = [
     {id: 1, label: 'Creating SmartLead client'},
-    {id: 2, label: 'Updating SmartLead tags'},
+    {id: 2, label: 'Setting group tags'},
     {id: 3, label: 'Verifying client assignment'},
     {id: 4, label: 'Updating Zapmail domain tags'},
     {id: 5, label: 'Setting forwarding domain'},

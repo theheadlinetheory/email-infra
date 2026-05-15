@@ -265,6 +265,13 @@
                 <option value="">Select a client...</option>
             </select>
         </div>
+        <div style="margin-bottom:16px;">
+            <label>Group Designation</label>
+            <select id="ac-ab-group" onchange="checkAssignReady()">
+                <option value="A">A Group (primary)</option>
+                <option value="B">B Group (reserve)</option>
+            </select>
+        </div>
         <div id="ac-new-client-row" style="display:none;margin-bottom:16px;">
             <label>New Client Name</label>
             <input id="ac-new-client-name" type="text" oninput="checkAssignReady()">

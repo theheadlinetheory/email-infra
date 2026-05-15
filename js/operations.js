@@ -161,6 +161,7 @@ function startAssignment() {
     var isNew = selectVal === '__new__';
     var clientName = isNew ? document.getElementById('ac-new-client-name').value.trim() : selectVal;
     var fwd = document.getElementById('ac-forwarding').value.trim();
+    var abGroup = document.getElementById('ac-ab-group').value;
 
     assignmentInProgress = true;
     document.getElementById('assign-form').style.display = 'none';
@@ -169,7 +170,7 @@ function startAssignment() {
 
     runSSEOperation(
         '/api/pipeline/assign-client',
-        {pipeline_id: pipelineId, client_name: clientName, forwarding_domain: fwd, is_new_client: isNew},
+        {pipeline_id: pipelineId, client_name: clientName, forwarding_domain: fwd, is_new_client: isNew, ab_group: abGroup},
         'ac',
         ASSIGN_STEPS,
         7,
