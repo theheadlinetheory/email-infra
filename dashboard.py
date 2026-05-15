@@ -2077,13 +2077,9 @@ def api_domains():
 
 
 def api_zapmail_sync():
-    """Check ZapMail tags vs SmartLead client assignments for mismatches."""
+    """Check ZapMail domain tags vs SmartLead group tags for mismatches."""
     zm_domains = zm_list_domains()
     sl_accounts = get_all_accounts()
-    sl_clients = get_clients()
-
-    # Build SmartLead client_id -> name map
-    client_map = {c["id"]: c["name"] for c in sl_clients}
 
     # Build domain -> ZapMail tag
     zm_tag_by_domain = {}
@@ -2092,35 +2088,33 @@ def api_zapmail_sync():
         if tags:
             zm_tag_by_domain[d["domain"]] = tags[0]
 
-    # Build domain -> SmartLead client name
-    sl_client_by_domain = {}
+    # Build domain -> SmartLead group tag (from account tags, not client_id)
+    sl_tag_by_domain = {}
     for a in sl_accounts:
         email = a.get("from_email", "")
         domain = email.split("@")[-1] if "@" in email else ""
-        client_id = a.get("client_id")
-        if domain and client_id and client_id in client_map:
-            sl_client_by_domain[domain] = client_map[client_id]
+        group_tag = get_group_tag_from_account(a)
+        if domain and group_tag:
+            sl_tag_by_domain[domain] = group_tag
 
-    # Find mismatches (fuzzy: "Deeter Landscape" matches "Deeter Landscape LLC")
+    # Find mismatches
     mismatches = []
-    all_domains = set(zm_tag_by_domain.keys()) | set(sl_client_by_domain.keys())
+    all_domains = set(zm_tag_by_domain.keys()) | set(sl_tag_by_domain.keys())
     for domain in sorted(all_domains):
-        zm_client = zm_tag_by_domain.get(domain)
-        sl_client = sl_client_by_domain.get(domain)
-        if zm_client and sl_client:
-            zm_lower = zm_client.lower().strip()
-            sl_lower = sl_client.lower().strip()
+        zm_tag = zm_tag_by_domain.get(domain)
+        sl_tag = sl_tag_by_domain.get(domain)
+        if zm_tag and sl_tag:
+            zm_lower = zm_tag.lower().strip()
+            sl_lower = sl_tag.lower().strip()
             if zm_lower != sl_lower and zm_lower not in sl_lower and sl_lower not in zm_lower:
                 mismatches.append({
                     "domain": domain,
-                    "zapmail_tag": zm_client,
-                    "smartlead_client": sl_client,
+                    "zapmail_tag": zm_tag,
+                    "smartlead_tag": sl_tag,
                 })
 
-    # Domains in ZapMail but not SmartLead
-    zm_only = [d for d in zm_tag_by_domain if d not in sl_client_by_domain]
-    # Domains in SmartLead but not ZapMail
-    sl_only = [d for d in sl_client_by_domain if d not in zm_tag_by_domain]
+    zm_only = [d for d in zm_tag_by_domain if d not in sl_tag_by_domain]
+    sl_only = [d for d in sl_tag_by_domain if d not in zm_tag_by_domain]
 
     return {
         "mismatches": mismatches,

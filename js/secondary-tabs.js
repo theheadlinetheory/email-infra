@@ -416,7 +416,7 @@ function renderSync() {
     if (d.mismatches.length > 0) {
         html += '<h2 class="section-title">Tag Mismatches</h2>';
         d.mismatches.forEach(m => {
-            html += `<div class="sync-item"><span class="domain">${m.domain}</span> — ZapMail: <span class="mismatch">${m.zapmail_tag}</span> vs SmartLead: <span class="mismatch">${m.smartlead_client}</span></div>`;
+            html += `<div class="sync-item"><span class="domain">${m.domain}</span> — ZapMail: <span class="mismatch">${m.zapmail_tag}</span> vs SmartLead: <span class="mismatch">${m.smartlead_tag}</span></div>`;
         });
     }
 
