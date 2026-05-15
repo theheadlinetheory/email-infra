@@ -39,29 +39,33 @@ Tag transitions:
 
 ### Acquisition Groups
 
-Acquisition groups follow the same tag model. Each acquisition account gets 3 tags:
+Acquisition is a separate mode in the dashboard with its own tab. Acquisition groups do NOT use A/B rotation — each group (A through L) is independently assigned to campaigns.
+
+Each acquisition account gets 3 tags:
 
 | Tag | Example | Changes? |
 |-----|---------|----------|
 | Zapmail | `Zapmail` (ID 262254) | Never |
-| Group | `Acquisition A` | Never (acquisition groups don't reassign) |
+| Group | `Acquisition A` | Never |
 | Warmup Date | `4/16/26` | Never |
 
-Current acquisition groups (A through L, G reserved for Lars) keep their letter identity. The group tag replaces the current SmartLead client name (e.g., "A Group (250/day)") with a cleaner `Acquisition A` format.
+Current groups (A through L, G reserved for Lars) keep their letter identity. The group tag replaces the current SmartLead client name (e.g., "A Group (250/day)") with a cleaner `Acquisition A` format.
 
-The dashboard Acquisition tab reads group tags to build the view — same as the Clients tab reads client group tags. Each acquisition group card shows accounts, capacity, and which campaign it's assigned to.
+The Acquisition tab reads group tags to build its view, separate from the Clients tab. Each acquisition group card shows accounts, capacity, and which campaign it's assigned to. No A/B rotation, no swap workflow — groups just get plugged into campaigns directly.
 
-Zapmail domain tags mirror the SmartLead group tag: `Acquisition A`, `Acquisition B`, etc.
+Zapmail domain tags mirror the SmartLead group tag: `Acquisition A`, `Acquisition H`, etc.
 
 ### Group Standard
 
-New groups are always 14 domains / 42 accounts (3 inboxes per domain). The pipeline enforces this at creation time. Daily capacity target: ~630/day (42 accounts x 15 sends/account).
+**Client/generic groups**: New groups are always 14 domains / 42 accounts (3 inboxes per domain). The pipeline enforces this at creation time. Daily capacity target: ~630/day (42 accounts x 15 sends/account).
 
-Existing groups keep their current sizes and phase out naturally as they get assigned to clients. No rebalancing of existing groups.
+**Acquisition groups**: ~5-6 domains / ~17-18 accounts per group, targeting ~250/day capacity. This is the existing standard and stays unchanged.
 
-### A/B Rotation & Swap Workflow
+Existing groups keep their current sizes and phase out naturally. No rebalancing.
 
-Rotation is campaign-level only. Tags never change. The dashboard tracks which group (A or B) is currently active in campaigns.
+### A/B Rotation & Swap Workflow (Clients Only)
+
+A/B rotation applies to client fulfillment groups only, not acquisition. Rotation is campaign-level — tags never change. The dashboard tracks which group (A or B) is currently active in campaigns.
 
 Swap flow:
 
