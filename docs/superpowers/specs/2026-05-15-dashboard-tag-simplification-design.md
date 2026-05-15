@@ -110,6 +110,38 @@ The dashboard parses the group tag to build all views.
 - Compares SmartLead group tag vs Zapmail domain tag per account
 - Flags mismatches
 
+### Campaign Tracking & Group Exclusivity (Supabase)
+
+The `inbox_groups` table in Supabase is the authoritative record of where every group is. Each row tracks:
+
+| Field | Purpose |
+|-------|---------|
+| `group_tag` | The SmartLead group tag (e.g., `Kay's Landscaping A`, `Acquisition H`, `Generic F`) |
+| `account_ids` | SmartLead account IDs in this group |
+| `campaign_ids` | Active campaign IDs this group is currently assigned to |
+| `status` | `warming`, `ready`, `active`, `resting` |
+| `role` | `generic`, `client`, `acquisition` |
+
+**Exclusivity rule: a group can only be in one active campaign at a time.**
+
+Enforcement happens at two levels:
+
+1. **Before assignment**: When assigning a group to a campaign, the dashboard checks `campaign_ids` on the group's Supabase row. If it's already in an active campaign, the assignment is blocked with a clear error: "Group is already active in {campaign name}. Remove it first."
+
+2. **On every sync**: The daily audit and the dashboard's Sync Check compare SmartLead's live campaign data against Supabase's `campaign_ids`. If a group's accounts appear in a campaign that Supabase doesn't know about (or vice versa), it's flagged as drift.
+
+**State transitions:**
+
+- **Generic warming** → `status: warming`, `campaign_ids: []`
+- **Generic ready** → `status: ready`, `campaign_ids: []`
+- **Assigned to client** → `status: active`, `campaign_ids: [123]`, group tag updated
+- **Swapped out (A/B rotation)** → `status: resting`, `campaign_ids: []`, accounts removed from campaign
+- **Swapped in** → `status: active`, `campaign_ids: [123]`, accounts added to campaign
+
+**Every campaign change goes through Supabase first.** The dashboard writes to `inbox_groups.campaign_ids` before touching SmartLead. If SmartLead fails, the Supabase record reflects intent and the error is surfaced — no silent partial state.
+
+For acquisition groups, the same rule applies: one group, one campaign. The Acquisition tab reads `campaign_ids` from Supabase to show which campaign each group is in, and blocks double-assignment.
+
 ### What Gets Eliminated
 
 - `b_group_assignments.json` — A/B identity lives in tags
