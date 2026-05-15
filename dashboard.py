@@ -866,6 +866,13 @@ def _compute_overview():
             cs["inboxes_needed"] = 0
             cs["capacity_status"] = "no_target"
 
+    # Fetch undismissed reallocation reminders
+    realloc_reminders = {}
+    for cl_name in client_groups:
+        reminder = store.get_state(f"realloc_reminder_{cl_name}")
+        if reminder and not reminder.get("dismissed"):
+            realloc_reminders[cl_name] = reminder
+
     return {
         "total_accounts": total,
         "client_total": client_total,
@@ -884,6 +891,7 @@ def _compute_overview():
         "archived_clients": archived_clients,
         "idle_inboxes": total_idle,
         "idle_clients": idle_clients,
+        "realloc_reminders": realloc_reminders,
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -3652,39 +3660,55 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
 def swap_client_group(client_name):
     """Swap a client's active group in all their campaigns.
 
-    1. Read rotation record
-    2. Find campaigns with outgoing accounts
-    3. Add incoming accounts, remove outgoing accounts
-    4. Update rotation record
-    Returns dict with results.
+    Uses group tags to find A/B groups. Updates Supabase first, then SmartLead.
+    Returns dict with results including reallocation reminder.
     """
-    rotation = store.get_rotation(client_name)
-    if not rotation:
-        return {"error": f"No rotation record for '{client_name}'"}
+    tag_a = build_client_group_tag(client_name, "A")
+    tag_b = build_client_group_tag(client_name, "B")
 
-    active = rotation["active_group"]
-    a_ids = rotation["group_a_ids"]
-    b_ids = rotation["group_b_ids"]
-    if isinstance(a_ids, str):
-        a_ids = json.loads(a_ids)
-    if isinstance(b_ids, str):
-        b_ids = json.loads(b_ids)
+    group_a = store.get_inbox_group_by_tag(tag_a)
+    group_b = store.get_inbox_group_by_tag(tag_b)
 
-    if active == "A":
-        outgoing_ids, incoming_ids, new_active = set(a_ids), b_ids, "B"
+    if not group_a and not group_b:
+        return {"error": f"No A/B groups found for '{client_name}'"}
+
+    # Determine which is active by checking status
+    if group_a and group_a.get("status") == "active":
+        outgoing, incoming = group_a, group_b
+        new_active = "B"
+    elif group_b and group_b.get("status") == "active":
+        outgoing, incoming = group_b, group_a
+        new_active = "A"
     else:
-        outgoing_ids, incoming_ids, new_active = set(b_ids), a_ids, "A"
+        # Fallback to rotation table
+        rotation = store.get_rotation(client_name)
+        if rotation and rotation["active_group"] == "A":
+            outgoing, incoming = group_a, group_b
+            new_active = "B"
+        else:
+            outgoing, incoming = group_b, group_a
+            new_active = "A"
+
+    if not incoming:
+        return {"error": f"Group {new_active} not found for '{client_name}' — cannot swap"}
+
+    outgoing_ids = set(outgoing.get("account_ids") or [])
+    incoming_ids = incoming.get("account_ids") or []
 
     if not incoming_ids:
         return {"error": f"Group {new_active} has no accounts — cannot swap"}
 
-    # Find all campaigns
+    # Update Supabase FIRST (intent)
+    today = datetime.now().strftime("%Y-%m-%d")
+    store.update_inbox_group(outgoing["id"], status="resting", campaign_ids=[])
+    store.update_inbox_group(incoming["id"], status="active")
+
+    # Find campaigns containing outgoing accounts
     _sl_rate.wait()
     r = requests.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
     all_campaigns = r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
     active_campaigns = [c for c in all_campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
 
-    # Find campaigns containing outgoing accounts
     campaigns_updated = []
     for camp in active_campaigns:
         _sl_rate.wait()
@@ -3701,9 +3725,9 @@ def swap_client_group(client_name):
         time.sleep(0.2)
 
     if not campaigns_updated:
-        return {"error": f"No campaigns found with Group {active} accounts for {client_name}"}
+        return {"error": f"No campaigns found with outgoing accounts for {client_name}"}
 
-    # Add incoming accounts to campaigns
+    # Add incoming, remove outgoing
     for camp in campaigns_updated:
         _sl_rate.wait()
         requests.post(
@@ -3713,7 +3737,6 @@ def swap_client_group(client_name):
         )
         time.sleep(0.3)
 
-    # Remove outgoing accounts from campaigns
     for camp in campaigns_updated:
         _sl_rate.wait()
         requests.delete(
@@ -3723,19 +3746,29 @@ def swap_client_group(client_name):
         )
         time.sleep(0.3)
 
+    # Update Supabase with campaign IDs for incoming group
+    campaign_ids = [c["id"] for c in campaigns_updated]
+    store.update_inbox_group(incoming["id"], campaign_ids=campaign_ids)
+
     # Update rotation record
-    today = datetime.now().strftime("%Y-%m-%d")
     store.update_rotation_swap(client_name, new_active, today)
+
+    # Log event
+    if outgoing.get("id"):
+        store.log_group_event(outgoing["id"], "swapped_out", {"new_active": new_active})
+    if incoming.get("id"):
+        store.log_group_event(incoming["id"], "swapped_in", {"campaigns": campaign_ids})
 
     return {
         "ok": True,
         "client_name": client_name,
-        "previous_group": active,
+        "previous_group": "A" if new_active == "B" else "B",
         "new_group": new_active,
         "campaigns_updated": len(campaigns_updated),
         "campaign_names": [c["name"] for c in campaigns_updated],
         "accounts_added": len(incoming_ids),
         "accounts_removed": len(outgoing_ids),
+        "reallocation_required": True,
     }
 
 
@@ -4215,6 +4248,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._error(400, "client_name required")
                 return
             result = swap_client_group(client_name)
+            if result.get("ok"):
+                store.set_state(f"realloc_reminder_{client_name}", {
+                    "client_name": client_name,
+                    "new_group": result["new_group"],
+                    "swap_date": datetime.now().isoformat(),
+                    "dismissed": False,
+                })
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/rotation/swap-all":
             rotations = store.get_all_rotations()
@@ -4231,6 +4271,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 result = swap_client_group(rot["client_name"])
                 results.append(result)
             self._json_response({"results": results})
+        elif path == "/api/rotation/dismiss-reminder":
+            client_name = body.get("client_name", "")
+            store.set_state(f"realloc_reminder_{client_name}", {
+                "dismissed": True,
+            })
+            self._json_response({"ok": True})
         elif path == "/api/setup-pipeline/create":
             try:
                 config = build_pipeline_config(body)
