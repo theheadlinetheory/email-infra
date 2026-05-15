@@ -218,6 +218,33 @@ function renderCardHTML(item) {
         }
         html += `</div>`;
     }
+    // Reallocation reminder banner
+    var reminder = (overviewData.realloc_reminders || {})[item.name];
+    if (reminder && !reminder.dismissed) {
+        html += '<div style="background:#7f1d1d;border:1px solid #ef4444;border-radius:8px;padding:10px 14px;margin-top:8px;display:flex;justify-content:space-between;align-items:center;">';
+        html += '<span style="color:#fca5a5;font-size:12px;font-weight:600;">⚠ Inboxes swapped. Reallocate inboxes in SmartLead now or sends will be 0/day.</span>';
+        html += '<button onclick="dismissRealloc(\'' + item.name.replace(/'/g, "\\'") + '\')" style="background:none;border:1px solid #ef4444;color:#ef4444;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;">Dismiss</button>';
+        html += '</div>';
+    }
+    // A/B group breakdown
+    if (item.group_a_count || item.group_b_count) {
+        html += '<div style="display:flex;gap:12px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">';
+        if (item.group_a_tag) {
+            var aActive = item.active_group === 'A';
+            html += '<div style="flex:1;padding:6px 8px;border-radius:6px;background:' + (aActive ? 'rgba(64,224,208,0.1)' : 'rgba(255,255,255,0.03)') + ';">';
+            html += '<div style="font-size:11px;font-weight:600;color:' + (aActive ? 'var(--accent)' : 'var(--text-muted)') + ';">Group A' + (aActive ? ' ● Active' : ' ○ Resting') + '</div>';
+            html += '<div style="font-size:11px;color:var(--text-muted);">' + item.group_a_count + ' accounts</div>';
+            html += '</div>';
+        }
+        if (item.group_b_tag) {
+            var bActive = item.active_group === 'B';
+            html += '<div style="flex:1;padding:6px 8px;border-radius:6px;background:' + (bActive ? 'rgba(64,224,208,0.1)' : 'rgba(255,255,255,0.03)') + ';">';
+            html += '<div style="font-size:11px;font-weight:600;color:' + (bActive ? 'var(--accent)' : 'var(--text-muted)') + ';">Group B' + (bActive ? ' ● Active' : ' ○ Resting') + '</div>';
+            html += '<div style="font-size:11px;color:var(--text-muted);">' + item.group_b_count + ' accounts</div>';
+            html += '</div>';
+        }
+        html += '</div>';
+    }
     // Footer dates
     var hasReady = item.ready_date && item.days_until_ready !== null && item.days_until_ready > 0;
     var hasRotation = !!item.rotation_date;

@@ -318,3 +318,11 @@ function startTransition() {
         null
     );
 }
+
+function dismissRealloc(clientName) {
+    fetch('/api/rotation/dismiss-reminder', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({client_name: clientName}),
+    }).then(function() { loadOverview(); });
+}
