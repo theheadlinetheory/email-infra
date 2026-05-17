@@ -37,8 +37,8 @@ def parse_group_tag(tag_name: str) -> dict:
     if m:
         return {"role": "client", "client_name": m.group(1), "group_letter": m.group(2), "raw": tag}
 
-    # Fallback: can't parse, treat as generic
-    return {"role": "generic", "client_name": None, "group_letter": tag, "raw": tag}
+    # Fallback: no A/B suffix — treat as client with implied "A" group
+    return {"role": "client", "client_name": tag, "group_letter": "A", "raw": tag}
 
 
 def get_group_tag_from_account(account: dict) -> str | None:

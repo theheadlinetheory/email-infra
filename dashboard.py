@@ -37,6 +37,7 @@ from zapmail_ops import (
 from sheets import get_available_domains, get_acquisition_domains, get_all_master_domains, write_range, setup_client_tab, get_service as get_sheets_service, SHEET_ID, MASTER_TAB
 from setup import (
     sl_get_all_tags, sl_find_or_create_tag, sl_tag_account,
+    sl_gql,
     zm_list_domain_tags, zm_create_domain_tag, zm_assign_domain_tag,
     zm_set_forwarding, zm_list_domains,
     SMARTLEAD_API, SMARTLEAD_KEY, SMARTLEAD_INTERNAL_API,
@@ -90,6 +91,8 @@ _crm_client_cache = {"names": [], "fetched_at": 0}
 
 _CLIENT_NAME_ALIASES = {
     "tropical landscaping": "tropical landscape",
+    "rockpave": "rock pave",
+    "gm landscaping": "gm landscaping & design",
 }
 
 def _normalize_client_name(name):
@@ -332,6 +335,7 @@ def get_accounts_by_client(client_id):
         if len(batch) < 100:
             break
         offset += 100
+    enrich_accounts_with_tags(accounts)
     return accounts
 
 
@@ -365,11 +369,46 @@ def get_all_accounts():
                 break
             offset += 100
         if accounts:
+            enrich_accounts_with_tags(accounts)
             _accounts_cache["data"] = accounts
             _accounts_cache["time"] = now
         return accounts
     finally:
         _accounts_lock.release()
+
+
+_tag_mappings_cache = {"data": None, "time": 0}
+
+def get_all_tag_mappings():
+    """Fetch all email_account_tag_mappings via GraphQL. Returns {account_id: [{name, id}, ...]}."""
+    now = time.time()
+    if _tag_mappings_cache["data"] is not None and now - _tag_mappings_cache["time"] < 120:
+        return _tag_mappings_cache["data"]
+    mappings = {}
+    offset = 0
+    while True:
+        result = sl_gql(
+            '{ email_account_tag_mappings(limit: 1000, offset: %d) '
+            '{ email_account_id tag { id name } } }' % offset
+        )
+        rows = result.get("data", {}).get("email_account_tag_mappings", [])
+        for row in rows:
+            acc_id = row["email_account_id"]
+            tag = row.get("tag", {})
+            mappings.setdefault(acc_id, []).append({"id": tag.get("id"), "name": tag.get("name", "")})
+        if len(rows) < 1000:
+            break
+        offset += 1000
+    _tag_mappings_cache["data"] = mappings
+    _tag_mappings_cache["time"] = now
+    return mappings
+
+
+def enrich_accounts_with_tags(accounts):
+    """Add tags to accounts from GraphQL tag mappings (public API doesn't return tags)."""
+    tag_map = get_all_tag_mappings()
+    for a in accounts:
+        a["tags"] = tag_map.get(a["id"], [])
 
 
 def assign_accounts_to_client(account_ids, client_id, old_client_id=None,
@@ -609,19 +648,24 @@ def _compute_overview():
 
     crm_names = get_crm_client_names()
 
-    # Group client accounts by client name (derived from tag)
+    # Group client accounts by normalized client name (derived from tag)
     client_groups = {}
+    _norm_to_display = {}
     for a in client_accounts:
         parsed = a.get("_parsed_tag", {})
         cl_name = parsed.get("client_name", "")
         if cl_name:
-            client_groups.setdefault(cl_name, []).append(a)
+            norm = _normalize_client_name(cl_name)
+            if norm not in _norm_to_display or len(cl_name) > len(_norm_to_display[norm]):
+                _norm_to_display[norm] = cl_name
+            client_groups.setdefault(norm, []).append(a)
 
     client_summaries = []
-    for cl_name, cl_accounts in client_groups.items():
+    for norm_name, cl_accounts in client_groups.items():
+        cl_name = _norm_to_display.get(norm_name, norm_name)
         if not is_crm_client(cl_name, crm_names):
             continue
-        ws_date = warmup_dates.get(cl_name.lower(), "")
+        ws_date = warmup_dates.get(norm_name, "")
         ready_date = ""
         days_left = None
         if ws_date:
