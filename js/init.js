@@ -2,7 +2,58 @@
 
 initTheme();
 
-document.getElementById('assign-client-select').addEventListener('change', updateAssignBtn);
+// Auto-set auth cookie from ?pw= query param
+(function() {
+    var pw = new URLSearchParams(window.location.search).get('pw');
+    if (pw) {
+        document.cookie = 'dashboard_pw=' + encodeURIComponent(pw) + ';path=/;max-age=31536000;SameSite=Lax';
+    }
+})();
+
+async function checkAuthAndInit() {
+    var resp = await fetch('/api/auth-check');
+    if (resp.ok) {
+        startApp();
+        return;
+    }
+    document.getElementById('loading').innerHTML =
+        '<div style="text-align:center;margin-top:40px;">' +
+        '<h3 style="color:var(--text);margin-bottom:16px;">Dashboard Login</h3>' +
+        '<input id="pw-input" type="password" placeholder="Password" ' +
+        'style="padding:10px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text);font-size:14px;width:240px;">' +
+        '<button id="pw-btn" style="margin-left:8px;padding:10px 20px;border-radius:6px;border:none;background:var(--accent);color:#0d0d14;font-weight:600;cursor:pointer;">Login</button>' +
+        '<div id="pw-error" style="color:var(--red);margin-top:8px;font-size:12px;"></div>' +
+        '</div>';
+    var input = document.getElementById('pw-input');
+    var btn = document.getElementById('pw-btn');
+    function tryLogin() {
+        var val = input.value.trim();
+        if (!val) return;
+        document.cookie = 'dashboard_pw=' + encodeURIComponent(val) + ';path=/;max-age=31536000;SameSite=Lax';
+        fetch('/api/auth-check').then(function(r) {
+            if (r.ok) {
+                document.getElementById('loading').innerHTML = '<span class="spinner"></span> Loading infrastructure data...';
+                startApp();
+            } else {
+                document.cookie = 'dashboard_pw=;path=/;max-age=0';
+                document.getElementById('pw-error').textContent = 'Invalid password';
+            }
+        });
+    }
+    btn.addEventListener('click', tryLogin);
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') tryLogin(); });
+    input.focus();
+}
+
+function startApp() {
+    var el = document.getElementById('assign-client-select');
+    if (el) el.addEventListener('change', updateAssignBtn);
+    initSupabaseRealtime();
+    loadOverview();
+    loadWallet();
+    setInterval(loadOverview, 5 * 60 * 1000);
+    setInterval(loadWallet, 5 * 60 * 1000);
+}
 
 async function initSupabaseRealtime() {
     try {
@@ -58,10 +109,4 @@ function handlePipelineRealtimeUpdate(payload) {
     loadSetupPipelines();
 }
 
-initSupabaseRealtime();
-loadOverview();
-loadWallet();
-
-// Auto-refresh every 5 minutes
-setInterval(loadOverview, 5 * 60 * 1000);
-setInterval(loadWallet, 5 * 60 * 1000);
+checkAuthAndInit();

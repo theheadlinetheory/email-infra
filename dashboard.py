@@ -387,10 +387,17 @@ def get_all_tag_mappings():
     mappings = {}
     offset = 0
     while True:
-        result = sl_gql(
-            '{ email_account_tag_mappings(limit: 1000, offset: %d) '
-            '{ email_account_id tag { id name } } }' % offset
-        )
+        try:
+            result = sl_gql(
+                '{ email_account_tag_mappings(limit: 1000, offset: %d) '
+                '{ email_account_id tag { id name } } }' % offset
+            )
+        except Exception as e:
+            print(f"[tags] GQL error at offset {offset}: {e}")
+            break
+        if not result or "data" not in result:
+            print(f"[tags] GQL returned no data at offset {offset}: {result}")
+            break
         rows = result.get("data", {}).get("email_account_tag_mappings", [])
         for row in rows:
             acc_id = row["email_account_id"]
@@ -399,6 +406,10 @@ def get_all_tag_mappings():
         if len(rows) < 1000:
             break
         offset += 1000
+    if mappings:
+        print(f"[tags] Enriched {len(mappings)} accounts with tags")
+    else:
+        print(f"[tags] WARNING: No tag mappings returned from GQL")
     _tag_mappings_cache["data"] = mappings
     _tag_mappings_cache["time"] = now
     return mappings
@@ -1110,8 +1121,12 @@ def _sync_smartlead_data():
     try:
         print(f"[sync] Starting SmartLead → Supabase sync at {datetime.now().strftime('%H:%M:%S')}")
         overview = _compute_overview()
-        if overview.get("total_accounts", 0) > 0 or overview.get("clients"):
+        clients = overview.get("clients", [])
+        has_client_accounts = any(c.get("accounts", 0) > 0 for c in clients)
+        if has_client_accounts:
             store.cache_set("overview", overview)
+        elif overview.get("total_accounts", 0) > 0:
+            print(f"[sync] SKIPPING cache write — {overview['total_accounts']} accounts but 0 client accounts (tag enrichment likely failed)")
 
         # Pre-cache client accounts for each client
         for cl in overview.get("clients", []):

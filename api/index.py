@@ -67,6 +67,27 @@ def cron_sync():
     return jsonify({"ok": True, "synced_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
+@app.route("/api/debug/gql", methods=["GET"])
+def debug_gql():
+    if not _check_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+    from setup import sl_gql, SMARTLEAD_GQL, SMARTLEAD_JWT
+    jwt_preview = SMARTLEAD_JWT[:20] + "..." if SMARTLEAD_JWT else "(empty)"
+    try:
+        result = sl_gql('{ email_account_tag_mappings(limit: 3) { email_account_id tag { id name } } }')
+        rows = result.get("data", {}).get("email_account_tag_mappings", [])
+        return jsonify({"gql_url": SMARTLEAD_GQL, "jwt_preview": jwt_preview, "rows": len(rows), "sample": rows, "raw": result})
+    except Exception as e:
+        return jsonify({"gql_url": SMARTLEAD_GQL, "jwt_preview": jwt_preview, "error": str(e)}), 500
+
+
+@app.route("/api/auth-check", methods=["GET"])
+def auth_check():
+    if _check_auth():
+        return jsonify({"ok": True})
+    return jsonify({"error": "Unauthorized"}), 401
+
+
 @app.route("/api/healthz", methods=["GET"])
 def healthz():
     return "ok", 200

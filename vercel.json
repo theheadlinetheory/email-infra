@@ -2,6 +2,10 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" }
   ],
+  "headers": [
+    { "source": "/js/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] },
+    { "source": "/css/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] }
+  ],
   "crons": [
     { "path": "/api/cron/sync", "schedule": "0 0 * * *" }
   ]
