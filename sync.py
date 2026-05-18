@@ -182,25 +182,15 @@ def build_overview(accounts, health, crm_names):
             elif letter == "B":
                 client_groups[key]["b"].append(a)
 
-    clients = []
-    for key, group in sorted(client_groups.items(), key=lambda x: x[0]):
-        all_accts = group["a"] + group["b"]
-        a_count = len(group["a"])
-        b_count = len(group["b"])
-
-        # Health stats
-        bounce_rates = []
-        reply_rates = []
-        total_sent = 0
-        in_campaign = 0
-        smtp_fail = 0
-        for a in all_accts:
-            email = a.get("from_email", "")
+    def _group_stats(accts):
+        bounce_rates, reply_rates = [], []
+        total_sent = in_campaign = smtp_fail = 0
+        for a in accts:
             if a.get("campaign_count", 0) > 0:
                 in_campaign += 1
             if not a.get("is_smtp_success"):
                 smtp_fail += 1
-            h = health.get(email)
+            h = health.get(a.get("from_email", ""))
             if h:
                 total_sent += h.get("sent", 0)
                 br = parse_rate(h.get("bounce_rate"))
@@ -209,24 +199,28 @@ def build_overview(accounts, health, crm_names):
                 rr = parse_rate(h.get("reply_rate"))
                 if rr is not None:
                     reply_rates.append(rr)
-
-        avg_bounce = round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None
-        avg_reply = round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None
-        domains = set(a.get("from_email", "").split("@")[-1] for a in all_accts if a.get("from_email"))
-
-        clients.append({
-            "name": group["display_name"],
-            "accounts": len(all_accts),
-            "group_a_count": a_count,
-            "group_b_count": b_count,
+        domains = set(a.get("from_email", "").split("@")[-1] for a in accts if a.get("from_email"))
+        return {
             "in_campaign": in_campaign,
             "smtp_failures": smtp_fail,
             "total_domains": len(domains),
-            "avg_bounce_rate": avg_bounce,
-            "avg_reply_rate": avg_reply,
+            "avg_bounce_rate": round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None,
+            "avg_reply_rate": round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None,
             "total_sent": total_sent,
-            "daily_capacity": len(all_accts) * 15,
-        })
+            "daily_capacity": len(accts) * 15,
+        }
+
+    clients = []
+    for key, group in sorted(client_groups.items(), key=lambda x: x[0]):
+        all_accts = group["a"] + group["b"]
+        combined = _group_stats(all_accts)
+        combined["name"] = group["display_name"]
+        combined["accounts"] = len(all_accts)
+        combined["group_a_count"] = len(group["a"])
+        combined["group_b_count"] = len(group["b"])
+        combined["group_a"] = _group_stats(group["a"]) if group["a"] else None
+        combined["group_b"] = _group_stats(group["b"]) if group["b"] else None
+        clients.append(combined)
 
     # Build acquisition groups
     acq_list = []
@@ -240,10 +234,10 @@ def build_overview(accounts, health, crm_names):
     # Build generic groups
     generic_list = []
     for letter, accts in sorted(generic_groups.items()):
-        generic_list.append({
-            "name": f"Generic {letter}",
-            "accounts": len(accts),
-        })
+        gs = _group_stats(accts)
+        gs["name"] = f"Generic {letter}"
+        gs["accounts"] = len(accts)
+        generic_list.append(gs)
 
     total = len(accounts)
     total_in_campaign = sum(c["in_campaign"] for c in clients)

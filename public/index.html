@@ -79,6 +79,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="stats-row" id="client-stats"></div>
     <div class="section-title">Client Inbox Groups</div>
     <div class="cards-grid" id="clients-grid"></div>
+    <div class="section-title">Generic Reserve Groups</div>
+    <div class="cards-grid" id="generic-grid"></div>
 </div>
 
 <div id="acquisition-tab" style="display:none;">
@@ -125,6 +127,7 @@ function render() {
     document.getElementById('last-updated').textContent = 'Updated: ' + updated;
 
     renderClients();
+    renderGeneric();
     renderAcquisition();
     showTab('clients');
 }
@@ -150,6 +153,7 @@ function renderClients() {
 
 function clientCard(c, idx) {
     var hasB = c.group_b_count > 0;
+    var s = c.group_a || c;
     return '<div class="client-card" id="card-' + idx + '">' +
         '<div class="card-header">' +
             '<div class="card-name">' + esc(c.name) + '</div>' +
@@ -162,15 +166,42 @@ function clientCard(c, idx) {
             '</div>' :
             '<div style="font-size:13px;color:#64748b;margin-bottom:10px;">Group A · ' + c.group_a_count + ' accounts</div>'
         ) +
-        '<div class="card-stats">' +
-            cardStat('Capacity', (c.daily_capacity || 0) + '/day') +
-            cardStat('In Campaign', c.in_campaign || 0, c.in_campaign > 0 ? 'good' : 'warn') +
-            cardStat('Bounce Rate', fmtRate(c.avg_bounce_rate), rateClass(c.avg_bounce_rate, 3, 1)) +
-            cardStat('Reply Rate', fmtRate(c.avg_reply_rate), rateClassAsc(c.avg_reply_rate, 5, 2)) +
-            cardStat('Domains', c.total_domains || 0) +
-            cardStat('SMTP Issues', c.smtp_failures || 0, (c.smtp_failures || 0) > 0 ? 'bad' : '') +
-        '</div>' +
+        statsHtml(s) +
     '</div>';
+}
+
+function statsHtml(s) {
+    return '<div class="card-stats">' +
+        cardStat('Capacity', (s.daily_capacity || 0) + '/day') +
+        cardStat('In Campaign', s.in_campaign || 0, s.in_campaign > 0 ? 'good' : 'warn') +
+        cardStat('Bounce Rate', fmtRate(s.avg_bounce_rate), rateClass(s.avg_bounce_rate, 3, 1)) +
+        cardStat('Reply Rate', fmtRate(s.avg_reply_rate), rateClassAsc(s.avg_reply_rate, 5, 2)) +
+        cardStat('Domains', s.total_domains || 0) +
+        cardStat('SMTP Issues', s.smtp_failures || 0, (s.smtp_failures || 0) > 0 ? 'bad' : '') +
+    '</div>';
+}
+
+function renderGeneric() {
+    var groups = data.generic_groups || [];
+    var grid = document.getElementById('generic-grid');
+    if (!groups.length) {
+        grid.innerHTML = '<div class="empty-state">No generic reserve groups.</div>';
+        return;
+    }
+    grid.innerHTML = groups.map(function(g) {
+        return '<div class="acq-card">' +
+            '<div class="acq-header">' +
+                '<span class="acq-name">' + esc(g.name) + '</span>' +
+                '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">' + g.accounts + ' accts</span>' +
+            '</div>' +
+            '<div class="card-stats">' +
+                cardStat('Domains', g.total_domains || 0) +
+                cardStat('Capacity', (g.daily_capacity || 0) + '/day') +
+                cardStat('SMTP Issues', g.smtp_failures || 0, (g.smtp_failures || 0) > 0 ? 'bad' : '') +
+                cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'warn' : 'good') +
+            '</div>' +
+        '</div>';
+    }).join('');
 }
 
 function renderAcquisition() {
@@ -212,6 +243,10 @@ function toggleGroup(idx, group) {
     btns.forEach(function(b, i) {
         b.classList.toggle('active', (group === 'a' && i === 0) || (group === 'b' && i === 1));
     });
+    var c = data.clients[idx];
+    var s = (group === 'b' && c.group_b) ? c.group_b : (c.group_a || c);
+    var statsEl = card.querySelector('.card-stats');
+    if (statsEl) statsEl.outerHTML = statsHtml(s);
 }
 
 function showTab(tab) {
