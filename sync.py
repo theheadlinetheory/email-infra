@@ -115,6 +115,58 @@ def fetch_health_metrics():
         return {}
 
 
+def fetch_campaign_accounts():
+    """Fetch all active campaigns and their email accounts.
+    Returns email -> list of {id, name, status} campaign info.
+    """
+    email_to_campaigns = {}
+    try:
+        _rate.wait()
+        r = requests.get(
+            f"{SMARTLEAD_API}/campaigns",
+            params={"api_key": SMARTLEAD_KEY},
+            timeout=60,
+        )
+        if r.status_code == 429:
+            print("  Rate limited fetching campaign list")
+            return {}
+        if r.status_code != 200:
+            return {}
+        campaigns = r.json() if r.text.strip() else []
+        active = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
+        print(f"  Found {len(active)} active/paused campaigns")
+
+        deadline = time.time() + 90
+        fetched = 0
+        for camp in active:
+            if time.time() > deadline:
+                print(f"  Campaign fetch timeout after {fetched}/{len(active)}")
+                break
+            camp_info = {"id": camp["id"], "name": camp.get("name", ""), "status": camp.get("status", "")}
+            try:
+                _rate.wait()
+                cr = requests.get(
+                    f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts",
+                    params={"api_key": SMARTLEAD_KEY},
+                    timeout=8,
+                )
+                if cr.status_code == 429:
+                    print(f"  Rate limited after {fetched}/{len(active)} campaigns")
+                    time.sleep(5)
+                    continue
+                if cr.status_code == 200:
+                    for ca in cr.json():
+                        email = ca.get("from_email", "")
+                        if email:
+                            email_to_campaigns.setdefault(email, []).append(camp_info)
+                fetched += 1
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                fetched += 1
+    except Exception as e:
+        print(f"  Campaign fetch error: {e}")
+    return email_to_campaigns
+
+
 def fetch_crm_clients():
     if not CRM_SUPABASE_URL or not CRM_SUPABASE_KEY:
         return []
@@ -141,7 +193,7 @@ def parse_rate(value):
         return None
 
 
-def build_overview(accounts, health, crm_names):
+def build_overview(accounts, health, crm_names, campaign_map):
     """Group accounts by tag into client cards."""
     client_groups = {}  # normalized_name -> {display_name, a_accounts: [], b_accounts: []}
     acq_groups = {}
@@ -185,6 +237,7 @@ def build_overview(accounts, health, crm_names):
     def _group_stats(accts):
         bounce_rates, reply_rates = [], []
         total_sent = in_campaign = smtp_fail = 0
+        camps = {}
         for a in accts:
             if a.get("campaign_count", 0) > 0:
                 in_campaign += 1
@@ -199,6 +252,11 @@ def build_overview(accounts, health, crm_names):
                 rr = parse_rate(h.get("reply_rate"))
                 if rr is not None:
                     reply_rates.append(rr)
+            for c in campaign_map.get(a.get("from_email", ""), []):
+                cid = c["id"]
+                if cid not in camps:
+                    camps[cid] = {"id": cid, "name": c["name"], "status": c.get("status", ""), "accounts": 0}
+                camps[cid]["accounts"] += 1
         domains = set(a.get("from_email", "").split("@")[-1] for a in accts if a.get("from_email"))
         return {
             "in_campaign": in_campaign,
@@ -208,6 +266,7 @@ def build_overview(accounts, health, crm_names):
             "avg_reply_rate": round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None,
             "total_sent": total_sent,
             "daily_capacity": len(accts) * 15,
+            "campaigns": sorted(camps.values(), key=lambda x: x["name"]),
         }
 
     clients = []
@@ -225,11 +284,10 @@ def build_overview(accounts, health, crm_names):
     # Build acquisition groups
     acq_list = []
     for letter, accts in sorted(acq_groups.items()):
-        acq_list.append({
-            "name": f"Acquisition {letter}",
-            "accounts": len(accts),
-            "in_campaign": sum(1 for a in accts if a.get("campaign_count", 0) > 0),
-        })
+        gs = _group_stats(accts)
+        gs["name"] = f"Acquisition {letter}"
+        gs["accounts"] = len(accts)
+        acq_list.append(gs)
 
     # Build generic groups
     generic_list = []
@@ -280,7 +338,11 @@ def sync():
     health = fetch_health_metrics()
     print(f"  Got {len(health)} health records")
 
-    overview = build_overview(accounts, health, crm_names)
+    print("  Fetching campaign mappings...")
+    campaign_map = fetch_campaign_accounts()
+    print(f"  Got campaigns for {len(campaign_map)} email accounts")
+
+    overview = build_overview(accounts, health, crm_names, campaign_map)
     client_count = len(overview["clients"])
     print(f"  Built overview: {client_count} clients, {overview['total_accounts']} accounts")
 

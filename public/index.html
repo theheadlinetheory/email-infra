@@ -48,12 +48,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .card-stat-value.bad { color: #ef4444; }
 .card-stat-value.warn { color: #f59e0b; }
 
-.acq-card { background: #1a1d28; border-radius: 10px; padding: 16px 20px; border: 1px solid #2a2d38; }
+.acq-card { background: #1a1d28; border-radius: 10px; padding: 16px 20px; border: 1px solid #2a2d38; cursor: pointer; transition: border-color 0.15s; }
+.acq-card:hover { border-color: #22c55e; }
 .acq-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .acq-name { font-size: 15px; font-weight: 600; }
 .acq-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
 .acq-aidan { background: #f0fdf4; color: #166534; }
 .acq-lars { background: #dbeafe; color: #1d4ed8; }
+
+.campaign-list { margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2d38; display: none; }
+.campaign-list.open { display: block; }
+.campaign-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: 13px; }
+.campaign-name { color: #e2e8f0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-accts { color: #94a3b8; margin-left: 12px; white-space: nowrap; }
+.campaign-none { color: #64748b; font-size: 13px; font-style: italic; }
+.expand-hint { font-size: 11px; color: #64748b; text-align: right; margin-top: 8px; }
 
 .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: #94a3b8; }
 
@@ -154,19 +163,20 @@ function renderClients() {
 function clientCard(c, idx) {
     var hasB = c.group_b_count > 0;
     var s = c.group_a || c;
-    return '<div class="client-card" id="card-' + idx + '">' +
+    return '<div class="client-card" id="card-' + idx + '" onclick="expandCard(\'card-' + idx + '\')">' +
         '<div class="card-header">' +
             '<div class="card-name">' + esc(c.name) + '</div>' +
             '<div class="card-count">' + c.accounts + ' accounts</div>' +
         '</div>' +
         (hasB ?
-            '<div class="group-toggle">' +
+            '<div class="group-toggle" onclick="event.stopPropagation()">' +
                 '<button class="group-btn active" onclick="toggleGroup(' + idx + ',\'a\')">Group A · ' + c.group_a_count + '</button>' +
                 '<button class="group-btn" onclick="toggleGroup(' + idx + ',\'b\')">Group B · ' + c.group_b_count + '</button>' +
             '</div>' :
             '<div style="font-size:13px;color:#64748b;margin-bottom:10px;">Group A · ' + c.group_a_count + ' accounts</div>'
         ) +
         statsHtml(s) +
+        campaignSection(s) +
     '</div>';
 }
 
@@ -181,6 +191,33 @@ function statsHtml(s) {
     '</div>';
 }
 
+function campaignSection(s) {
+    var camps = s.campaigns || [];
+    var html = '<div class="campaign-list">';
+    if (!camps.length) {
+        html += '<div class="campaign-none">No campaigns assigned</div>';
+    } else {
+        for (var i = 0; i < camps.length; i++) {
+            var c = camps[i];
+            var statusDot = c.status === 'ACTIVE' ? '<span style="color:#22c55e">&#9679;</span> ' :
+                            c.status === 'PAUSED' ? '<span style="color:#f59e0b">&#9679;</span> ' : '';
+            html += '<div class="campaign-item">' +
+                '<span class="campaign-name">' + statusDot + esc(c.name) + '</span>' +
+                '<span class="campaign-accts">' + c.accounts + ' inboxes</span>' +
+            '</div>';
+        }
+    }
+    html += '</div>';
+    return html;
+}
+
+function expandCard(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var cl = el.querySelector('.campaign-list');
+    if (cl) cl.classList.toggle('open');
+}
+
 function renderGeneric() {
     var groups = data.generic_groups || [];
     var grid = document.getElementById('generic-grid');
@@ -188,18 +225,28 @@ function renderGeneric() {
         grid.innerHTML = '<div class="empty-state">No generic reserve groups.</div>';
         return;
     }
-    grid.innerHTML = groups.map(function(g) {
-        return '<div class="acq-card">' +
+    grid.innerHTML = groups.map(function(g, i) {
+        var camps = g.campaigns || [];
+        var clientName = '';
+        if (camps.length > 0) {
+            clientName = camps[0].name.replace(/\s*[-–]\s*.*/,'').replace(/\s*(campaign|cold|email|outreach).*/i,'').trim();
+        }
+        var id = 'gen-' + i;
+        return '<div class="acq-card" id="' + id + '" onclick="expandCard(\'' + id + '\')">' +
             '<div class="acq-header">' +
                 '<span class="acq-name">' + esc(g.name) + '</span>' +
-                '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">' + g.accounts + ' accts</span>' +
+                (clientName ?
+                    '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;">' + esc(clientName) + '</span>' :
+                    '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">Reserve</span>'
+                ) +
             '</div>' +
             '<div class="card-stats">' +
+                cardStat('Accounts', g.accounts) +
                 cardStat('Domains', g.total_domains || 0) +
                 cardStat('Capacity', (g.daily_capacity || 0) + '/day') +
-                cardStat('SMTP Issues', g.smtp_failures || 0, (g.smtp_failures || 0) > 0 ? 'bad' : '') +
                 cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'warn' : 'good') +
             '</div>' +
+            campaignSection(g) +
         '</div>';
     }).join('');
 }
@@ -219,19 +266,23 @@ function renderAcquisition() {
         grid.innerHTML = '<div class="empty-state">No acquisition groups found.</div>';
         return;
     }
-    grid.innerHTML = groups.map(function(g) {
+    grid.innerHTML = groups.map(function(g, i) {
         var isLars = (g.name || '').match(/\bG\b/);
         var owner = isLars ? 'Lars' : 'Aidan';
         var ownerClass = isLars ? 'acq-lars' : 'acq-aidan';
-        return '<div class="acq-card">' +
+        var id = 'acq-' + i;
+        return '<div class="acq-card" id="' + id + '" onclick="expandCard(\'' + id + '\')">' +
             '<div class="acq-header">' +
                 '<span class="acq-name">' + esc(g.name) + '</span>' +
                 '<span class="acq-badge ' + ownerClass + '">' + owner + '</span>' +
             '</div>' +
             '<div class="card-stats">' +
                 cardStat('Accounts', g.accounts) +
-                cardStat('In Campaign', g.in_campaign, g.in_campaign > 0 ? 'good' : '') +
+                cardStat('Domains', g.total_domains || 0) +
+                cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'good' : '') +
+                cardStat('Bounce Rate', fmtRate(g.avg_bounce_rate), rateClass(g.avg_bounce_rate, 3, 1)) +
             '</div>' +
+            campaignSection(g) +
         '</div>';
     }).join('');
 }
@@ -247,6 +298,13 @@ function toggleGroup(idx, group) {
     var s = (group === 'b' && c.group_b) ? c.group_b : (c.group_a || c);
     var statsEl = card.querySelector('.card-stats');
     if (statsEl) statsEl.outerHTML = statsHtml(s);
+    var wasOpen = card.querySelector('.campaign-list.open');
+    var campEl = card.querySelector('.campaign-list');
+    if (campEl) campEl.outerHTML = campaignSection(s);
+    if (wasOpen) {
+        var newCl = card.querySelector('.campaign-list');
+        if (newCl) newCl.classList.add('open');
+    }
 }
 
 function showTab(tab) {
