@@ -319,12 +319,12 @@ def cache_set(key: str, data) -> None:
     """Write a cache entry. Only works when _CACHE_WRITE_ENABLED is True (set by sync.py)."""
     if not _CACHE_WRITE_ENABLED:
         return
-    if key == "overview":
+    if key in ("overview", "overview_v2"):
         clients = data.get("clients", []) if isinstance(data, dict) else []
         if len(clients) < 8:
-            print(f"[cache_set] BLOCKED overview write — only {len(clients)} clients (need >= 8)")
+            print(f"[cache_set] BLOCKED {key} write — only {len(clients)} clients (need >= 8)")
             return
-        print(f"[cache_set] Writing overview with {len(clients)} clients")
+        print(f"[cache_set] Writing {key} with {len(clients)} clients")
     prefixed = f"cache:{key}"
     row = {
         "key": prefixed,

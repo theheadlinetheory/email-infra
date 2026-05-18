@@ -288,11 +288,11 @@ def sync():
         print(f"  ABORT: only {client_count} clients (need >= 8), skipping cache write")
         return False
 
-    store.cache_set("overview", overview)
+    store.cache_set("overview_v2", overview)
     print(f"  Cache written: {client_count} clients")
 
     # Verify
-    cached, ts = store.cache_get("overview")
+    cached, ts = store.cache_get("overview_v2")
     verified = len((cached or {}).get("clients", []))
     print(f"  Verified: {verified} clients in cache")
     print(f"[sync] Done at {datetime.now().strftime('%H:%M:%S')}")

@@ -67,7 +67,7 @@ def serve_js(f):
 
 @app.route("/api/healthz")
 def healthz():
-    return "ok", 200
+    return "ok-v2-cache-readonly", 200
 
 
 @app.route("/api/auth-check")
@@ -81,7 +81,7 @@ def auth_check():
 def overview():
     if not _check_auth():
         return jsonify({"error": "Unauthorized"}), 401
-    data, ts = _get_cache("overview")
+    data, ts = _get_cache("overview_v2")
     if data and data.get("clients"):
         data["_cached"] = True
         data["_synced_at"] = ts
