@@ -315,11 +315,15 @@ def set_state(key: str, data: dict) -> None:
 
 def cache_set(key: str, data) -> None:
     """Write a cache entry (uses the state table with 'cache:' prefix)."""
+    if os.environ.get("VERCEL"):
+        print(f"[cache_set] BLOCKED on Vercel — key={key}")
+        return
     if key == "overview":
-        import traceback
         clients = data.get("clients", []) if isinstance(data, dict) else []
+        if len(clients) < 8:
+            print(f"[cache_set] BLOCKED overview write — only {len(clients)} clients (need >= 8)")
+            return
         print(f"[cache_set] Writing overview with {len(clients)} clients")
-        print(f"[cache_set] Caller: {''.join(traceback.format_stack()[-4:-1]).strip()}")
     prefixed = f"cache:{key}"
     row = {
         "key": prefixed,

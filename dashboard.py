@@ -296,6 +296,8 @@ def spaceship_set_auto_renew(domain, enabled):
 _clients_cache = {"data": None, "time": 0}
 
 def get_clients():
+    if os.environ.get("VERCEL"):
+        return _clients_cache["data"] or []
     now = time.time()
     if _clients_cache["data"] is not None and now - _clients_cache["time"] < 120:
         return _clients_cache["data"]
@@ -343,7 +345,10 @@ _accounts_cache = {"data": None, "time": 0}
 _accounts_lock = threading.Lock()
 
 def get_all_accounts():
-    """Fetch all accounts with 120-second cache. Thread-safe — only one fetch at a time."""
+    """Fetch all accounts with 120-second cache. Thread-safe — only one fetch at a time.
+    On Vercel, returns empty list — all data comes from Supabase cache."""
+    if os.environ.get("VERCEL"):
+        return _accounts_cache["data"] or []
     now = time.time()
     if _accounts_cache["data"] is not None and now - _accounts_cache["time"] < 120:
         return _accounts_cache["data"]
@@ -1667,6 +1672,9 @@ def api_acquisition():
             return cached
     except Exception:
         pass
+    if os.environ.get("VERCEL"):
+        return {"groups": [], "total_groups": 0, "total_accounts": 0,
+                "_cached": False, "message": "Cache empty — run sync locally"}
     return _compute_acquisition()
 
 
