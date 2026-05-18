@@ -1,0 +1,15 @@
+.env
+.debug_*
+.zapmail_browser/
+.photos_done.json
+google_oauth_credentials.json
+google_token.json
+__pycache__/
+*.pyc
+.claude/
+.superpowers/
+public/
+docs/
+tests/
+*.md
+.git/

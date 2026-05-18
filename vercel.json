@@ -1,0 +1,19 @@
+{
+  "framework": null,
+  "functions": {
+    "api/index.py": {
+      "runtime": "@vercel/python",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.py" },
+    { "source": "/", "destination": "/dashboard.html" },
+    { "source": "/dashboard.html", "destination": "/dashboard.html" },
+    { "source": "/v2", "destination": "/index.html" },
+    { "source": "/v2/", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/sync", "schedule": "0 0 * * *" }
+  ]
+}
