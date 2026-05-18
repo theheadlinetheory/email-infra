@@ -47,20 +47,12 @@ def fetch_all_accounts():
     accounts = []
     offset = 0
     while True:
-        _rate.wait()
-        try:
-            r = requests.get(
-                f"{SMARTLEAD_API}/email-accounts/",
-                params={"api_key": SMARTLEAD_KEY, "offset": offset, "limit": 100},
-                timeout=30,
-            )
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-            break
-        if r.status_code == 429:
-            print(f"  Rate limited at offset {offset}, got {len(accounts)} so far")
-            time.sleep(5)
-            continue
-        if r.status_code != 200:
+        r = _api_get(
+            f"{SMARTLEAD_API}/email-accounts/",
+            {"api_key": SMARTLEAD_KEY, "offset": offset, "limit": 100},
+            timeout=30,
+        )
+        if not r or r.status_code != 200:
             break
         batch = r.json() if r.text.strip() else []
         if not isinstance(batch, list):
@@ -99,14 +91,13 @@ def fetch_health_metrics():
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     try:
-        _rate.wait()
-        r = requests.get(
+        r = _api_get(
             f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
+            {"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
+            timeout=30,
             headers=sl_internal_headers(),
-            params={"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
-            timeout=15,
         )
-        if r.status_code != 200:
+        if not r or r.status_code != 200:
             return {}
         metrics = r.json().get("data", {}).get("email_health_metrics", [])
         return {m["from_email"]: m for m in metrics}
@@ -115,55 +106,60 @@ def fetch_health_metrics():
         return {}
 
 
+def _api_get(url, params=None, timeout=15, headers=None):
+    """SmartLead API GET with exponential backoff on 429. Returns response or None."""
+    backoff = 10
+    for attempt in range(5):
+        _rate.wait()
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=timeout)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            if attempt < 4:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+                continue
+            return None
+        if r.status_code == 429:
+            print(f"  429 — backing off {backoff}s (attempt {attempt + 1}/5)")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            continue
+        return r
+    return None
+
+
 def fetch_campaign_accounts():
-    """Fetch all active campaigns and their email accounts.
+    """Fetch all active/paused campaigns and their email accounts.
     Returns email -> list of {id, name, status} campaign info.
+    No timeout — retries with backoff until every campaign is fetched.
     """
     email_to_campaigns = {}
-    try:
-        _rate.wait()
-        r = requests.get(
-            f"{SMARTLEAD_API}/campaigns",
-            params={"api_key": SMARTLEAD_KEY},
-            timeout=60,
-        )
-        if r.status_code == 429:
-            print("  Rate limited fetching campaign list")
-            return {}
-        if r.status_code != 200:
-            return {}
-        campaigns = r.json() if r.text.strip() else []
-        active = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
-        print(f"  Found {len(active)} active/paused campaigns")
 
-        deadline = time.time() + 90
-        fetched = 0
-        for camp in active:
-            if time.time() > deadline:
-                print(f"  Campaign fetch timeout after {fetched}/{len(active)}")
-                break
-            camp_info = {"id": camp["id"], "name": camp.get("name", ""), "status": camp.get("status", "")}
-            try:
-                _rate.wait()
-                cr = requests.get(
-                    f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts",
-                    params={"api_key": SMARTLEAD_KEY},
-                    timeout=8,
-                )
-                if cr.status_code == 429:
-                    print(f"  Rate limited after {fetched}/{len(active)} campaigns")
-                    time.sleep(5)
-                    continue
-                if cr.status_code == 200:
-                    for ca in cr.json():
-                        email = ca.get("from_email", "")
-                        if email:
-                            email_to_campaigns.setdefault(email, []).append(camp_info)
-                fetched += 1
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-                fetched += 1
-    except Exception as e:
-        print(f"  Campaign fetch error: {e}")
+    r = _api_get(f"{SMARTLEAD_API}/campaigns", {"api_key": SMARTLEAD_KEY}, timeout=60)
+    if not r or r.status_code != 200:
+        print("  Failed to fetch campaign list")
+        return {}
+
+    campaigns = r.json() if r.text.strip() else []
+    active = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
+    print(f"  Found {len(active)} active/paused campaigns")
+
+    for i, camp in enumerate(active):
+        camp_info = {"id": camp["id"], "name": camp.get("name", ""), "status": camp.get("status", "")}
+        cr = _api_get(
+            f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts",
+            {"api_key": SMARTLEAD_KEY},
+            timeout=15,
+        )
+        if cr and cr.status_code == 200:
+            for ca in cr.json():
+                email = ca.get("from_email", "")
+                if email:
+                    email_to_campaigns.setdefault(email, []).append(camp_info)
+        if (i + 1) % 20 == 0:
+            print(f"  Fetched {i + 1}/{len(active)} campaigns...")
+
+    print(f"  Fetched all {len(active)} campaigns")
     return email_to_campaigns
 
 
