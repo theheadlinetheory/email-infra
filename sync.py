@@ -25,6 +25,7 @@ if env_path.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 import db as store
+store._CACHE_WRITE_ENABLED = True
 from setup import sl_gql, _RateLimiter, SMARTLEAD_GQL, SMARTLEAD_JWT
 from tag_utils import parse_group_tag, get_group_tag_from_account
 

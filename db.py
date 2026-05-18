@@ -313,10 +313,11 @@ def set_state(key: str, data: dict) -> None:
 # SmartLead Cache (for fast dashboard loads)
 # ---------------------------------------------------------------------------
 
+_CACHE_WRITE_ENABLED = False
+
 def cache_set(key: str, data) -> None:
-    """Write a cache entry (uses the state table with 'cache:' prefix)."""
-    if os.environ.get("VERCEL"):
-        print(f"[cache_set] BLOCKED on Vercel — key={key}")
+    """Write a cache entry. Only works when _CACHE_WRITE_ENABLED is True (set by sync.py)."""
+    if not _CACHE_WRITE_ENABLED:
         return
     if key == "overview":
         clients = data.get("clients", []) if isinstance(data, dict) else []
