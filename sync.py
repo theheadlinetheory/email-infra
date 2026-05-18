@@ -147,6 +147,17 @@ def build_overview(accounts, health, crm_names):
     generic_groups = {}
     untagged = []
 
+    # Build name alias map for fuzzy matching
+    _aliases = {
+        "gm landscaping": "gm landscaping & design",
+    }
+
+    def _norm(name):
+        import re
+        n = re.sub(r'\s+(llc|inc\.?|construction)\s*$', '', name.lower().strip(), flags=re.IGNORECASE)
+        n = re.sub(r'[,.]', '', n).strip()
+        return _aliases.get(n, n)
+
     for a in accounts:
         tag = get_group_tag_from_account(a)
         if not tag:
@@ -156,17 +167,19 @@ def build_overview(accounts, health, crm_names):
         if parsed["role"] == "acquisition":
             acq_groups.setdefault(parsed["group_letter"], []).append(a)
         elif parsed["role"] == "generic":
-            acq_groups.setdefault(f"Generic {parsed['group_letter']}", []).append(a)
+            generic_groups.setdefault(parsed["group_letter"], []).append(a)
         else:
             cn = parsed["client_name"] or tag
             letter = parsed["group_letter"]
-            key = cn.lower().strip()
+            key = _norm(cn)
             if key not in client_groups:
                 client_groups[key] = {"display_name": cn, "a": [], "b": []}
+            elif len(cn) > len(client_groups[key]["display_name"]):
+                client_groups[key]["display_name"] = cn
             if letter == "A":
-                client_groups[key]["a"].extend([a])
+                client_groups[key]["a"].append(a)
             elif letter == "B":
-                client_groups[key]["b"].extend([a])
+                client_groups[key]["b"].append(a)
 
     clients = []
     for key, group in sorted(client_groups.items(), key=lambda x: x[0]):
@@ -218,9 +231,17 @@ def build_overview(accounts, health, crm_names):
     acq_list = []
     for letter, accts in sorted(acq_groups.items()):
         acq_list.append({
-            "name": f"Acquisition {letter}" if not letter.startswith("Generic") else letter,
+            "name": f"Acquisition {letter}",
             "accounts": len(accts),
             "in_campaign": sum(1 for a in accts if a.get("campaign_count", 0) > 0),
+        })
+
+    # Build generic groups
+    generic_list = []
+    for letter, accts in sorted(generic_groups.items()):
+        generic_list.append({
+            "name": f"Generic {letter}",
+            "accounts": len(accts),
         })
 
     total = len(accounts)
@@ -232,6 +253,7 @@ def build_overview(accounts, health, crm_names):
         "in_campaign": total_in_campaign,
         "untagged_count": len(untagged),
         "acquisition_groups": acq_list,
+        "generic_groups": generic_list,
         "generated_at": datetime.now().isoformat(),
         "crm_clients": crm_names,
     }
