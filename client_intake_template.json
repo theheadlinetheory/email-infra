@@ -1,9 +1,0 @@
-{
-  "client_name": "",
-  "daily_volume": 0,
-  "forwarding_domain": "",
-  "headshot_folder": "~/email-infra/headshots/",
-  "domain_keywords": ["landscaping", "lawn", "yard", "mowing", "turf"],
-  "tld_preference": [".com", ".co", ".net", ".org"],
-  "notes": ""
-}

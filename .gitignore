@@ -4,10 +4,10 @@
 .photos_done.json
 google_oauth_credentials.json
 google_token.json
-headshots/
 __pycache__/
 *.pyc
+*.log
 .claude/
-.vercel
+.vercel/
 .superpowers/
-.superpowers/
+.DS_Store
