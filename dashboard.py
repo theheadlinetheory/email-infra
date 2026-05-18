@@ -1128,6 +1128,15 @@ def _sync_smartlead_data():
         elif overview.get("total_accounts", 0) > 0:
             print(f"[sync] SKIPPING cache write — {overview['total_accounts']} accounts but 0 client accounts (tag enrichment likely failed)")
 
+        # Cache acquisition data
+        try:
+            acq_data = _compute_acquisition()
+            if acq_data.get("total_groups", 0) > 0:
+                store.cache_set("acquisition", acq_data)
+                print(f"[sync] Cached {acq_data['total_groups']} acquisition groups")
+        except Exception as e:
+            print(f"[sync] Error caching acquisition: {e}")
+
         # Pre-cache client accounts for each client
         for cl in overview.get("clients", []):
             try:
@@ -1647,6 +1656,19 @@ def _enrich_groups_with_campaigns(groups, group_emails):
 
 def api_acquisition():
     """Acquisition inbox groups with health metrics and campaign assignments."""
+    try:
+        cached, synced_at = store.cache_get("acquisition")
+        if cached and cached.get("total_groups", 0) > 0:
+            cached["_cached"] = True
+            cached["_synced_at"] = synced_at
+            return cached
+    except Exception:
+        pass
+    return _compute_acquisition()
+
+
+def _compute_acquisition():
+    """Compute acquisition data live from SmartLead."""
     all_accounts = get_all_accounts()
     health = get_health_metrics()
 
