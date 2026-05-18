@@ -23,7 +23,11 @@ _routes = {"get": None, "post": None}
 
 def _init_routes():
     if _routes["get"] is None:
-        _routes["get"], _routes["post"] = create_route_table()
+        try:
+            _routes["get"], _routes["post"] = create_route_table()
+        except Exception as e:
+            import traceback
+            _routes["_error"] = traceback.format_exc()
 
 
 def _check_auth():
@@ -68,6 +72,48 @@ def healthz():
     return "ok", 200
 
 
+# ── Static file serving ──
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PUBLIC_DIR = os.path.join(_PROJECT_ROOT, "public")
+
+
+@app.route("/")
+def serve_dashboard():
+    from flask import send_from_directory
+    return send_from_directory(_PUBLIC_DIR, "dashboard.html")
+
+
+@app.route("/dashboard.html")
+def serve_dashboard_html():
+    from flask import send_from_directory
+    return send_from_directory(_PUBLIC_DIR, "dashboard.html")
+
+
+@app.route("/v2")
+@app.route("/v2/")
+def serve_v2():
+    from flask import send_from_directory
+    return send_from_directory(_PUBLIC_DIR, "index.html")
+
+
+@app.route("/css/<path:filename>")
+def serve_css(filename):
+    from flask import send_from_directory
+    return send_from_directory(os.path.join(_PUBLIC_DIR, "css"), filename)
+
+
+@app.route("/js/<path:filename>")
+def serve_js(filename):
+    from flask import send_from_directory
+    return send_from_directory(os.path.join(_PUBLIC_DIR, "js"), filename)
+
+
+@app.route("/headshots/<path:filename>")
+def serve_headshots(filename):
+    from flask import send_from_directory
+    return send_from_directory(os.path.join(_PUBLIC_DIR, "headshots"), filename)
+
+
 @app.route("/api/<path:path>", methods=["GET", "POST", "OPTIONS"])
 def catch_all(path):
     if request.method == "OPTIONS":
@@ -84,6 +130,9 @@ def catch_all(path):
         return jsonify({"error": "Unauthorized"}), 401
 
     _init_routes()
+
+    if _routes.get("_error"):
+        return jsonify({"error": "Route init failed", "traceback": _routes["_error"]}), 500
 
     if request.method == "GET":
         params = {k: request.args.getlist(k) for k in request.args}

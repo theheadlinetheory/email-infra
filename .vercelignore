@@ -8,7 +8,6 @@ __pycache__/
 *.pyc
 .claude/
 .superpowers/
-public/
 docs/
 tests/
 *.md
