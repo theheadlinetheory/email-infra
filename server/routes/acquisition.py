@@ -8,6 +8,11 @@ def get_acquisition(**kwargs):
     return api_acquisition()
 
 
+def get_acquisition_assignments(**kwargs):
+    from dashboard import api_acquisition_assignments
+    return api_acquisition_assignments()
+
+
 def get_acquisition_campaigns(**kwargs):
     from dashboard import api_acquisition_campaigns
     return api_acquisition_campaigns()
@@ -85,6 +90,7 @@ def post_rotation_swap_all(body, handler, **kwargs):
 
 GET_ROUTES = [
     ("/api/acquisition", get_acquisition),
+    ("/api/acquisition/assignments", get_acquisition_assignments),
     ("/api/acquisition-campaigns", get_acquisition_campaigns),
     ("/api/generic-groups", get_generic_groups),
     ("/api/inbox-groups", get_inbox_groups),

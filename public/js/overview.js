@@ -162,7 +162,12 @@ function renderCardHTML(item) {
     if (item.still_warming && item.warmup_done_date) {
         warmupBadge = `<span class="badge badge-yellow" style="font-size:10px;margin-left:6px;">Ready ${item.warmup_done_date}</span>`;
     }
-    html += `<div class="cc-header"><span class="cc-name">${item.name}</span><span class="cc-count">${item.accounts} accounts${warmupBadge}</span></div>`;
+    var ownerBadge = '';
+    if (item._owner) {
+        var isLars = item._owner === 'Lars';
+        ownerBadge = `<span class="badge" style="font-size:10px;padding:2px 8px;margin-left:6px;background:${isLars ? '#dbeafe' : '#f0fdf4'};color:${isLars ? '#1d4ed8' : '#166534'};">${item._owner}</span>`;
+    }
+    html += `<div class="cc-header"><span class="cc-name">${item.name}${ownerBadge}</span><span class="cc-count">${item.accounts} accounts${warmupBadge}</span></div>`;
     // Alert banner
     if (item.needs_attention) {
         html += `<div style="background:var(--red-bg);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:12px;color:var(--red);">${item.flagged_domains}/${item.total_domains} domains flagged (${item.flagged_pct}%)</div>`;
@@ -524,10 +529,14 @@ function renderAcqUnassigned(accounts) {
     `).join('');
 }
 
+function acqGroupOwner(name) {
+    return (name || '').match(/\bG\b/) ? 'Lars' : 'Aidan';
+}
+
 function renderAcquisitionGroups(groups) {
     var grid = document.getElementById('acquisition-grid');
-    grid.innerHTML = groups.map(g => renderCardHTML(g)).join('');
-    // Populate campaign dropdowns after rendering
+    groups.forEach(function(g) { g._owner = acqGroupOwner(g.name); });
+    grid.innerHTML = groups.map(function(g) { return renderCardHTML(g); }).join('');
     populateCampaignDropdowns(groups);
 }
 
@@ -648,8 +657,10 @@ function renderAcqAssignments(data) {
         var statusBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#fff;background:' + statusColor(r.status) + ';">' + r.status + '</span>';
         var healthBadge = r.health_score != null ? '<span style="color:' + healthColor(r.health_score) + ';">' + r.health_score + '</span>' : '—';
 
-        return '<tr style="cursor:pointer;" onclick="openDetail(' + r.group_id + ',\'' + r.group.replace(/'/g, "\\'") + '\')">' +
-            '<td style="font-weight:600;">' + r.group + '</td>' +
+        var owner = acqGroupOwner(r.group);
+        var ownerBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:' + (owner === 'Lars' ? '#dbeafe' : '#f0fdf4') + ';color:' + (owner === 'Lars' ? '#1d4ed8' : '#166534') + ';">' + owner + '</span>';
+        return '<tr style="cursor:pointer;" onclick="openDetail(' + (r.group_id || 'null') + ',\'' + (r.group || '').replace(/'/g, "\\'") + '\')">' +
+            '<td style="font-weight:600;">' + (r.group || '') + ' ' + ownerBadge + '</td>' +
             '<td>' + campDisplay + '</td>' +
             '<td>' + statusBadge + '</td>' +
             '<td>' + r.accounts + '</td>' +

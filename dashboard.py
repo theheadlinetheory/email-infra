@@ -1129,7 +1129,9 @@ def _sync_smartlead_data():
 
         if new_count >= 8 and new_count >= existing_count:
             store.cache_set("overview", overview)
+            import traceback
             print(f"[sync] Cached overview — {new_count} clients (was {existing_count})")
+            print(f"[sync] Write caller: {''.join(traceback.format_stack()[-3:-1])}")
         else:
             print(f"[sync] SKIPPING cache write — only {new_count} clients vs {existing_count} in cache (need >= 8, likely partial sync)")
 
@@ -1276,23 +1278,19 @@ def sync_spaceship_to_sheet():
 # --- API endpoint logic (cache-first) ---
 
 def api_overview():
-    """Return overview from Supabase cache, falling back to live computation."""
+    """Return overview from Supabase cache only. Cache is populated locally."""
     try:
         cached, synced_at = store.cache_get("overview")
-        if cached and (cached.get("total_accounts", 0) > 0 or cached.get("clients")):
+        if cached and len(cached.get("clients", [])) > 0:
             cached["_cached"] = True
             cached["_synced_at"] = synced_at
             return cached
-    except Exception:
-        pass
-    try:
-        return _compute_overview()
     except Exception as e:
-        print(f"[api_overview] Live computation failed: {e}")
-        return {"loading": True,
-                "clients": [], "total_accounts": 0, "in_campaign": 0,
-                "smtp_failures": 0, "imap_failures": 0, "unassigned": 0,
-                "blocked": [], "acquisition_groups": [], "generic_groups": []}
+        print(f"[api_overview] Cache read failed: {e}")
+    return {"loading": True, "message": "Cache empty — run sync locally",
+            "clients": [], "total_accounts": 0, "in_campaign": 0,
+            "smtp_failures": 0, "imap_failures": 0, "unassigned": 0,
+            "blocked": [], "acquisition_groups": [], "generic_groups": []}
 
 
 _global_campaign_counts = {"data": {}, "time": 0}
