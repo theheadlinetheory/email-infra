@@ -55,16 +55,22 @@ def _check_auth():
 
 @app.route("/api/cron/sync", methods=["GET"])
 def cron_sync():
-    """Vercel Cron endpoint — runs the SmartLead → Supabase sync."""
-    # Verify cron secret (Vercel sends this header)
+    """Vercel Cron endpoint — disabled, cache is populated locally."""
     cron_secret = os.environ.get("CRON_SECRET", "")
     if cron_secret and request.headers.get("Authorization") != f"Bearer {cron_secret}":
         if not _check_auth():
             return jsonify({"error": "Unauthorized"}), 401
 
-    from dashboard import _sync_smartlead_data
-    _sync_smartlead_data()
-    return jsonify({"ok": True, "synced_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    import db as store
+    cached, synced_at = store.cache_get("overview")
+    client_count = len((cached or {}).get("clients", [])) if cached else 0
+    return jsonify({
+        "ok": True,
+        "action": "noop",
+        "reason": "Vercel sync disabled — cache populated locally to avoid rate-limit corruption",
+        "cached_clients": client_count,
+        "cached_at": synced_at,
+    })
 
 
 @app.route("/api/debug/gql", methods=["GET"])
