@@ -232,14 +232,14 @@ def build_overview(accounts, health, crm_names, campaign_map):
 
     def _group_stats(accts):
         bounce_rates, reply_rates = [], []
-        total_sent = in_campaign = smtp_fail = 0
+        total_sent = smtp_fail = 0
+        assigned = 0
         camps = {}
         for a in accts:
-            if a.get("campaign_count", 0) > 0:
-                in_campaign += 1
+            email = a.get("from_email", "")
             if not a.get("is_smtp_success"):
                 smtp_fail += 1
-            h = health.get(a.get("from_email", ""))
+            h = health.get(email)
             if h:
                 total_sent += h.get("sent", 0)
                 br = parse_rate(h.get("bounce_rate"))
@@ -248,14 +248,17 @@ def build_overview(accounts, health, crm_names, campaign_map):
                 rr = parse_rate(h.get("reply_rate"))
                 if rr is not None:
                     reply_rates.append(rr)
-            for c in campaign_map.get(a.get("from_email", ""), []):
+            acct_camps = campaign_map.get(email, [])
+            if acct_camps:
+                assigned += 1
+            for c in acct_camps:
                 cid = c["id"]
                 if cid not in camps:
                     camps[cid] = {"id": cid, "name": c["name"], "status": c.get("status", ""), "accounts": 0}
                 camps[cid]["accounts"] += 1
         domains = set(a.get("from_email", "").split("@")[-1] for a in accts if a.get("from_email"))
         return {
-            "in_campaign": in_campaign,
+            "in_campaign": assigned,
             "smtp_failures": smtp_fail,
             "total_domains": len(domains),
             "avg_bounce_rate": round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None,

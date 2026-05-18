@@ -227,16 +227,19 @@ function renderGeneric() {
     }
     grid.innerHTML = groups.map(function(g, i) {
         var camps = g.campaigns || [];
-        var clientName = '';
-        if (camps.length > 0) {
-            clientName = camps[0].name.replace(/\s*[-–]\s*.*/,'').replace(/\s*(campaign|cold|email|outreach).*/i,'').trim();
+        var clientNames = {};
+        for (var ci = 0; ci < camps.length; ci++) {
+            var cn = camps[ci].name.replace(/\s*#\d.*/,'').replace(/\s*[-–]\s*.*/,'').replace(/\s*(campaign|cold|email|outreach|subsequence|list \d).*/i,'').trim();
+            if (cn && !cn.match(/^(acquisition|acq)/i)) clientNames[cn] = (clientNames[cn] || 0) + camps[ci].accounts;
         }
+        var names = Object.keys(clientNames);
+        var badgeText = names.length > 2 ? names.length + ' clients' : names.length > 0 ? names.join(', ') : '';
         var id = 'gen-' + i;
         return '<div class="acq-card" id="' + id + '" onclick="expandCard(\'' + id + '\')">' +
             '<div class="acq-header">' +
                 '<span class="acq-name">' + esc(g.name) + '</span>' +
-                (clientName ?
-                    '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;">' + esc(clientName) + '</span>' :
+                (badgeText ?
+                    '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;">' + esc(badgeText) + '</span>' :
                     '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">Reserve</span>'
                 ) +
             '</div>' +
