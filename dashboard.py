@@ -1122,16 +1122,16 @@ def _sync_smartlead_data():
         print(f"[sync] Starting SmartLead → Supabase sync at {datetime.now().strftime('%H:%M:%S')}")
         overview = _compute_overview()
         clients = overview.get("clients", [])
-        new_client_count = len([c for c in clients if c.get("accounts", 0) > 0])
+        new_count = len(clients)
 
         existing, _ = store.cache_get("overview")
-        existing_client_count = len([c for c in (existing or {}).get("clients", []) if c.get("accounts", 0) > 0]) if existing else 0
+        existing_count = len((existing or {}).get("clients", [])) if existing else 0
 
-        if new_client_count >= 10 or new_client_count >= existing_client_count:
+        if new_count >= 8 and new_count >= existing_count:
             store.cache_set("overview", overview)
-            print(f"[sync] Cached overview — {new_client_count} clients with accounts (was {existing_client_count})")
+            print(f"[sync] Cached overview — {new_count} clients (was {existing_count})")
         else:
-            print(f"[sync] SKIPPING cache write — only {new_client_count} clients with accounts vs {existing_client_count} in cache (likely partial sync)")
+            print(f"[sync] SKIPPING cache write — only {new_count} clients vs {existing_count} in cache (need >= 8, likely partial sync)")
 
         # Cache acquisition data
         try:
