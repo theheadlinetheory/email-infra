@@ -76,6 +76,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .chart-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11px; color: #94a3b8; }
 .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .chart-empty { text-align: center; color: #64748b; padding: 30px 0; font-size: 13px; }
+.chart-tooltip { position: fixed; background: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 10px 14px; font-size: 12px; pointer-events: none; z-index: 1100; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.chart-tooltip .tt-date { color: #94a3b8; font-weight: 600; margin-bottom: 6px; }
+.chart-tooltip .tt-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.chart-tooltip .tt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.chart-tooltip .tt-val { font-weight: 600; }
 
 /* Detail sections */
 .detail-header { font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 20px; margin-bottom: 8px; }
@@ -133,6 +138,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="cards-grid" id="acq-grid"></div>
 </div>
 
+<div class="chart-tooltip" id="chart-tooltip"></div>
 <div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal()">
     <div class="modal-content" onclick="event.stopPropagation()">
         <button class="modal-close" onclick="closeModal()">&times;</button>
@@ -501,8 +507,7 @@ function renderChart(groupKey, range) {
 
         // Dots
         for (var i = 0; i < valid.length; i++) {
-            s += '<circle cx="' + valid[i].x + '" cy="' + valid[i].y + '" r="3.5" fill="#0f1117" stroke="' + color + '" stroke-width="2"/>';
-            s += '<title>' + pts[valid[i].idx].date + ': ' + valid[i].val + '%</title>';
+            s += '<circle cx="' + valid[i].x + '" cy="' + valid[i].y + '" r="3.5" fill="#0f1117" stroke="' + color + '" stroke-width="2" class="chart-dot" data-idx="' + valid[i].idx + '"/>';
         }
         return s;
     }
@@ -514,8 +519,72 @@ function renderChart(groupKey, range) {
     svg += '<line x1="' + pad.left + '" y1="' + pad.top + '" x2="' + pad.left + '" y2="' + (pad.top + ch) + '" stroke="#2a2d38" stroke-width="1"/>';
     svg += '<line x1="' + pad.left + '" y1="' + (pad.top + ch) + '" x2="' + (w - pad.right) + '" y2="' + (pad.top + ch) + '" stroke="#2a2d38" stroke-width="1"/>';
 
+    // Invisible hover zones per date (full height, shows tooltip with both values)
+    var colW = n > 1 ? cw / (n - 1) : cw;
+    for (var i = 0; i < n; i++) {
+        var cx = xPos(i);
+        var rx = n > 1 ? cx - colW / 2 : pad.left;
+        var rw = n > 1 ? colW : cw;
+        svg += '<rect x="' + rx + '" y="' + pad.top + '" width="' + rw + '" height="' + ch + '" fill="transparent" data-i="' + i + '" style="cursor:crosshair"/>';
+        // Hover line (hidden by default, shown via JS)
+        svg += '<line x1="' + cx + '" y1="' + pad.top + '" x2="' + cx + '" y2="' + (pad.top + ch) + '" stroke="#475569" stroke-width="1" stroke-dasharray="3,3" class="hover-line" data-i="' + i + '" style="opacity:0"/>';
+    }
+
     svg += '</svg>';
     el.innerHTML = svg;
+
+    // Store points for tooltip access
+    el._chartPoints = points;
+
+    // Bind hover events
+    var rects = el.querySelectorAll('rect[data-i]');
+    for (var i = 0; i < rects.length; i++) {
+        rects[i].addEventListener('mouseenter', chartHoverIn);
+        rects[i].addEventListener('mousemove', chartHoverMove);
+        rects[i].addEventListener('mouseleave', chartHoverOut);
+    }
+}
+
+function chartHoverIn(e) {
+    var idx = parseInt(e.target.getAttribute('data-i'));
+    var el = document.getElementById('chart-area');
+    var pts = el ? el._chartPoints : null;
+    if (!pts || !pts[idx]) return;
+    // Show hover line
+    var lines = el.querySelectorAll('.hover-line[data-i="' + idx + '"]');
+    for (var i = 0; i < lines.length; i++) lines[i].style.opacity = '1';
+    // Enlarge dots for this index
+    var dots = el.querySelectorAll('.chart-dot[data-idx="' + idx + '"]');
+    for (var i = 0; i < dots.length; i++) dots[i].setAttribute('r', '5');
+    // Build tooltip
+    var p = pts[idx];
+    var tt = document.getElementById('chart-tooltip');
+    tt.innerHTML = '<div class="tt-date">' + p.date + '</div>' +
+        '<div class="tt-row"><span class="tt-dot" style="background:#f97316"></span><span style="color:#94a3b8">Bounce</span><span class="tt-val" style="color:#f97316">' + (p.bounce != null ? p.bounce + '%' : '—') + '</span></div>' +
+        '<div class="tt-row"><span class="tt-dot" style="background:#22c55e"></span><span style="color:#94a3b8">Reply</span><span class="tt-val" style="color:#22c55e">' + (p.reply != null ? p.reply + '%' : '—') + '</span></div>';
+    tt.style.display = 'block';
+}
+
+function chartHoverMove(e) {
+    var tt = document.getElementById('chart-tooltip');
+    if (tt.style.display !== 'block') return;
+    var x = e.clientX + 16;
+    var y = e.clientY - 10;
+    if (x + 160 > window.innerWidth) x = e.clientX - 170;
+    tt.style.left = x + 'px';
+    tt.style.top = y + 'px';
+}
+
+function chartHoverOut(e) {
+    var idx = parseInt(e.target.getAttribute('data-i'));
+    var el = document.getElementById('chart-area');
+    // Hide hover line
+    var lines = el.querySelectorAll('.hover-line[data-i="' + idx + '"]');
+    for (var i = 0; i < lines.length; i++) lines[i].style.opacity = '0';
+    // Reset dots
+    var dots = el.querySelectorAll('.chart-dot[data-idx="' + idx + '"]');
+    for (var i = 0; i < dots.length; i++) dots[i].setAttribute('r', '3.5');
+    document.getElementById('chart-tooltip').style.display = 'none';
 }
 
 /* ── Detail sections (used inside modal) ── */
