@@ -124,6 +124,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .kanban-card-meta { font-size: 11px; color: #64748b; display: flex; gap: 10px; }
 .kanban-card.dragging { opacity: 0.5; }
 .kanban-col.drag-over { border-color: #22c55e; background: rgba(34,197,94,0.05); }
+.kanban-col-available { border-color: #1e4620; }
+.kanban-section-label { padding: 16px 24px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #475569; }
 </style>
 </head>
 <body>
@@ -369,9 +371,11 @@ function renderKanban() {
 
     var campMap = {};
     var available = [];
+    var groupCampCount = {};
     for (var i = 0; i < groups.length; i++) {
         var g = groups[i];
         var camps = g.campaigns || [];
+        groupCampCount[g.name] = camps.length;
         if (!camps.length) { available.push(g); continue; }
         for (var j = 0; j < camps.length; j++) {
             var c = camps[j];
@@ -380,40 +384,48 @@ function renderKanban() {
         }
     }
 
-    var columns = Object.values(campMap).sort(function(a, b) { return a.name.localeCompare(b.name); });
+    var allCols = Object.values(campMap);
+    var activeCols = allCols.filter(function(c) { return c.status === 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+    var pausedCols = allCols.filter(function(c) { return c.status !== 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
 
     function kanbanCard(g, isLocked) {
         var lockIcon = isLocked ? '<span style="color:#22c55e;font-size:11px;">&#128274;</span>' : '';
+        var multiFlag = groupCampCount[g.name] > 1 ? '<span style="color:#f59e0b;font-size:10px;margin-left:auto;" title="In ' + groupCampCount[g.name] + ' campaigns">&#9888; ' + groupCampCount[g.name] + ' campaigns</span>' : '';
         return '<div class="kanban-card' + (isLocked ? ' locked' : '') + '" draggable="' + (!isLocked) + '" data-group="' + esc(g.name) + '">' +
-            '<div class="kanban-card-name">' + lockIcon + esc(g.name) + '</div>' +
+            '<div class="kanban-card-name">' + lockIcon + esc(g.name) + multiFlag + '</div>' +
             '<div class="kanban-card-meta"><span>' + g.accounts + ' accts</span><span>' + (g.daily_capacity || 0) + '/day</span></div>' +
         '</div>';
     }
 
-    var html = '<div class="kanban-wrap">';
-
-    for (var ci = 0; ci < columns.length; ci++) {
-        var col = columns[ci];
+    function renderCol(col) {
         var statusCls = col.status === 'ACTIVE' ? 'active' : 'paused';
-        var statusLabel = col.status === 'ACTIVE' ? 'ACTIVE' : (col.status === 'PAUSED' ? 'PAUSED' : col.status);
+        var statusLabel = col.status || 'UNKNOWN';
         var displayName = col.name.replace(/^acquisition\s*/i, '').trim() || col.name;
-        html += '<div class="kanban-col" data-campaign-id="' + col.id + '">' +
+        var h = '<div class="kanban-col" data-campaign-id="' + col.id + '">' +
             '<div class="kanban-col-header"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
             '<div class="kanban-col-body">';
         for (var gi = 0; gi < col.groups.length; gi++) {
-            var isLocked = col.status === 'ACTIVE';
-            html += kanbanCard(col.groups[gi], isLocked);
+            h += kanbanCard(col.groups[gi], col.status === 'ACTIVE');
         }
-        html += '</div></div>';
+        return h + '</div></div>';
     }
 
-    html += '<div class="kanban-col" data-campaign-id="available">' +
-        '<div class="kanban-col-header"><span>Available</span><span class="kanban-col-count">' + available.length + '</span></div>' +
-        '<div class="kanban-col-body">';
-    for (var ai = 0; ai < available.length; ai++) {
-        html += kanbanCard(available[ai], false);
+    var html = '';
+    if (activeCols.length || available.length) {
+        html += '<div class="kanban-section-label">Active Campaigns</div><div class="kanban-wrap">';
+        html += '<div class="kanban-col kanban-col-available" data-campaign-id="available">' +
+            '<div class="kanban-col-header"><span class="kanban-col-name">Available</span><span class="kanban-col-count">' + available.length + ' groups</span></div>' +
+            '<div class="kanban-col-body">';
+        for (var ai = 0; ai < available.length; ai++) html += kanbanCard(available[ai], false);
+        html += '</div></div>';
+        for (var ci = 0; ci < activeCols.length; ci++) html += renderCol(activeCols[ci]);
+        html += '</div>';
     }
-    html += '</div></div></div>';
+    if (pausedCols.length) {
+        html += '<div class="kanban-section-label">Paused / Completed</div><div class="kanban-wrap">';
+        for (var pi = 0; pi < pausedCols.length; pi++) html += renderCol(pausedCols[pi]);
+        html += '</div>';
+    }
 
     board.innerHTML = html;
     initKanbanDragDrop();
