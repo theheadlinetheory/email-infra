@@ -119,18 +119,18 @@ def _resolve_group_account_ids(group_name):
     account_ids = []
     offset = 0
     while True:
-        r = req.get(f"{sl}/email-accounts/", params={"api_key": sl_key, "offset": offset, "limit": 100}, timeout=30)
+        r = req.get(f"{sl}/email-accounts/", params={"api_key": sl_key, "offset": offset, "limit": 500}, timeout=60)
         if not r or r.status_code != 200:
             break
         batch = r.json() if r.text.strip() else []
         if not batch:
             break
         for acct in batch:
-            if acct.get("email_account", "").lower() in emails:
+            if acct.get("from_email", "").lower() in emails:
                 account_ids.append(acct["id"])
-        if len(account_ids) >= len(emails):
+        if len(account_ids) >= len(emails) or len(batch) < 500:
             break
-        offset += 100
+        offset += 500
     if not account_ids:
         return None, "Could not resolve IDs for " + group_name
     return account_ids, None
