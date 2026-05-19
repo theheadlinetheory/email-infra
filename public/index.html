@@ -228,25 +228,29 @@ function renderGeneric() {
     var groups = data.generic_groups || [];
     var grid = document.getElementById('generic-grid');
     if (!groups.length) { grid.innerHTML = '<div class="empty-state">No generic reserve groups.</div>'; return; }
+    var activeClientNames = {};
+    (data.clients || []).forEach(function(c) { activeClientNames[c.name.toLowerCase()] = 1; });
+    (data.crm_clients || []).forEach(function(n) { activeClientNames[n.toLowerCase()] = 1; });
     grid.innerHTML = groups.map(function(g, i) {
         var camps = g.campaigns || [];
         var clientNames = {};
         for (var ci = 0; ci < camps.length; ci++) {
             var cn = camps[ci].name.replace(/\s*#\d.*/,'').replace(/\s*[-–]\s*.*/,'').replace(/\s*(campaign|cold|email|outreach|subsequence|list \d).*/i,'').trim();
-            if (cn && !cn.match(/^(acquisition|acq)/i)) clientNames[cn] = 1;
+            if (cn && !cn.match(/^(acquisition|acq)/i) && activeClientNames[cn.toLowerCase()]) clientNames[cn] = 1;
         }
         var names = Object.keys(clientNames);
         var badgeText = names.length > 2 ? names.length + ' clients' : names.length > 0 ? names.join(', ') : '';
+        var oversized = g.accounts > 45;
+        var badges = '';
+        if (oversized) badges += '<span class="acq-badge" style="background:#fef2f2;color:#dc2626;">⚠ ' + g.accounts + ' accounts</span>';
+        if (badgeText) badges += '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(badgeText) + '</span>';
+        else if (!oversized) badges += '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">Reserve</span>';
         return '<div class="acq-card" onclick="openModal(\'generic\',' + i + ')">' +
             '<div class="acq-header">' +
-                '<span class="acq-name">' + esc(g.name) + '</span>' +
-                (badgeText ?
-                    '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;">' + esc(badgeText) + '</span>' :
-                    '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">Reserve</span>'
-                ) +
+                '<span class="acq-name">' + esc(g.name) + '</span>' + badges +
             '</div>' +
             '<div class="card-stats">' +
-                cardStat('Accounts', g.accounts) +
+                cardStat('Accounts', g.accounts, oversized ? 'bad' : '') +
                 cardStat('Domains', g.total_domains || 0) +
                 cardStat('Capacity', (g.daily_capacity || 0) + '/day') +
                 cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'warn' : 'good') +
