@@ -97,6 +97,45 @@ def health_history():
     return _cors(jsonify(history or []))
 
 
+def _resolve_group_account_ids(group_name):
+    """Look up SmartLead account IDs for a group by matching emails."""
+    import requests as req
+    sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
+    if not sl_key:
+        return None, "API key not configured"
+    data, _ = _get_cache("overview_v2")
+    if not data:
+        return None, "No cached data"
+    emails = set()
+    for section in ["acquisition_groups", "generic_groups"]:
+        for g in (data.get(section) or []):
+            if g.get("name") == group_name:
+                for a in (g.get("account_details") or []):
+                    if a.get("email"):
+                        emails.add(a["email"].lower())
+    if not emails:
+        return None, "No accounts found for group " + group_name
+    sl = "https://server.smartlead.ai/api/v1"
+    account_ids = []
+    offset = 0
+    while True:
+        r = req.get(f"{sl}/email-accounts/", params={"api_key": sl_key, "offset": offset, "limit": 100}, timeout=30)
+        if not r or r.status_code != 200:
+            break
+        batch = r.json() if r.text.strip() else []
+        if not batch:
+            break
+        for acct in batch:
+            if acct.get("email_account", "").lower() in emails:
+                account_ids.append(acct["id"])
+        if len(account_ids) >= len(emails):
+            break
+        offset += 100
+    if not account_ids:
+        return None, "Could not resolve IDs for " + group_name
+    return account_ids, None
+
+
 @app.route("/api/assign-group", methods=["POST", "OPTIONS"])
 def assign_group():
     if request.method == "OPTIONS":
@@ -110,21 +149,10 @@ def assign_group():
     if not group_name or not campaign_id:
         return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
-    if not sl_key:
-        return _cors(jsonify({"error": "API key not configured"})), 500
+    account_ids, err = _resolve_group_account_ids(group_name)
+    if err:
+        return _cors(jsonify({"error": err})), 404 if "No accounts" in err or "Could not" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
-    data, _ = _get_cache("overview_v2")
-    if not data:
-        return _cors(jsonify({"error": "No cached data"})), 500
-    account_ids = []
-    for section in ["acquisition_groups", "generic_groups"]:
-        for g in (data.get(section) or []):
-            if g.get("name") == group_name:
-                for a in (g.get("account_details") or []):
-                    if a.get("id"):
-                        account_ids.append(a["id"])
-    if not account_ids:
-        return _cors(jsonify({"error": "No account IDs found for group " + group_name})), 404
     r = req.post(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                  json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
@@ -146,21 +174,10 @@ def unassign_group():
     if not group_name or not campaign_id:
         return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
-    if not sl_key:
-        return _cors(jsonify({"error": "API key not configured"})), 500
+    account_ids, err = _resolve_group_account_ids(group_name)
+    if err:
+        return _cors(jsonify({"error": err})), 404 if "No accounts" in err or "Could not" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
-    data, _ = _get_cache("overview_v2")
-    if not data:
-        return _cors(jsonify({"error": "No cached data"})), 500
-    account_ids = []
-    for section in ["acquisition_groups", "generic_groups"]:
-        for g in (data.get(section) or []):
-            if g.get("name") == group_name:
-                for a in (g.get("account_details") or []):
-                    if a.get("id"):
-                        account_ids.append(a["id"])
-    if not account_ids:
-        return _cors(jsonify({"error": "No account IDs found for group " + group_name})), 404
     r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts",
                    params={"api_key": sl_key},
                    json={"email_account_ids": account_ids}, timeout=30)
