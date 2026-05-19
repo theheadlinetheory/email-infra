@@ -555,7 +555,7 @@ function initKanbanDragDrop() {
                     body.appendChild(card);
                     alert(d.assigned + ' accounts assigned to ' + targetName + '.\n\nREMINDER: Go to SmartLead and reallocate inboxes on this campaign.');
                 } else {
-                    alert('Failed: ' + JSON.stringify(d, null, 2));
+                    alert('Failed: ' + (d.error || 'Unknown error'));
                 }
             }).catch(function(err) {
                 card.style.opacity = '1';
@@ -579,7 +579,7 @@ function removeGroupFromCampaign(groupName, campaignId, btn) {
             card.remove();
             alert(d.removed + ' accounts removed.\n\nREMINDER: Go to SmartLead and reallocate inboxes on this campaign.');
         } else {
-            alert('Failed: ' + JSON.stringify(d, null, 2));
+            alert('Failed: ' + (d.error || 'Unknown error'));
         }
     }).catch(function(err) {
         card.style.opacity = '1';

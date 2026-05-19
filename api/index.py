@@ -65,6 +65,11 @@ def serve_js(f):
     return send_from_directory(os.path.join(_PUBLIC_DIR, "js"), f)
 
 
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
+
+
 @app.route("/api/healthz")
 def healthz():
     return "ok-v2-cache-readonly", 200
@@ -142,11 +147,7 @@ def assign_group():
     if r.status_code == 200:
         return _cors(jsonify({"ok": True, "assigned": len(account_ids),
                               "message": f"Assigned {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
-    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}",
-                          "detail": r.text[:300],
-                          "key_len": len(sl_key),
-                          "ids_count": len(account_ids),
-                          "campaign_id": campaign_id})), 502
+    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
 
 
 @app.route("/api/unassign-group", methods=["POST", "OPTIONS"])
@@ -173,11 +174,7 @@ def unassign_group():
     if r.status_code == 200:
         return _cors(jsonify({"ok": True, "removed": len(account_ids),
                               "message": f"Removed {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
-    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}",
-                          "detail": r.text[:300],
-                          "key_len": len(sl_key),
-                          "ids_count": len(account_ids),
-                          "campaign_id": campaign_id})), 502
+    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
 
 
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
