@@ -131,6 +131,8 @@ def assign_group():
     if not group_name or not campaign_id:
         return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
+    if not sl_key:
+        return _cors(jsonify({"error": "SMARTLEAD_API_KEY not configured"})), 500
     account_ids, err = _resolve_group_account_ids(group_name)
     if err:
         return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
@@ -140,7 +142,11 @@ def assign_group():
     if r.status_code == 200:
         return _cors(jsonify({"ok": True, "assigned": len(account_ids),
                               "message": f"Assigned {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
-    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}", "detail": r.text[:300]})), 502
+    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}",
+                          "detail": r.text[:300],
+                          "key_len": len(sl_key),
+                          "ids_count": len(account_ids),
+                          "campaign_id": campaign_id})), 502
 
 
 @app.route("/api/unassign-group", methods=["POST", "OPTIONS"])
@@ -160,12 +166,18 @@ def unassign_group():
     if err:
         return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
+    if not sl_key:
+        return _cors(jsonify({"error": "SMARTLEAD_API_KEY not configured"})), 500
     r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                    json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
         return _cors(jsonify({"ok": True, "removed": len(account_ids),
                               "message": f"Removed {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
-    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}", "detail": r.text[:300]})), 502
+    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}",
+                          "detail": r.text[:300],
+                          "key_len": len(sl_key),
+                          "ids_count": len(account_ids),
+                          "campaign_id": campaign_id})), 502
 
 
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
