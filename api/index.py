@@ -98,16 +98,15 @@ def health_history():
 
 
 def _resolve_group_account_ids(group_name, campaign_id=None):
-    """Look up SmartLead account IDs for a group by matching emails.
-
-    If campaign_id is provided, fetches accounts from that campaign (fast).
-    Otherwise fetches all accounts in batches (slower).
-    """
+    """Look up SmartLead account IDs for a group by matching emails."""
     import requests as req
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
     if not sl_key:
         return None, "API key not configured"
-    data, _ = _get_cache("overview_v2")
+    try:
+        data, _ = _get_cache("overview_v2")
+    except Exception as e:
+        return None, f"Cache error: {e}"
     if not data:
         return None, "No cached data"
     emails = set()
@@ -118,34 +117,46 @@ def _resolve_group_account_ids(group_name, campaign_id=None):
                     if a.get("email"):
                         emails.add(a["email"].lower())
     if not emails:
-        return None, "No accounts found for group " + group_name
+        all_names = [g.get("name") for s in ["acquisition_groups", "generic_groups"] for g in (data.get(s) or [])]
+        return None, f"No accounts for '{group_name}'. Groups: {all_names}"
     sl = "https://server.smartlead.ai/api/v1"
     account_ids = []
     if campaign_id:
-        r = req.get(f"{sl}/campaigns/{campaign_id}/email-accounts",
-                    params={"api_key": sl_key}, timeout=30)
-        if r and r.status_code == 200:
-            for acct in (r.json() if r.text.strip() else []):
-                email = (acct.get("from_email") or acct.get("email") or "").lower()
-                if email in emails:
-                    account_ids.append(acct["id"])
+        try:
+            r = req.get(f"{sl}/campaigns/{campaign_id}/email-accounts",
+                        params={"api_key": sl_key}, timeout=30)
+            if r and r.status_code == 200:
+                camp_accts = r.json() if r.text.strip() else []
+                for acct in camp_accts:
+                    email = (acct.get("from_email") or acct.get("email") or "").lower()
+                    if email in emails:
+                        account_ids.append(acct["id"])
+                if not account_ids and camp_accts:
+                    sample_camp = camp_accts[0].get("from_email", "?")
+                    sample_cache = list(emails)[0] if emails else "?"
+                    return None, f"0/{len(camp_accts)} matched. Campaign sample: {sample_camp}, Cache sample: {sample_cache}"
+        except Exception as e:
+            return None, f"Campaign fetch error: {e}"
     if not account_ids:
-        offset = 0
-        while offset < 2000:
-            r = req.get(f"{sl}/email-accounts/", params={"api_key": sl_key, "offset": offset, "limit": 100}, timeout=30)
-            if not r or r.status_code != 200:
-                break
-            batch = r.json() if r.text.strip() else []
-            if not batch:
-                break
-            for acct in batch:
-                if acct.get("from_email", "").lower() in emails:
-                    account_ids.append(acct["id"])
-            if len(account_ids) >= len(emails) or len(batch) < 100:
-                break
-            offset += 100
+        try:
+            offset = 0
+            while offset < 2000:
+                r = req.get(f"{sl}/email-accounts/", params={"api_key": sl_key, "offset": offset, "limit": 100}, timeout=30)
+                if not r or r.status_code != 200:
+                    break
+                batch = r.json() if r.text.strip() else []
+                if not batch:
+                    break
+                for acct in batch:
+                    if acct.get("from_email", "").lower() in emails:
+                        account_ids.append(acct["id"])
+                if len(account_ids) >= len(emails) or len(batch) < 100:
+                    break
+                offset += 100
+        except Exception as e:
+            return None, f"Batch fetch error: {e}"
     if not account_ids:
-        return None, "Could not resolve IDs for " + group_name
+        return None, f"Could not resolve IDs for {group_name} ({len(emails)} emails)"
     return account_ids, None
 
 
