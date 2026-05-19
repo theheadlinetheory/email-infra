@@ -102,7 +102,7 @@ def health_history():
     return _cors(jsonify(history or []))
 
 
-def _update_cache_campaigns(group_name, campaign_name, action):
+def _update_cache_campaigns(group_name, campaign_id, campaign_name, action):
     """Patch overview_v2 cache after assign/unassign so changes persist."""
     import db as store
     try:
@@ -111,27 +111,41 @@ def _update_cache_campaigns(group_name, campaign_name, action):
             return
         for section in ["acquisition_groups", "generic_groups"]:
             for g in (data.get(section) or []):
-                if g.get("name") == group_name:
-                    for a in (g.get("account_details") or []):
-                        names = a.get("campaign_names", [])
-                        if action == "add" and campaign_name not in names:
-                            names.append(campaign_name)
-                        elif action == "remove" and campaign_name in names:
-                            names.remove(campaign_name)
-                        a["campaign_names"] = names
-                        a["in_campaign"] = len(names) > 0
+                if g.get("name") != group_name:
+                    continue
+                camps = g.get("campaigns", [])
+                if action == "remove":
+                    g["campaigns"] = [c for c in camps if c.get("id") != campaign_id]
+                elif action == "add":
+                    if not any(c.get("id") == campaign_id for c in camps):
+                        status = "ACTIVE"
+                        for s in (data.get("acq_campaign_stats") or []):
+                            if s.get("id") == campaign_id:
+                                status = s.get("status", "ACTIVE")
+                                break
+                        camps.append({"id": campaign_id, "name": campaign_name,
+                                      "status": status, "accounts": len(g.get("account_details", []))})
+                        g["campaigns"] = camps
+                for a in (g.get("account_details") or []):
+                    names = a.get("campaign_names", [])
+                    if action == "add" and campaign_name not in names:
+                        names.append(campaign_name)
+                    elif action == "remove" and campaign_name in names:
+                        names.remove(campaign_name)
+                    a["campaign_names"] = names
+                    a["in_campaign"] = len(names) > 0
         store.cache_patch("overview_v2", data)
     except Exception:
         pass
 
 
 def _get_campaign_name(campaign_id):
-    """Look up campaign name from cached acq_campaigns."""
+    """Look up campaign name from cached acq_campaign_stats."""
     try:
         data, _ = _get_cache("overview_v2")
         if not data:
             return str(campaign_id)
-        for c in (data.get("acq_campaigns") or []):
+        for c in (data.get("acq_campaign_stats") or []):
             if c.get("id") == campaign_id:
                 return c.get("name", str(campaign_id))
     except Exception:
@@ -183,7 +197,7 @@ def assign_group():
                  json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
         camp_name = _get_campaign_name(campaign_id)
-        _update_cache_campaigns(group_name, camp_name, "add")
+        _update_cache_campaigns(group_name, campaign_id, camp_name, "add")
         return _cors(jsonify({"ok": True, "assigned": len(account_ids),
                               "message": f"Assigned {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
     return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
@@ -212,7 +226,7 @@ def unassign_group():
                    json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
         camp_name = _get_campaign_name(campaign_id)
-        _update_cache_campaigns(group_name, camp_name, "remove")
+        _update_cache_campaigns(group_name, campaign_id, camp_name, "remove")
         return _cors(jsonify({"ok": True, "removed": len(account_ids),
                               "message": f"Removed {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
     return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
