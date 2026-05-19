@@ -122,6 +122,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .camp-group-tag { background: #1e293b; border: 1px solid #2a2d38; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #e2e8f0; }
 .kanban-col-header.clickable { cursor: pointer; transition: background 0.15s; }
 .kanban-col-header.clickable:hover { background: rgba(34,197,94,0.08); }
+.kanban-remove-btn { background: none; border: none; color: #64748b; font-size: 14px; cursor: pointer; padding: 0 2px; margin-left: 4px; line-height: 1; flex-shrink: 0; border-radius: 3px; transition: all 0.15s; }
+.kanban-remove-btn:hover { color: #fff; background: #ef4444; }
 
 .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: #94a3b8; }
 .empty-state { padding: 40px 24px; text-align: center; color: #64748b; }
@@ -455,12 +457,13 @@ function renderKanban() {
     var activeCols = allCols.filter(function(c) { return c.status === 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
     var pausedCols = allCols.filter(function(c) { return c.status !== 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
 
-    function kanbanCard(g) {
+    function kanbanCard(g, campId) {
         var isLars = (g.name || '').match(/\bG\b/);
         var persona = isLars ? '<span style="background:#7c3aed;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:4px;" title="Lars">L</span>' : '<span style="background:#3b82f6;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:4px;" title="Aidan">A</span>';
         var multiFlag = groupCampCount[g.name] > 1 ? '<span style="color:#f59e0b;font-size:10px;margin-left:auto;" title="In ' + groupCampCount[g.name] + ' campaigns">&#9888; ' + groupCampCount[g.name] + ' campaigns</span>' : '';
+        var removeBtn = campId ? '<button class="kanban-remove-btn" onclick="event.stopPropagation();removeGroupFromCampaign(\'' + esc(g.name).replace(/'/g, "\\'") + '\',' + campId + ',this)" title="Remove from campaign">&times;</button>' : '';
         return '<div class="kanban-card" draggable="true" data-group="' + esc(g.name) + '">' +
-            '<div class="kanban-card-name">' + persona + esc(g.name) + multiFlag + '</div>' +
+            '<div class="kanban-card-name">' + persona + esc(g.name) + multiFlag + removeBtn + '</div>' +
             '<div class="kanban-card-meta"><span>' + g.accounts + ' accts</span><span>' + (g.daily_capacity || 0) + '/day</span></div>' +
         '</div>';
     }
@@ -473,7 +476,7 @@ function renderKanban() {
             '<div class="kanban-col-header clickable" onclick="openCampaignModal(' + col.id + ')"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
             '<div class="kanban-col-body">';
         for (var gi = 0; gi < col.groups.length; gi++) {
-            h += kanbanCard(col.groups[gi]);
+            h += kanbanCard(col.groups[gi], col.id);
         }
         return h + '</div></div>';
     }
@@ -560,6 +563,28 @@ function initKanbanDragDrop() {
             });
         });
     }
+}
+
+function removeGroupFromCampaign(groupName, campaignId, btn) {
+    if (!confirm('Remove ' + groupName + ' from this campaign?')) return;
+    var card = btn.closest('.kanban-card');
+    card.style.opacity = '0.5';
+    fetch('/api/unassign-group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_name: groupName, campaign_id: campaignId })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        card.style.opacity = '1';
+        if (d.ok) {
+            card.remove();
+            alert(d.removed + ' accounts removed.\n\nREMINDER: Go to SmartLead and reallocate inboxes on this campaign.');
+        } else {
+            alert('Failed: ' + (d.error || 'Unknown error'));
+        }
+    }).catch(function(err) {
+        card.style.opacity = '1';
+        alert('Network error: ' + err.message);
+    });
 }
 
 var cardGroups = {};
