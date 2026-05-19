@@ -255,21 +255,65 @@ function renderGeneric() {
     }).join('');
 }
 
+var acqUtilMode = '7d';
+
+function getAcqDaySent(dateStr) {
+    if (!historyData || !historyData.length) return null;
+    for (var i = 0; i < historyData.length; i++) {
+        if (historyData[i].date === dateStr) {
+            var total = 0;
+            var groups = data.acquisition_groups || [];
+            for (var j = 0; j < groups.length; j++) {
+                var gd = (historyData[i].groups || {})[groups[j].name];
+                if (gd) total += gd.sent || 0;
+            }
+            return total;
+        }
+    }
+    return null;
+}
+
+function renderUtilBar() {
+    var groups = data.acquisition_groups || [];
+    var total = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
+    var dailyCapacity = total * 15;
+    var sent, label;
+    if (acqUtilMode === 'today') {
+        var today = new Date().toISOString().slice(0, 10);
+        sent = getAcqDaySent(today);
+        label = sent != null ? sent.toLocaleString() + ' sent today' : 'No data for today yet';
+    } else if (acqUtilMode === 'yesterday') {
+        var d = new Date(); d.setDate(d.getDate() - 1);
+        var yest = d.toISOString().slice(0, 10);
+        sent = getAcqDaySent(yest);
+        label = sent != null ? sent.toLocaleString() + ' sent yesterday' : 'No data for yesterday';
+    } else {
+        var totalSent7d = groups.reduce(function(s, g) { return s + (g.total_sent || 0); }, 0);
+        sent = Math.round(totalSent7d / 7);
+        label = sent.toLocaleString() + ' emails/day (7-day avg)';
+    }
+    var utilPct = (dailyCapacity > 0 && sent != null) ? Math.round((sent / dailyCapacity) * 100) : 0;
+    var utilColor = utilPct >= 60 ? '#22c55e' : utilPct >= 30 ? '#f59e0b' : '#ef4444';
+    var modes = [['today','Today'],['yesterday','Yesterday'],['7d','7D Avg']];
+    var btns = '<div style="display:flex;gap:4px;">';
+    for (var i = 0; i < modes.length; i++) {
+        btns += '<button class="time-btn' + (acqUtilMode === modes[i][0] ? ' active' : '') + '" onclick="acqUtilMode=\'' + modes[i][0] + '\';renderUtilBar()">' + modes[i][1] + '</button>';
+    }
+    btns += '</div>';
+    document.getElementById('acq-util-bar').innerHTML =
+        '<div class="util-bar-container">' +
+            '<div class="util-bar-header"><span class="util-bar-title">Acquisition Sending</span>' + btns + '</div>' +
+            '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;"><span class="util-bar-pct" style="color:' + utilColor + '">' + utilPct + '%</span><span style="font-size:13px;color:#94a3b8;">of capacity</span></div>' +
+            '<div class="util-bar-track"><div class="util-bar-fill" style="width:' + Math.min(utilPct, 100) + '%;background:' + utilColor + '"></div></div>' +
+            '<div class="util-bar-labels"><span>' + label + '</span><span>' + dailyCapacity.toLocaleString() + '/day capacity</span></div>' +
+        '</div>';
+}
+
 function renderAcquisition() {
     var groups = data.acquisition_groups || [];
     var total = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
     var inCamp = groups.reduce(function(s, g) { return s + g.in_campaign; }, 0);
-    var totalSent7d = groups.reduce(function(s, g) { return s + (g.total_sent || 0); }, 0);
-    var dailyAvgSent = Math.round(totalSent7d / 7);
-    var dailyCapacity = total * 15;
-    var utilPct = dailyCapacity > 0 ? Math.round((dailyAvgSent / dailyCapacity) * 100) : 0;
-    var utilColor = utilPct >= 60 ? '#22c55e' : utilPct >= 30 ? '#f59e0b' : '#ef4444';
-    document.getElementById('acq-util-bar').innerHTML =
-        '<div class="util-bar-container">' +
-            '<div class="util-bar-header"><span class="util-bar-title">Daily Acquisition Sending</span><span class="util-bar-pct" style="color:' + utilColor + '">' + utilPct + '%</span></div>' +
-            '<div class="util-bar-track"><div class="util-bar-fill" style="width:' + Math.min(utilPct, 100) + '%;background:' + utilColor + '"></div></div>' +
-            '<div class="util-bar-labels"><span>' + dailyAvgSent.toLocaleString() + ' emails/day (7-day avg)</span><span>' + dailyCapacity.toLocaleString() + '/day capacity</span></div>' +
-        '</div>';
+    renderUtilBar();
     document.getElementById('acq-stats').innerHTML =
         statBox(groups.length, 'Acquisition Groups') +
         statBox(total, 'Total Accounts') +
