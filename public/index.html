@@ -375,7 +375,8 @@ function getModalInfo() {
     }
     if (s.type === 'generic') {
         var g = data.generic_groups[s.idx];
-        return { name: g.name, accounts: g.accounts, hasB: false, badge: null, chartKey: g.name };
+        var oversized = g.accounts > 45;
+        return { name: g.name, accounts: g.accounts, hasB: false, badge: oversized ? '⚠ Oversized' : null, badgeClass: '', badgeStyle: oversized ? 'background:#fef2f2;color:#dc2626;' : '', chartKey: g.name };
     }
     if (s.type === 'acq') {
         var g = data.acquisition_groups[s.idx];
@@ -408,7 +409,7 @@ function renderModal() {
 
     var html = '<div class="modal-header"><div><div class="modal-name">' + esc(info.name) + '</div>' +
         '<div class="modal-meta">' + info.accounts + ' accounts</div></div>';
-    if (info.badge) html += '<span class="acq-badge ' + info.badgeClass + '" style="font-size:13px;padding:4px 12px;">' + info.badge + '</span>';
+    if (info.badge) html += '<span class="acq-badge ' + (info.badgeClass || '') + '" style="font-size:13px;padding:4px 12px;' + (info.badgeStyle || '') + '">' + info.badge + '</span>';
     html += '</div>';
 
     if (info.hasB) {
