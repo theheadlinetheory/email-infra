@@ -531,13 +531,7 @@ function initKanbanDragDrop() {
             e.preventDefault();
             this.parentElement.classList.remove('drag-over');
             if (!draggedCard) return;
-            var groupName = draggedCard.getAttribute('data-group');
-            var targetCampaignId = this.parentElement.getAttribute('data-campaign-id');
-            var targetName = this.parentElement.querySelector('.kanban-col-header span').textContent;
-            var action = targetCampaignId === 'available' ? 'unassign from campaign' : 'assign to ' + targetName;
-            if (confirm('Move ' + groupName + ' → ' + action + '?\n\nREMINDER: After moving, you MUST reallocate inboxes in SmartLead so lead threads transfer to healthy accounts.')) {
-                alert('Campaign assignment API coming soon. For now, make this change directly in SmartLead.');
-            }
+            this.appendChild(draggedCard);
         });
     }
 }
