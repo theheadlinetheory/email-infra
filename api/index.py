@@ -89,6 +89,14 @@ def overview():
     return _cors(jsonify({"loading": True, "clients": [], "total_accounts": 0}))
 
 
+@app.route("/api/health-history")
+def health_history():
+    if not _check_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+    history, _ = _get_cache("health_history")
+    return _cors(jsonify(history or []))
+
+
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
 def catch_all(path):
     if request.method == "OPTIONS":

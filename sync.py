@@ -371,6 +371,27 @@ def sync():
     store.cache_set("overview_v2", overview)
     print(f"  Cache written: {client_count} clients")
 
+    # Store daily health snapshot for trend charts
+    today = datetime.now().strftime("%Y-%m-%d")
+    snapshot = {"date": today, "groups": {}}
+    for c in overview["clients"]:
+        snapshot["groups"][c["name"]] = {"bounce": c.get("avg_bounce_rate"), "reply": c.get("avg_reply_rate"), "sent": c.get("total_sent", 0)}
+        if c.get("group_a"):
+            snapshot["groups"][c["name"] + " A"] = {"bounce": c["group_a"].get("avg_bounce_rate"), "reply": c["group_a"].get("avg_reply_rate"), "sent": c["group_a"].get("total_sent", 0)}
+        if c.get("group_b"):
+            snapshot["groups"][c["name"] + " B"] = {"bounce": c["group_b"].get("avg_bounce_rate"), "reply": c["group_b"].get("avg_reply_rate"), "sent": c["group_b"].get("total_sent", 0)}
+    for g in overview.get("acquisition_groups", []):
+        snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0)}
+    for g in overview.get("generic_groups", []):
+        snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0)}
+    existing, _ = store.cache_get("health_history")
+    history = existing if isinstance(existing, list) else []
+    history = [h for h in history if h.get("date") != today]
+    history.append(snapshot)
+    history = history[-90:]
+    store.cache_set("health_history", history)
+    print(f"  Health snapshot saved ({len(history)} days in history)")
+
     # Verify
     cached, ts = store.cache_get("overview_v2")
     verified = len((cached or {}).get("clients", []))
