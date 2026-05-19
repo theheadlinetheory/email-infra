@@ -345,6 +345,18 @@ def cache_get(key: str):
     return None, None
 
 
+def cache_patch(key: str, data) -> None:
+    """Write a cache entry (no guard). For use by API endpoints after mutations."""
+    prefixed = f"cache:{key}"
+    row = {
+        "key": prefixed,
+        "data": json.dumps(data, default=str),
+        "updated_at": datetime.now().isoformat(),
+    }
+    _request("POST", "/state", json_body=row,
+             headers={"Prefer": "resolution=merge-duplicates"})
+
+
 # ---------------------------------------------------------------------------
 # Inbox History (audit log for every inbox state change)
 # ---------------------------------------------------------------------------

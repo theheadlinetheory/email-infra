@@ -102,6 +102,43 @@ def health_history():
     return _cors(jsonify(history or []))
 
 
+def _update_cache_campaigns(group_name, campaign_name, action):
+    """Patch overview_v2 cache after assign/unassign so changes persist."""
+    import db as store
+    try:
+        data, _ = store.cache_get("overview_v2")
+        if not data:
+            return
+        for section in ["acquisition_groups", "generic_groups"]:
+            for g in (data.get(section) or []):
+                if g.get("name") == group_name:
+                    for a in (g.get("account_details") or []):
+                        names = a.get("campaign_names", [])
+                        if action == "add" and campaign_name not in names:
+                            names.append(campaign_name)
+                        elif action == "remove" and campaign_name in names:
+                            names.remove(campaign_name)
+                        a["campaign_names"] = names
+                        a["in_campaign"] = len(names) > 0
+        store.cache_patch("overview_v2", data)
+    except Exception:
+        pass
+
+
+def _get_campaign_name(campaign_id):
+    """Look up campaign name from cached acq_campaigns."""
+    try:
+        data, _ = _get_cache("overview_v2")
+        if not data:
+            return str(campaign_id)
+        for c in (data.get("acq_campaigns") or []):
+            if c.get("id") == campaign_id:
+                return c.get("name", str(campaign_id))
+    except Exception:
+        pass
+    return str(campaign_id)
+
+
 def _resolve_group_account_ids(group_name, campaign_id=None):
     """Read SmartLead account IDs from cached account_details."""
     try:
@@ -145,6 +182,8 @@ def assign_group():
     r = req.post(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                  json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
+        camp_name = _get_campaign_name(campaign_id)
+        _update_cache_campaigns(group_name, camp_name, "add")
         return _cors(jsonify({"ok": True, "assigned": len(account_ids),
                               "message": f"Assigned {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
     return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
@@ -172,6 +211,8 @@ def unassign_group():
     r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                    json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
+        camp_name = _get_campaign_name(campaign_id)
+        _update_cache_campaigns(group_name, camp_name, "remove")
         return _cors(jsonify({"ok": True, "removed": len(account_ids),
                               "message": f"Removed {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
     return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502

@@ -576,7 +576,11 @@ function removeGroupFromCampaign(groupName, campaignId, btn) {
     }).then(function(r) { return r.json(); }).then(function(d) {
         card.style.opacity = '1';
         if (d.ok) {
-            card.remove();
+            var removeBtn = card.querySelector('.kanban-remove-btn');
+            if (removeBtn) removeBtn.remove();
+            var availCol = document.querySelector('.kanban-col-available .kanban-col-body');
+            if (availCol) availCol.appendChild(card);
+            else card.remove();
             alert(d.removed + ' accounts removed.\n\nREMINDER: Go to SmartLead and reallocate inboxes on this campaign.');
         } else {
             alert('Failed: ' + (d.error || 'Unknown error'));
