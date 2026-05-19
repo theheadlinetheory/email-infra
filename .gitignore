@@ -11,3 +11,4 @@ __pycache__/
 .vercel/
 .superpowers/
 .DS_Store
+.vercel

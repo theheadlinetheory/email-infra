@@ -98,65 +98,23 @@ def health_history():
 
 
 def _resolve_group_account_ids(group_name, campaign_id=None):
-    """Look up SmartLead account IDs for a group by matching emails."""
-    import requests as req
-    sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
-    if not sl_key:
-        return None, "API key not configured"
+    """Read SmartLead account IDs from cached account_details."""
     try:
         data, _ = _get_cache("overview_v2")
     except Exception as e:
         return None, f"Cache error: {e}"
     if not data:
         return None, "No cached data"
-    emails = set()
+    account_ids = []
     for section in ["acquisition_groups", "generic_groups"]:
         for g in (data.get(section) or []):
             if g.get("name") == group_name:
                 for a in (g.get("account_details") or []):
-                    if a.get("email"):
-                        emails.add(a["email"].lower())
-    if not emails:
+                    if a.get("id"):
+                        account_ids.append(a["id"])
+    if not account_ids:
         all_names = [g.get("name") for s in ["acquisition_groups", "generic_groups"] for g in (data.get(s) or [])]
-        return None, f"No accounts for '{group_name}'. Groups: {all_names}"
-    sl = "https://server.smartlead.ai/api/v1"
-    account_ids = []
-    if campaign_id:
-        try:
-            r = req.get(f"{sl}/campaigns/{campaign_id}/email-accounts",
-                        params={"api_key": sl_key}, timeout=30)
-            if r and r.status_code == 200:
-                camp_accts = r.json() if r.text.strip() else []
-                for acct in camp_accts:
-                    email = (acct.get("from_email") or acct.get("email") or "").lower()
-                    if email in emails:
-                        account_ids.append(acct["id"])
-                if not account_ids and camp_accts:
-                    sample_camp = camp_accts[0].get("from_email", "?")
-                    sample_cache = list(emails)[0] if emails else "?"
-                    return None, f"0/{len(camp_accts)} matched. Campaign sample: {sample_camp}, Cache sample: {sample_cache}"
-        except Exception as e:
-            return None, f"Campaign fetch error: {e}"
-    if not account_ids:
-        try:
-            offset = 0
-            while offset < 2000:
-                r = req.get(f"{sl}/email-accounts/", params={"api_key": sl_key, "offset": offset, "limit": 100}, timeout=30)
-                if not r or r.status_code != 200:
-                    break
-                batch = r.json() if r.text.strip() else []
-                if not batch:
-                    break
-                for acct in batch:
-                    if acct.get("from_email", "").lower() in emails:
-                        account_ids.append(acct["id"])
-                if len(account_ids) >= len(emails) or len(batch) < 100:
-                    break
-                offset += 100
-        except Exception as e:
-            return None, f"Batch fetch error: {e}"
-    if not account_ids:
-        return None, f"Could not resolve IDs for {group_name} ({len(emails)} emails)"
+        return None, f"No account IDs for '{group_name}'. Groups: {all_names}"
     return account_ids, None
 
 
@@ -173,9 +131,9 @@ def assign_group():
     if not group_name or not campaign_id:
         return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
-    account_ids, err = _resolve_group_account_ids(group_name, campaign_id=None)
+    account_ids, err = _resolve_group_account_ids(group_name)
     if err:
-        return _cors(jsonify({"error": err})), 404 if "No accounts" in err or "Could not" in err else 500
+        return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
     r = req.post(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                  json={"email_account_ids": account_ids}, timeout=30)
@@ -198,9 +156,9 @@ def unassign_group():
     if not group_name or not campaign_id:
         return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
-    account_ids, err = _resolve_group_account_ids(group_name, campaign_id=campaign_id)
+    account_ids, err = _resolve_group_account_ids(group_name)
     if err:
-        return _cors(jsonify({"error": err})), 404 if "No accounts" in err or "Could not" in err else 500
+        return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
     r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts",
                    params={"api_key": sl_key},

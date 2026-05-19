@@ -268,6 +268,7 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
             h = health.get(email, {})
             acct_camps = campaign_map.get(email, [])
             account_details.append({
+                "id": a.get("id"),
                 "email": email,
                 "domain": domain,
                 "bounce_rate": parse_rate(h.get("bounce_rate")),
