@@ -257,6 +257,24 @@ def build_overview(accounts, health, crm_names, campaign_map):
                     camps[cid] = {"id": cid, "name": c["name"], "status": c.get("status", ""), "accounts": 0}
                 camps[cid]["accounts"] += 1
         domains = set(a.get("from_email", "").split("@")[-1] for a in accts if a.get("from_email"))
+        account_details = []
+        for a in accts:
+            email = a.get("from_email", "")
+            domain = email.split("@")[-1] if "@" in email else ""
+            h = health.get(email, {})
+            acct_camps = campaign_map.get(email, [])
+            account_details.append({
+                "email": email,
+                "domain": domain,
+                "bounce_rate": parse_rate(h.get("bounce_rate")),
+                "reply_rate": parse_rate(h.get("reply_rate")),
+                "sent": h.get("sent", 0),
+                "smtp_ok": bool(a.get("is_smtp_success")),
+                "warmup_enabled": bool(a.get("warmup_enabled")),
+                "in_campaign": len(acct_camps) > 0,
+                "campaign_names": [c["name"] for c in acct_camps],
+            })
+        account_details.sort(key=lambda x: x["email"])
         return {
             "in_campaign": assigned,
             "smtp_failures": smtp_fail,
@@ -266,6 +284,7 @@ def build_overview(accounts, health, crm_names, campaign_map):
             "total_sent": total_sent,
             "daily_capacity": len(accts) * 15,
             "campaigns": sorted(camps.values(), key=lambda x: x["name"]),
+            "account_details": account_details,
         }
 
     clients = []
