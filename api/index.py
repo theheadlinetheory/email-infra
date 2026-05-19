@@ -160,8 +160,7 @@ def unassign_group():
     if err:
         return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
-    r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts",
-                   params={"api_key": sl_key},
+    r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                    json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
         return _cors(jsonify({"ok": True, "removed": len(account_ids),
