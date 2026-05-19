@@ -141,8 +141,8 @@ def fetch_campaign_accounts():
         return {}
 
     campaigns = r.json() if r.text.strip() else []
-    active = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")]
-    print(f"  Found {len(active)} active/paused campaigns")
+    active = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED") and "subsequence" not in c.get("name", "").lower()]
+    print(f"  Found {len(active)} active/paused campaigns (excluding subsequences)")
 
     for i, camp in enumerate(active):
         camp_info = {"id": camp["id"], "name": camp.get("name", ""), "status": camp.get("status", "")}
