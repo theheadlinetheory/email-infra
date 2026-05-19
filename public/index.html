@@ -108,11 +108,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .empty-state { padding: 40px 24px; text-align: center; color: #64748b; }
 
 /* Kanban board */
-.kanban-wrap { display: flex; gap: 12px; padding: 12px 24px; overflow-x: auto; min-height: 200px; }
-.kanban-col { background: #151821; border-radius: 10px; min-width: 210px; max-width: 260px; flex: 1; display: flex; flex-direction: column; border: 1px solid #1e293b; }
-.kanban-col-header { padding: 12px 14px 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+.kanban-wrap { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; padding: 12px 24px; }
+.kanban-col { background: #151821; border-radius: 10px; display: flex; flex-direction: column; border: 1px solid #1e293b; }
+.kanban-col-header { padding: 12px 14px 8px; font-size: 11px; font-weight: 700; color: #94a3b8; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.kanban-col-name { flex: 1; min-width: 0; line-height: 1.3; }
 .kanban-col-count { font-size: 11px; font-weight: 400; color: #64748b; }
-.kanban-col-status { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; }
+.kanban-col-status { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; }
 .kanban-col-status.active { background: #166534; color: #22c55e; }
 .kanban-col-status.paused { background: #78350f; color: #f59e0b; }
 .kanban-col-body { padding: 8px; flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 60px; }
@@ -353,6 +354,8 @@ function renderAcquisition() {
                 cardStat('Domains', g.total_domains || 0) +
                 cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'good' : '') +
                 cardStat('Bounce Rate', fmtRate(g.avg_bounce_rate), rateClass(g.avg_bounce_rate, 3, 1)) +
+                cardStat('Reply Rate', fmtRate(g.avg_reply_rate), rateClassAsc(g.avg_reply_rate, 5, 2)) +
+                cardStat('Sent (7d)', g.total_sent || 0) +
             '</div>' +
         '</div>';
     }).join('');
@@ -393,9 +396,9 @@ function renderKanban() {
         var col = columns[ci];
         var statusCls = col.status === 'ACTIVE' ? 'active' : 'paused';
         var statusLabel = col.status === 'ACTIVE' ? 'ACTIVE' : (col.status === 'PAUSED' ? 'PAUSED' : col.status);
-        var shortName = col.name.replace(/\s*#\d.*/,'').replace(/\s*[-–]\s*.*/,'').replace(/\s*(campaign|cold|email|outreach|subsequence).*/i,'').trim();
+        var displayName = col.name.replace(/^acquisition\s*/i, '').trim() || col.name;
         html += '<div class="kanban-col" data-campaign-id="' + col.id + '">' +
-            '<div class="kanban-col-header"><span title="' + esc(col.name) + '">' + esc(shortName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
+            '<div class="kanban-col-header"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
             '<div class="kanban-col-body">';
         for (var gi = 0; gi < col.groups.length; gi++) {
             var isLocked = col.status === 'ACTIVE';
