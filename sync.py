@@ -243,15 +243,15 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
             h = health.get(email)
             if h:
                 total_sent += h.get("sent", 0)
-            ht = health_today.get(email)
-            if ht:
-                daily_sent += ht.get("sent", 0)
                 br = parse_rate(h.get("bounce_rate"))
                 if br is not None:
                     bounce_rates.append(br)
                 rr = parse_rate(h.get("reply_rate"))
                 if rr is not None:
                     reply_rates.append(rr)
+            ht = health_today.get(email)
+            if ht:
+                daily_sent += ht.get("sent", 0)
             acct_camps = campaign_map.get(email, [])
             if acct_camps:
                 assigned += 1
