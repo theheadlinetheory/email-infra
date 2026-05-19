@@ -453,9 +453,11 @@ function renderKanban() {
     var pausedCols = allCols.filter(function(c) { return c.status !== 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
 
     function kanbanCard(g) {
+        var isLars = (g.name || '').match(/\bG\b/);
+        var persona = isLars ? '<span style="background:#7c3aed;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:4px;" title="Lars">L</span>' : '<span style="background:#3b82f6;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-right:4px;" title="Aidan">A</span>';
         var multiFlag = groupCampCount[g.name] > 1 ? '<span style="color:#f59e0b;font-size:10px;margin-left:auto;" title="In ' + groupCampCount[g.name] + ' campaigns">&#9888; ' + groupCampCount[g.name] + ' campaigns</span>' : '';
         return '<div class="kanban-card" draggable="true" data-group="' + esc(g.name) + '">' +
-            '<div class="kanban-card-name">' + esc(g.name) + multiFlag + '</div>' +
+            '<div class="kanban-card-name">' + persona + esc(g.name) + multiFlag + '</div>' +
             '<div class="kanban-card-meta"><span>' + g.accounts + ' accts</span><span>' + (g.daily_capacity || 0) + '/day</span></div>' +
         '</div>';
     }
