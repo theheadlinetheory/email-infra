@@ -189,8 +189,9 @@ def parse_rate(value):
         return None
 
 
-def build_overview(accounts, health, crm_names, campaign_map):
+def build_overview(accounts, health, crm_names, campaign_map, health_today=None):
     """Group accounts by tag into client cards."""
+    health_today = health_today or {}
     client_groups = {}  # normalized_name -> {display_name, a_accounts: [], b_accounts: []}
     acq_groups = {}
     generic_groups = {}
@@ -232,7 +233,7 @@ def build_overview(accounts, health, crm_names, campaign_map):
 
     def _group_stats(accts):
         bounce_rates, reply_rates = [], []
-        total_sent = smtp_fail = 0
+        total_sent = daily_sent = smtp_fail = 0
         assigned = 0
         camps = {}
         for a in accts:
@@ -242,6 +243,9 @@ def build_overview(accounts, health, crm_names, campaign_map):
             h = health.get(email)
             if h:
                 total_sent += h.get("sent", 0)
+            ht = health_today.get(email)
+            if ht:
+                daily_sent += ht.get("sent", 0)
                 br = parse_rate(h.get("bounce_rate"))
                 if br is not None:
                     bounce_rates.append(br)
@@ -282,6 +286,7 @@ def build_overview(accounts, health, crm_names, campaign_map):
             "avg_bounce_rate": round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None,
             "avg_reply_rate": round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None,
             "total_sent": total_sent,
+            "daily_sent": daily_sent,
             "daily_capacity": len(accts) * 15,
             "campaigns": sorted(camps.values(), key=lambda x: x["name"]),
             "account_details": account_details,
@@ -356,11 +361,16 @@ def sync():
     health = fetch_health_metrics()
     print(f"  Got {len(health)} health records")
 
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    print("  Fetching today's sent counts...")
+    health_today = fetch_health_metrics(start_date=today_str, end_date=today_str)
+    print(f"  Got {len(health_today)} daily health records")
+
     print("  Fetching campaign mappings...")
     campaign_map = fetch_campaign_accounts()
     print(f"  Got campaigns for {len(campaign_map)} email accounts")
 
-    overview = build_overview(accounts, health, crm_names, campaign_map)
+    overview = build_overview(accounts, health, crm_names, campaign_map, health_today)
     client_count = len(overview["clients"])
     print(f"  Built overview: {client_count} clients, {overview['total_accounts']} accounts")
 
@@ -431,15 +441,15 @@ def sync():
     today = datetime.now().strftime("%Y-%m-%d")
     snapshot = {"date": today, "groups": {}}
     for c in overview["clients"]:
-        snapshot["groups"][c["name"]] = {"bounce": c.get("avg_bounce_rate"), "reply": c.get("avg_reply_rate"), "sent": c.get("total_sent", 0)}
+        snapshot["groups"][c["name"]] = {"bounce": c.get("avg_bounce_rate"), "reply": c.get("avg_reply_rate"), "sent": c.get("total_sent", 0), "daily_sent": c.get("daily_sent", 0)}
         if c.get("group_a"):
-            snapshot["groups"][c["name"] + " A"] = {"bounce": c["group_a"].get("avg_bounce_rate"), "reply": c["group_a"].get("avg_reply_rate"), "sent": c["group_a"].get("total_sent", 0)}
+            snapshot["groups"][c["name"] + " A"] = {"bounce": c["group_a"].get("avg_bounce_rate"), "reply": c["group_a"].get("avg_reply_rate"), "sent": c["group_a"].get("total_sent", 0), "daily_sent": c["group_a"].get("daily_sent", 0)}
         if c.get("group_b"):
-            snapshot["groups"][c["name"] + " B"] = {"bounce": c["group_b"].get("avg_bounce_rate"), "reply": c["group_b"].get("avg_reply_rate"), "sent": c["group_b"].get("total_sent", 0)}
+            snapshot["groups"][c["name"] + " B"] = {"bounce": c["group_b"].get("avg_bounce_rate"), "reply": c["group_b"].get("avg_reply_rate"), "sent": c["group_b"].get("total_sent", 0), "daily_sent": c["group_b"].get("daily_sent", 0)}
     for g in overview.get("acquisition_groups", []):
-        snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0)}
+        snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0), "daily_sent": g.get("daily_sent", 0)}
     for g in overview.get("generic_groups", []):
-        snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0)}
+        snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0), "daily_sent": g.get("daily_sent", 0)}
     history = [h for h in history if h.get("date") != today]
     history.append(snapshot)
     history = history[-90:]

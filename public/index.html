@@ -280,7 +280,7 @@ function renderGeneric() {
 
 var acqUtilMode = '7d';
 
-function getAcqDaySent(dateStr) {
+function getAcqDailySent(dateStr) {
     if (!historyData || !historyData.length) return null;
     for (var i = 0; i < historyData.length; i++) {
         if (historyData[i].date === dateStr) {
@@ -288,7 +288,7 @@ function getAcqDaySent(dateStr) {
             var groups = data.acquisition_groups || [];
             for (var j = 0; j < groups.length; j++) {
                 var gd = (historyData[i].groups || {})[groups[j].name];
-                if (gd) total += gd.sent || 0;
+                if (gd) total += gd.daily_sent || 0;
             }
             return total;
         }
@@ -302,13 +302,12 @@ function renderUtilBar() {
     var dailyCapacity = total * 15;
     var sent, label;
     if (acqUtilMode === 'today') {
-        var today = new Date().toISOString().slice(0, 10);
-        sent = getAcqDaySent(today);
-        label = sent != null ? sent.toLocaleString() + ' sent today' : 'No data for today yet';
+        sent = groups.reduce(function(s, g) { return s + (g.daily_sent || 0); }, 0);
+        label = sent > 0 ? sent.toLocaleString() + ' sent today' : 'No sends recorded yet today';
     } else if (acqUtilMode === 'yesterday') {
         var d = new Date(); d.setDate(d.getDate() - 1);
         var yest = d.toISOString().slice(0, 10);
-        sent = getAcqDaySent(yest);
+        sent = getAcqDailySent(yest);
         label = sent != null ? sent.toLocaleString() + ' sent yesterday' : 'No data for yesterday';
     } else {
         var totalSent7d = groups.reduce(function(s, g) { return s + (g.total_sent || 0); }, 0);
