@@ -202,12 +202,18 @@ function renderClients() {
     var grid = document.getElementById('clients-grid');
     if (!clients.length) { grid.innerHTML = '<div class="empty-state">No client groups found.</div>'; return; }
     grid.innerHTML = clients.map(function(c, i) {
+        var hasB = c.group_b_count > 0;
         var s = c.group_a || c;
-        var sub = c.group_b_count > 0 ? 'Group A · ' + c.group_a_count + '  |  Group B · ' + c.group_b_count : 'Group A · ' + c.group_a_count + ' accounts';
-        return '<div class="client-card" onclick="openModal(\'client\',' + i + ')">' +
+        return '<div class="client-card" id="card-' + i + '" onclick="openModal(\'client\',' + i + ')">' +
             '<div class="card-header"><div class="card-name">' + esc(c.name) + '</div><div class="card-count">' + c.accounts + ' accounts</div></div>' +
-            '<div class="card-subtitle">' + sub + '</div>' +
-            statsHtml(s) +
+            (hasB ?
+                '<div class="group-toggle" onclick="event.stopPropagation()">' +
+                    '<button class="group-btn active" onclick="cardToggle(' + i + ',\'a\')">Group A · ' + c.group_a_count + '</button>' +
+                    '<button class="group-btn" onclick="cardToggle(' + i + ',\'b\')">Group B · ' + c.group_b_count + '</button>' +
+                '</div>' :
+                '<div class="card-subtitle">Group A · ' + c.group_a_count + ' accounts</div>'
+            ) +
+            '<div id="card-stats-' + i + '">' + statsHtml(s) + '</div>' +
         '</div>';
     }).join('');
 }
@@ -280,6 +286,20 @@ function renderAcquisition() {
     }).join('');
 }
 
+var cardGroups = {};
+
+function cardToggle(idx, group) {
+    cardGroups[idx] = group;
+    var card = document.getElementById('card-' + idx);
+    if (!card) return;
+    var btns = card.querySelectorAll('.group-btn');
+    btns.forEach(function(b, i) { b.classList.toggle('active', (group === 'a' && i === 0) || (group === 'b' && i === 1)); });
+    var c = data.clients[idx];
+    var s = (group === 'b' && c.group_b) ? c.group_b : (c.group_a || c);
+    var statsEl = document.getElementById('card-stats-' + idx);
+    if (statsEl) statsEl.innerHTML = statsHtml(s);
+}
+
 /* ── Modal ── */
 
 function getModalGroup() {
@@ -312,7 +332,8 @@ function getModalInfo() {
 }
 
 function openModal(type, idx) {
-    modalState = { type: type, idx: idx, group: 'a', range: '7D' };
+    var initGroup = (type === 'client' && cardGroups[idx]) ? cardGroups[idx] : 'a';
+    modalState = { type: type, idx: idx, group: initGroup, range: '7D' };
     renderModal();
     document.getElementById('modal-overlay').style.display = 'flex';
     document.body.style.overflow = 'hidden';
