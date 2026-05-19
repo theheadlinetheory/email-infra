@@ -51,8 +51,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .acq-lars { background: #dbeafe; color: #1d4ed8; }
 
 /* Modal */
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px); }
-.modal-content { background: #1a1d28; border-radius: 14px; border: 1px solid #2a2d38; width: 100%; max-width: 760px; max-height: 90vh; overflow-y: auto; position: relative; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; backdrop-filter: blur(4px); }
+.modal-content { background: #1a1d28; border-radius: 14px; border: 1px solid #2a2d38; width: 100%; max-width: 760px; position: relative; }
 .modal-pad { padding: 28px; }
 .modal-close { position: sticky; top: 0; float: right; background: #2a2d38; border: none; color: #94a3b8; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; margin: 12px 12px 0 0; z-index: 1; }
 .modal-close:hover { background: #ef4444; color: #fff; }
@@ -84,7 +84,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .campaign-accts { color: #94a3b8; margin-left: 12px; white-space: nowrap; }
 .campaign-none { color: #64748b; font-size: 13px; font-style: italic; }
 
-.account-table-wrap { max-height: 400px; overflow-y: auto; margin-top: 8px; border-radius: 6px; }
+.account-table-wrap { margin-top: 8px; border-radius: 6px; }
 .account-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .account-table th { text-align: left; color: #64748b; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #2a2d38; position: sticky; top: 0; background: #1a1d28; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
 .account-table td { padding: 5px 8px; border-bottom: 1px solid rgba(42,45,56,0.4); color: #cbd5e1; }
@@ -402,7 +402,7 @@ function renderChart(groupKey, range) {
         var h = historyData[i];
         var d = new Date(h.date + 'T12:00:00');
         if (cutoff > 0 && (now - d) > cutoff * 86400000 + 43200000) continue;
-        var gd = (h.groups || {})[groupKey];
+        var gd = (h.groups || {})[groupKey] || (h.groups || {})[groupKey.replace(/ [AB]$/, '')];
         if (!gd) continue;
         points.push({ date: h.date, bounce: gd.bounce, reply: gd.reply });
     }
@@ -414,9 +414,21 @@ function renderChart(groupKey, range) {
 
     if (points.length === 1) {
         var p = points[0];
-        el.innerHTML = '<div style="display:flex;gap:40px;justify-content:center;padding:20px 0;">' +
-            '<div style="text-align:center"><div style="font-size:28px;font-weight:700;color:#f97316">' + (p.bounce != null ? p.bounce + '%' : '—') + '</div><div style="font-size:11px;color:#94a3b8;margin-top:4px;">Bounce (' + p.date + ')</div></div>' +
-            '<div style="text-align:center"><div style="font-size:28px;font-weight:700;color:#22c55e">' + (p.reply != null ? p.reply + '%' : '—') + '</div><div style="font-size:11px;color:#94a3b8;margin-top:4px;">Reply (' + p.date + ')</div></div>' +
+        var bv = p.bounce != null ? p.bounce : 0;
+        var rv = p.reply != null ? p.reply : 0;
+        var barMax = Math.max(bv, rv, 5);
+        el.innerHTML = '<div style="padding:12px 0;">' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+                '<span style="width:60px;font-size:11px;color:#94a3b8;">Bounce</span>' +
+                '<div style="flex:1;height:20px;background:#1e293b;border-radius:4px;overflow:hidden;"><div style="height:100%;width:' + Math.max((bv / barMax) * 100, 2) + '%;background:#f97316;border-radius:4px;"></div></div>' +
+                '<span style="width:40px;font-size:13px;font-weight:600;color:#f97316;text-align:right;">' + (p.bounce != null ? p.bounce + '%' : '—') + '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:10px;">' +
+                '<span style="width:60px;font-size:11px;color:#94a3b8;">Reply</span>' +
+                '<div style="flex:1;height:20px;background:#1e293b;border-radius:4px;overflow:hidden;"><div style="height:100%;width:' + Math.max((rv / barMax) * 100, 2) + '%;background:#22c55e;border-radius:4px;"></div></div>' +
+                '<span style="width:40px;font-size:13px;font-weight:600;color:#22c55e;text-align:right;">' + (p.reply != null ? p.reply + '%' : '—') + '</span>' +
+            '</div>' +
+            '<div style="text-align:center;font-size:11px;color:#475569;margin-top:10px;">Trend chart appears with 2+ days of data</div>' +
         '</div>';
         return;
     }
