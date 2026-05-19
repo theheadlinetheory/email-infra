@@ -109,6 +109,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .util-sync-btn.syncing { animation: spin 1s linear infinite; pointer-events: none; color: #22c55e; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+/* Campaign modal */
+.camp-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; }
+.camp-stat { background: #0f1117; border-radius: 8px; padding: 12px; text-align: center; }
+.camp-stat-val { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+.camp-stat-label { font-size: 11px; color: #64748b; margin-top: 4px; }
+.camp-progress { margin-bottom: 20px; }
+.camp-progress-track { height: 10px; background: #0f1117; border-radius: 5px; overflow: hidden; }
+.camp-progress-fill { height: 100%; border-radius: 5px; transition: width 0.3s; }
+.camp-progress-labels { display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; margin-top: 6px; }
+.camp-groups-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.camp-group-tag { background: #1e293b; border: 1px solid #2a2d38; border-radius: 6px; padding: 4px 10px; font-size: 12px; color: #e2e8f0; }
+.kanban-col-header.clickable { cursor: pointer; transition: background 0.15s; }
+.kanban-col-header.clickable:hover { background: rgba(34,197,94,0.08); }
+
 .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: #94a3b8; }
 .empty-state { padding: 40px 24px; text-align: center; color: #64748b; }
 
@@ -451,7 +465,7 @@ function renderKanban() {
         var statusLabel = col.status || 'UNKNOWN';
         var displayName = col.name.replace(/^acquisition\s*/i, '').trim() || col.name;
         var h = '<div class="kanban-col" data-campaign-id="' + col.id + '">' +
-            '<div class="kanban-col-header"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
+            '<div class="kanban-col-header clickable" onclick="openCampaignModal(' + col.id + ')"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
             '<div class="kanban-col-body">';
         for (var gi = 0; gi < col.groups.length; gi++) {
             h += kanbanCard(col.groups[gi], col.status === 'ACTIVE');
@@ -567,6 +581,217 @@ function getModalInfo() {
         return { name: g.name, accounts: g.accounts, hasB: false, badge: isLars ? 'Lars' : 'Aidan', badgeClass: isLars ? 'acq-lars' : 'acq-aidan', chartKey: g.name };
     }
     return {};
+}
+
+function openCampaignModal(campId) {
+    var stats = (data.acq_campaign_stats || []);
+    var camp = null;
+    for (var i = 0; i < stats.length; i++) { if (stats[i].id === campId) { camp = stats[i]; break; } }
+    var groups = data.acquisition_groups || [];
+    var campGroups = [];
+    for (var i = 0; i < groups.length; i++) {
+        var gc = groups[i].campaigns || [];
+        for (var j = 0; j < gc.length; j++) { if (gc[j].id === campId) { campGroups.push(groups[i]); break; } }
+    }
+    modalState = { type: 'campaign', campId: campId, camp: camp, campGroups: campGroups };
+    renderCampaignModal();
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}
+
+function renderCampaignModal() {
+    var s = modalState;
+    var camp = s.camp;
+    var campGroups = s.campGroups || [];
+    var totalAccts = campGroups.reduce(function(a, g) { return a + g.accounts; }, 0);
+
+    var displayName = '';
+    if (camp) {
+        displayName = camp.name.replace(/^acquisition\s*/i, '').trim() || camp.name;
+    } else {
+        var allCamps = data.acquisition_groups || [];
+        for (var i = 0; i < allCamps.length; i++) {
+            var gc = allCamps[i].campaigns || [];
+            for (var j = 0; j < gc.length; j++) {
+                if (gc[j].id === s.campId) { displayName = gc[j].name.replace(/^acquisition\s*/i, '').trim() || gc[j].name; break; }
+            }
+            if (displayName) break;
+        }
+        if (!displayName) displayName = 'Campaign #' + s.campId;
+    }
+
+    var html = '<div class="modal-header"><div><div class="modal-name">' + esc(displayName) + '</div>' +
+        '<div class="modal-meta">' + totalAccts + ' accounts across ' + campGroups.length + ' group' + (campGroups.length !== 1 ? 's' : '') + '</div></div></div>';
+
+    if (camp) {
+        var pct = camp.total_leads > 0 ? Math.round((camp.completed / camp.total_leads) * 100) : 0;
+        var pctColor = pct >= 90 ? '#f59e0b' : '#22c55e';
+
+        html += '<div class="camp-stats-grid">' +
+            '<div class="camp-stat"><div class="camp-stat-val">' + (camp.total_leads || 0).toLocaleString() + '</div><div class="camp-stat-label">Total Leads</div></div>' +
+            '<div class="camp-stat"><div class="camp-stat-val" style="color:#22c55e">' + (camp.completed || 0).toLocaleString() + '</div><div class="camp-stat-label">Completed</div></div>' +
+            '<div class="camp-stat"><div class="camp-stat-val" style="color:#3b82f6">' + (camp.remaining || 0).toLocaleString() + '</div><div class="camp-stat-label">Remaining</div></div>' +
+            '<div class="camp-stat"><div class="camp-stat-val">' + (camp.today_sent || 0).toLocaleString() + '</div><div class="camp-stat-label">Sent Today</div></div>' +
+            '<div class="camp-stat"><div class="camp-stat-val">' + (camp.yesterday_sent || 0).toLocaleString() + '</div><div class="camp-stat-label">Sent Yesterday</div></div>' +
+            '<div class="camp-stat"><div class="camp-stat-val">' + (totalAccts * 15).toLocaleString() + '</div><div class="camp-stat-label">Daily Capacity</div></div>' +
+        '</div>';
+
+        html += '<div class="camp-progress">' +
+            '<div class="camp-progress-track"><div class="camp-progress-fill" style="width:' + pct + '%;background:' + pctColor + '"></div></div>' +
+            '<div class="camp-progress-labels"><span>' + pct + '% complete</span><span>' + camp.remaining.toLocaleString() + ' leads remaining</span></div></div>';
+
+        html += '<div class="chart-section"><div class="chart-header"><span class="chart-title">Projected Daily Sends</span></div>' +
+            '<div id="camp-projection-chart"></div>' +
+            '<div class="chart-legend"><span><span class="legend-dot" style="background:#3b82f6"></span>Projected Sends</span><span><span class="legend-dot" style="background:#22c55e"></span>Capacity</span></div></div>';
+    } else {
+        html += '<div style="color:#64748b;font-size:13px;padding:20px 0;">No live stats available for this campaign. Run sync to populate data.</div>';
+    }
+
+    if (campGroups.length) {
+        html += '<div class="detail-header">Assigned Groups</div><div class="camp-groups-list">';
+        for (var i = 0; i < campGroups.length; i++) {
+            html += '<div class="camp-group-tag">' + esc(campGroups[i].name) + ' <span style="color:#64748b">(' + campGroups[i].accounts + ' accts)</span></div>';
+        }
+        html += '</div>';
+    }
+
+    document.getElementById('modal-body').innerHTML = html;
+
+    if (camp) {
+        setTimeout(function() { drawProjectionChart(camp, totalAccts); }, 10);
+    }
+}
+
+function drawProjectionChart(camp, totalAccts) {
+    var el = document.getElementById('camp-projection-chart');
+    if (!el) return;
+
+    var capacity = totalAccts * 15;
+    var recentRate = Math.max(camp.today_sent || 0, camp.yesterday_sent || 0);
+    if (recentRate < 1) recentRate = capacity;
+    var seqSteps = 4;
+    var newLeadsPerDay = recentRate / seqSteps;
+
+    var remaining = camp.remaining || 0;
+    var points = [];
+    var today = new Date();
+    for (var day = 0; day <= 60; day++) {
+        var d = new Date(today);
+        d.setDate(d.getDate() + day);
+        var dateStr = (d.getMonth() + 1) + '/' + d.getDate();
+
+        var sends;
+        if (remaining <= 0) {
+            sends = 0;
+        } else if (remaining < newLeadsPerDay) {
+            sends = Math.round(remaining * seqSteps * 0.5);
+            remaining = 0;
+        } else {
+            sends = Math.min(recentRate, remaining * seqSteps, capacity);
+            remaining -= newLeadsPerDay;
+        }
+
+        points.push({ date: dateStr, sends: Math.round(sends), day: day });
+        if (sends < 1 && day > 3) break;
+    }
+
+    if (!points.length) { el.innerHTML = '<div class="chart-empty">No projection data.</div>'; return; }
+
+    var w = el.offsetWidth || 700;
+    var ht = 240;
+    var pad = { top: 20, right: 20, bottom: 32, left: 52 };
+    var cw = w - pad.left - pad.right;
+    var ch = ht - pad.top - pad.bottom;
+
+    var maxVal = capacity * 1.15;
+    for (var i = 0; i < points.length; i++) { if (points[i].sends > maxVal) maxVal = points[i].sends * 1.15; }
+    var n = points.length;
+
+    function xPos(idx) { return pad.left + (n > 1 ? (idx / (n - 1)) * cw : cw / 2); }
+    function yPos(val) { return pad.top + ch - (val / maxVal) * ch; }
+
+    var svg = '<svg width="' + w + '" height="' + ht + '" style="display:block;" xmlns="http://www.w3.org/2000/svg">';
+
+    var nGrid = 5;
+    for (var i = 0; i <= nGrid; i++) {
+        var gv = Math.round((maxVal / nGrid) * i);
+        var gy = yPos(gv);
+        svg += '<line x1="' + pad.left + '" y1="' + gy + '" x2="' + (w - pad.right) + '" y2="' + gy + '" stroke="#1e293b" stroke-width="1"/>';
+        svg += '<text x="' + (pad.left - 8) + '" y="' + (gy + 3) + '" fill="#475569" font-size="10" font-family="system-ui" text-anchor="end">' + gv.toLocaleString() + '</text>';
+    }
+
+    var labelStep = Math.max(1, Math.floor(n / 8));
+    for (var i = 0; i < n; i++) {
+        if (i % labelStep === 0 || i === n - 1) {
+            svg += '<text x="' + xPos(i) + '" y="' + (ht - 6) + '" fill="#475569" font-size="10" font-family="system-ui" text-anchor="middle">' + points[i].date + '</text>';
+        }
+    }
+
+    var capY = yPos(capacity);
+    svg += '<line x1="' + pad.left + '" y1="' + capY + '" x2="' + (w - pad.right) + '" y2="' + capY + '" stroke="#22c55e" stroke-width="1" stroke-dasharray="6,4" opacity="0.5"/>';
+    svg += '<text x="' + (w - pad.right - 4) + '" y="' + (capY - 6) + '" fill="#22c55e" font-size="10" font-family="system-ui" text-anchor="end" opacity="0.7">' + capacity.toLocaleString() + '/day</text>';
+
+    if (n >= 2) {
+        var areaPath = 'M' + xPos(0) + ',' + yPos(0);
+        for (var i = 0; i < n; i++) areaPath += ' L' + xPos(i) + ',' + yPos(points[i].sends);
+        areaPath += ' L' + xPos(n - 1) + ',' + yPos(0) + ' Z';
+        svg += '<path d="' + areaPath + '" fill="#3b82f6" opacity="0.15"/>';
+
+        var linePath = 'M' + xPos(0) + ',' + yPos(points[0].sends);
+        for (var i = 1; i < n; i++) linePath += ' L' + xPos(i) + ',' + yPos(points[i].sends);
+        svg += '<path d="' + linePath + '" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+    }
+
+    for (var i = 0; i < n; i++) {
+        if (i % labelStep === 0 || i === 0 || i === n - 1 || (i > 0 && points[i].sends < points[i - 1].sends * 0.8)) {
+            svg += '<circle cx="' + xPos(i) + '" cy="' + yPos(points[i].sends) + '" r="3.5" fill="#0f1117" stroke="#3b82f6" stroke-width="2"/>';
+        }
+    }
+
+    var colW = n > 1 ? cw / (n - 1) : cw;
+    for (var i = 0; i < n; i++) {
+        var cx = xPos(i);
+        var rx = n > 1 ? cx - colW / 2 : pad.left;
+        var rw = n > 1 ? colW : cw;
+        svg += '<rect x="' + rx + '" y="' + pad.top + '" width="' + rw + '" height="' + ch + '" fill="transparent" data-i="' + i + '" style="cursor:crosshair"/>';
+        svg += '<line x1="' + cx + '" y1="' + pad.top + '" x2="' + cx + '" y2="' + (pad.top + ch) + '" stroke="#475569" stroke-width="1" stroke-dasharray="3,3" class="hover-line" data-i="' + i + '" style="opacity:0"/>';
+    }
+
+    svg += '</svg>';
+    el.innerHTML = svg;
+    el._projPoints = points;
+
+    var rects = el.querySelectorAll('rect[data-i]');
+    for (var i = 0; i < rects.length; i++) {
+        rects[i].addEventListener('mouseenter', projHoverIn);
+        rects[i].addEventListener('mousemove', chartHoverMove);
+        rects[i].addEventListener('mouseleave', projHoverOut);
+    }
+}
+
+function projHoverIn(e) {
+    var idx = parseInt(e.target.getAttribute('data-i'));
+    var el = document.getElementById('camp-projection-chart');
+    var pts = el ? el._projPoints : null;
+    if (!pts || !pts[idx]) return;
+    var lines = el.querySelectorAll('.hover-line[data-i="' + idx + '"]');
+    for (var i = 0; i < lines.length; i++) lines[i].style.opacity = '1';
+    var p = pts[idx];
+    var tt = document.getElementById('chart-tooltip');
+    var dayLabel = p.day === 0 ? 'Today' : p.day === 1 ? 'Tomorrow' : 'Day ' + p.day + ' (' + p.date + ')';
+    tt.innerHTML = '<div class="tt-date">' + dayLabel + '</div>' +
+        '<div class="tt-row"><span class="tt-dot" style="background:#3b82f6"></span><span style="color:#94a3b8">Predicted</span><span class="tt-val" style="color:#3b82f6">' + p.sends.toLocaleString() + ' emails</span></div>';
+    tt.style.display = 'block';
+}
+
+function projHoverOut(e) {
+    var idx = parseInt(e.target.getAttribute('data-i'));
+    var el = document.getElementById('camp-projection-chart');
+    if (el) {
+        var lines = el.querySelectorAll('.hover-line[data-i="' + idx + '"]');
+        for (var i = 0; i < lines.length; i++) lines[i].style.opacity = '0';
+    }
+    document.getElementById('chart-tooltip').style.display = 'none';
 }
 
 function openModal(type, idx) {
