@@ -360,8 +360,8 @@ function renderUtilBar() {
             var cap = c.accounts * 15;
             return s + Math.min(recentDaily > 0 ? recentDaily : cap, c.remaining, cap);
         }, 0);
-        sent = predicted;
-        label = predicted.toLocaleString() + ' predicted sends';
+        sent = 0;
+        label = '~' + predicted.toLocaleString() + ' predicted sends';
         sublabel = 'Based on live lead counts + recent daily volume';
     } else {
         var totalSent7d = groups.reduce(function(s, g) { return s + (g.total_sent || 0); }, 0);
@@ -371,8 +371,9 @@ function renderUtilBar() {
 
     var sentPct = (dailyCapacity > 0 && sent) ? Math.min(Math.round((sent / dailyCapacity) * 100), 100) : 0;
     var predictPct = (dailyCapacity > 0 && predicted) ? Math.min(Math.round((predicted / dailyCapacity) * 100), 100) : 0;
-    var sentColor = sentPct >= 60 ? '#22c55e' : sentPct >= 30 ? '#f59e0b' : '#ef4444';
-    var showPredicted = acqUtilMode === 'today' && predictPct > sentPct;
+    var displayPct = acqUtilMode === 'tomorrow' ? predictPct : (sentPct || predictPct);
+    var sentColor = displayPct >= 60 ? '#22c55e' : displayPct >= 30 ? '#f59e0b' : '#ef4444';
+    var showPredicted = (acqUtilMode === 'today' || acqUtilMode === 'tomorrow') && predictPct > sentPct;
 
     var modes = [['today','Today'],['tomorrow','Tomorrow'],['yesterday','Yesterday'],['7d','7D Avg']];
     var btns = '<div style="display:flex;gap:4px;align-items:center;">';
@@ -391,7 +392,7 @@ function renderUtilBar() {
     document.getElementById('acq-util-bar').innerHTML =
         '<div class="util-bar-container">' +
             '<div class="util-bar-header"><span class="util-bar-title">Acquisition Sending</span>' + btns + '</div>' +
-            '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;"><span class="util-bar-pct" style="color:' + sentColor + '">' + sentPct + '%</span><span style="font-size:13px;color:#94a3b8;">of capacity</span>' + subHtml + '</div>' +
+            '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;"><span class="util-bar-pct" style="color:' + sentColor + '">' + displayPct + '%</span><span style="font-size:13px;color:#94a3b8;">' + (acqUtilMode === 'tomorrow' ? 'predicted capacity' : 'of capacity') + '</span>' + subHtml + '</div>' +
             '<div class="util-bar-track">' + barHtml + '</div>' +
             '<div class="util-bar-labels"><span>' + label + '</span><span>' + dailyCapacity.toLocaleString() + '/day capacity</span></div>' +
         '</div>';
