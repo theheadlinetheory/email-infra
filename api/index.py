@@ -45,7 +45,7 @@ def _get_cache(key):
 
 def _cors(resp):
     resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     return resp
 
@@ -97,10 +97,46 @@ def health_history():
     return _cors(jsonify(history or []))
 
 
+@app.route("/api/assign-group", methods=["POST", "OPTIONS"])
+def assign_group():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import requests as req
+    body = request.get_json(silent=True) or {}
+    group_name = body.get("group_name", "")
+    campaign_id = body.get("campaign_id")
+    if not group_name or not campaign_id:
+        return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
+    sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
+    if not sl_key:
+        return _cors(jsonify({"error": "API key not configured"})), 500
+    sl = "https://server.smartlead.ai/api/v1"
+    data, _ = _get_cache("overview_v2")
+    if not data:
+        return _cors(jsonify({"error": "No cached data"})), 500
+    account_ids = []
+    for section in ["acquisition_groups", "generic_groups"]:
+        for g in (data.get(section) or []):
+            if g.get("name") == group_name:
+                for a in (g.get("account_details") or []):
+                    if a.get("id"):
+                        account_ids.append(a["id"])
+    if not account_ids:
+        return _cors(jsonify({"error": "No account IDs found for group " + group_name})), 404
+    r = req.post(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
+                 json={"email_account_ids": account_ids}, timeout=30)
+    if r.status_code == 200:
+        return _cors(jsonify({"ok": True, "assigned": len(account_ids),
+                              "message": f"Assigned {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
+    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}", "detail": r.text[:300]})), 502
+
+
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
 def catch_all(path):
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
-        return jsonify({"error": "Unauthorized"}), 401
+        return _cors(jsonify({"error": "Unauthorized"})), 401
     return _cors(jsonify({"error": "Not found"})), 404

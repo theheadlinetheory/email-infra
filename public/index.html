@@ -531,7 +531,33 @@ function initKanbanDragDrop() {
             e.preventDefault();
             this.parentElement.classList.remove('drag-over');
             if (!draggedCard) return;
-            this.appendChild(draggedCard);
+            var groupName = draggedCard.getAttribute('data-group');
+            var targetCampaignId = this.parentElement.getAttribute('data-campaign-id');
+            var targetName = this.parentElement.querySelector('.kanban-col-header span').textContent;
+            if (targetCampaignId === 'available') {
+                this.appendChild(draggedCard);
+                return;
+            }
+            if (!confirm('Assign ' + groupName + ' to ' + targetName + '?')) return;
+            var card = draggedCard;
+            var body = this;
+            card.style.opacity = '0.5';
+            fetch('/api/assign-group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ group_name: groupName, campaign_id: parseInt(targetCampaignId) })
+            }).then(function(r) { return r.json(); }).then(function(d) {
+                card.style.opacity = '1';
+                if (d.ok) {
+                    body.appendChild(card);
+                    alert(d.assigned + ' accounts assigned to ' + targetName + '.\n\nREMINDER: Go to SmartLead and reallocate inboxes on this campaign.');
+                } else {
+                    alert('Failed: ' + (d.error || 'Unknown error'));
+                }
+            }).catch(function(err) {
+                card.style.opacity = '1';
+                alert('Network error: ' + err.message);
+            });
         });
     }
 }
