@@ -452,11 +452,10 @@ function renderKanban() {
     var activeCols = allCols.filter(function(c) { return c.status === 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
     var pausedCols = allCols.filter(function(c) { return c.status !== 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
 
-    function kanbanCard(g, isLocked) {
-        var lockIcon = isLocked ? '<span style="color:#22c55e;font-size:11px;">&#128274;</span>' : '';
+    function kanbanCard(g) {
         var multiFlag = groupCampCount[g.name] > 1 ? '<span style="color:#f59e0b;font-size:10px;margin-left:auto;" title="In ' + groupCampCount[g.name] + ' campaigns">&#9888; ' + groupCampCount[g.name] + ' campaigns</span>' : '';
-        return '<div class="kanban-card' + (isLocked ? ' locked' : '') + '" draggable="' + (!isLocked) + '" data-group="' + esc(g.name) + '">' +
-            '<div class="kanban-card-name">' + lockIcon + esc(g.name) + multiFlag + '</div>' +
+        return '<div class="kanban-card" draggable="true" data-group="' + esc(g.name) + '">' +
+            '<div class="kanban-card-name">' + esc(g.name) + multiFlag + '</div>' +
             '<div class="kanban-card-meta"><span>' + g.accounts + ' accts</span><span>' + (g.daily_capacity || 0) + '/day</span></div>' +
         '</div>';
     }
@@ -469,7 +468,7 @@ function renderKanban() {
             '<div class="kanban-col-header clickable" onclick="openCampaignModal(' + col.id + ')"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
             '<div class="kanban-col-body">';
         for (var gi = 0; gi < col.groups.length; gi++) {
-            h += kanbanCard(col.groups[gi], col.status === 'ACTIVE');
+            h += kanbanCard(col.groups[gi]);
         }
         return h + '</div></div>';
     }
@@ -480,7 +479,7 @@ function renderKanban() {
         html += '<div class="kanban-col kanban-col-available" data-campaign-id="available">' +
             '<div class="kanban-col-header"><span class="kanban-col-name">Available</span><span class="kanban-col-count">' + available.length + ' groups</span></div>' +
             '<div class="kanban-col-body">';
-        for (var ai = 0; ai < available.length; ai++) html += kanbanCard(available[ai], false);
+        for (var ai = 0; ai < available.length; ai++) html += kanbanCard(available[ai]);
         html += '</div></div>';
         for (var ci = 0; ci < activeCols.length; ci++) html += renderCol(activeCols[ci]);
         html += '</div>';
