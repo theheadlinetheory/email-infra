@@ -439,6 +439,11 @@ function renderKanban() {
     if (!groups.length) { board.innerHTML = ''; return; }
 
     var campMap = {};
+    var campStats = data.acq_campaign_stats || [];
+    for (var si = 0; si < campStats.length; si++) {
+        var cs = campStats[si];
+        campMap[cs.id] = { id: cs.id, name: cs.name, status: cs.status || 'ACTIVE', groups: [] };
+    }
     var available = [];
     var groupCampCount = {};
     for (var i = 0; i < groups.length; i++) {
