@@ -100,9 +100,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .util-bar-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
 .util-bar-title { font-size: 14px; font-weight: 600; color: #f1f5f9; }
 .util-bar-pct { font-size: 28px; font-weight: 700; }
-.util-bar-track { height: 16px; background: #0f1117; border-radius: 8px; overflow: hidden; }
-.util-bar-fill { height: 100%; border-radius: 8px; transition: width 0.4s ease; }
+.util-bar-track { height: 16px; background: #0f1117; border-radius: 8px; overflow: hidden; display: flex; }
+.util-bar-fill { height: 100%; border-radius: 8px; transition: width 0.4s ease; display: inline-block; vertical-align: top; }
+.util-bar-predicted { background: rgba(74,222,128,0.25); border-radius: 0 8px 8px 0; }
 .util-bar-labels { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #94a3b8; }
+.util-sync-btn { background: #1a1d28; border: 1px solid #2a2d38; color: #94a3b8; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.util-sync-btn:hover { color: #22c55e; border-color: #22c55e; }
+.util-sync-btn.syncing { animation: spin 1s linear infinite; pointer-events: none; color: #22c55e; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: #94a3b8; }
 .empty-state { padding: 40px 24px; text-align: center; color: #64748b; }
@@ -206,6 +211,24 @@ async function load() {
     }
 }
 
+async function syncDashboard() {
+    var btn = document.querySelector('.util-sync-btn');
+    if (btn) btn.classList.add('syncing');
+    try {
+        var pw = getCookie('dashboard_pw') || new URLSearchParams(location.search).get('pw') || '';
+        var qs = pw ? '?pw=' + pw : '';
+        var resp = await fetch('/api/overview' + qs);
+        if (resp.ok) {
+            var newData = await resp.json();
+            if (!newData.loading) { data = newData; }
+        }
+        var hResp = await fetch('/api/health-history' + qs);
+        if (hResp.ok) historyData = await hResp.json();
+        render();
+    } catch (e) {}
+    if (btn) btn.classList.remove('syncing');
+}
+
 function render() {
     document.getElementById('loading').style.display = 'none';
     var updated = data.generated_at ? new Date(data.generated_at).toLocaleTimeString() : '—';
@@ -301,12 +324,14 @@ function getAcqDailySent(dateStr) {
 
 function renderUtilBar() {
     var groups = data.acquisition_groups || [];
-    var total = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
-    var dailyCapacity = total * 15;
+    var totalAccts = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
+    var dailyCapacity = totalAccts * 15;
+    var inCampAccts = groups.reduce(function(s, g) { return s + (g.in_campaign || 0); }, 0);
+    var predictedSend = inCampAccts * 15;
     var sent, label;
     if (acqUtilMode === 'today') {
         sent = groups.reduce(function(s, g) { return s + (g.daily_sent || 0); }, 0);
-        label = sent > 0 ? sent.toLocaleString() + ' sent today' : 'No sends recorded yet today';
+        label = sent > 0 ? sent.toLocaleString() + ' confirmed sent' : 'No sends recorded yet today';
     } else if (acqUtilMode === 'yesterday') {
         var d = new Date(); d.setDate(d.getDate() - 1);
         var yest = d.toISOString().slice(0, 10);
@@ -317,19 +342,27 @@ function renderUtilBar() {
         sent = Math.round(totalSent7d / 7);
         label = sent.toLocaleString() + ' emails/day (7-day avg)';
     }
-    var utilPct = (dailyCapacity > 0 && sent != null) ? Math.round((sent / dailyCapacity) * 100) : 0;
-    var utilColor = utilPct >= 60 ? '#22c55e' : utilPct >= 30 ? '#f59e0b' : '#ef4444';
+    var sentPct = (dailyCapacity > 0 && sent != null) ? Math.min(Math.round((sent / dailyCapacity) * 100), 100) : 0;
+    var predictPct = (dailyCapacity > 0) ? Math.min(Math.round((predictedSend / dailyCapacity) * 100), 100) : 0;
+    var sentColor = sentPct >= 60 ? '#22c55e' : sentPct >= 30 ? '#f59e0b' : '#ef4444';
+    var showPredicted = acqUtilMode === 'today' && predictPct > sentPct;
     var modes = [['today','Today'],['yesterday','Yesterday'],['7d','7D Avg']];
-    var btns = '<div style="display:flex;gap:4px;">';
+    var btns = '<div style="display:flex;gap:4px;align-items:center;">';
+    btns += '<button class="util-sync-btn" onclick="syncDashboard()" title="Refresh data">&#8635;</button>';
     for (var i = 0; i < modes.length; i++) {
         btns += '<button class="time-btn' + (acqUtilMode === modes[i][0] ? ' active' : '') + '" onclick="acqUtilMode=\'' + modes[i][0] + '\';renderUtilBar()">' + modes[i][1] + '</button>';
     }
     btns += '</div>';
+    var barHtml = '<div class="util-bar-fill" style="width:' + sentPct + '%;background:' + sentColor + ';position:relative;z-index:2;"></div>';
+    if (showPredicted) {
+        barHtml += '<div class="util-bar-fill util-bar-predicted" style="width:' + (predictPct - sentPct) + '%;"></div>';
+    }
+    var predictLabel = showPredicted ? '<span style="color:#4ade80;font-size:11px;">~' + predictedSend.toLocaleString() + ' predicted</span>' : '';
     document.getElementById('acq-util-bar').innerHTML =
         '<div class="util-bar-container">' +
             '<div class="util-bar-header"><span class="util-bar-title">Acquisition Sending</span>' + btns + '</div>' +
-            '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;"><span class="util-bar-pct" style="color:' + utilColor + '">' + utilPct + '%</span><span style="font-size:13px;color:#94a3b8;">of capacity</span></div>' +
-            '<div class="util-bar-track"><div class="util-bar-fill" style="width:' + Math.min(utilPct, 100) + '%;background:' + utilColor + '"></div></div>' +
+            '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;"><span class="util-bar-pct" style="color:' + sentColor + '">' + sentPct + '%</span><span style="font-size:13px;color:#94a3b8;">of capacity</span>' + predictLabel + '</div>' +
+            '<div class="util-bar-track">' + barHtml + '</div>' +
             '<div class="util-bar-labels"><span>' + label + '</span><span>' + dailyCapacity.toLocaleString() + '/day capacity</span></div>' +
         '</div>';
 }
