@@ -71,6 +71,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .account-table tr:hover td { background: rgba(34,197,94,0.06); }
 .detail-header { font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 14px; margin-bottom: 6px; }
 
+.util-bar-container { margin: 20px 24px 0; background: #1a1d28; border-radius: 10px; padding: 20px 24px; border: 1px solid #2a2d38; }
+.util-bar-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+.util-bar-title { font-size: 14px; font-weight: 600; color: #f1f5f9; }
+.util-bar-pct { font-size: 28px; font-weight: 700; }
+.util-bar-track { height: 16px; background: #0f1117; border-radius: 8px; overflow: hidden; position: relative; }
+.util-bar-fill { height: 100%; border-radius: 8px; transition: width 0.4s ease; }
+.util-bar-labels { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #94a3b8; }
+
 .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: #94a3b8; }
 
 .empty-state { padding: 40px 24px; text-align: center; color: #64748b; }
@@ -100,6 +108,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <div id="acquisition-tab" style="display:none;">
+    <div id="acq-util-bar"></div>
     <div class="stats-row" id="acq-stats"></div>
     <div class="section-title">Acquisition Groups</div>
     <div class="cards-grid" id="acq-grid"></div>
@@ -295,6 +304,26 @@ function renderAcquisition() {
     var groups = data.acquisition_groups || [];
     var total = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
     var inCamp = groups.reduce(function(s, g) { return s + g.in_campaign; }, 0);
+    var totalSent7d = groups.reduce(function(s, g) { return s + (g.total_sent || 0); }, 0);
+    var dailyAvgSent = Math.round(totalSent7d / 7);
+    var dailyCapacity = total * 15;
+    var utilPct = dailyCapacity > 0 ? Math.round((dailyAvgSent / dailyCapacity) * 100) : 0;
+    var utilColor = utilPct >= 60 ? '#22c55e' : utilPct >= 30 ? '#f59e0b' : '#ef4444';
+
+    document.getElementById('acq-util-bar').innerHTML =
+        '<div class="util-bar-container">' +
+            '<div class="util-bar-header">' +
+                '<span class="util-bar-title">Daily Acquisition Sending</span>' +
+                '<span class="util-bar-pct" style="color:' + utilColor + '">' + utilPct + '%</span>' +
+            '</div>' +
+            '<div class="util-bar-track">' +
+                '<div class="util-bar-fill" style="width:' + Math.min(utilPct, 100) + '%;background:' + utilColor + '"></div>' +
+            '</div>' +
+            '<div class="util-bar-labels">' +
+                '<span>' + dailyAvgSent.toLocaleString() + ' emails/day (7-day avg)</span>' +
+                '<span>' + dailyCapacity.toLocaleString() + '/day capacity</span>' +
+            '</div>' +
+        '</div>';
 
     document.getElementById('acq-stats').innerHTML =
         statBox(groups.length, 'Acquisition Groups') +
