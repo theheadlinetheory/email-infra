@@ -102,6 +102,18 @@ def health_history():
     return _cors(jsonify(history or []))
 
 
+def _sl_request(method, url, **kwargs):
+    """SmartLead API request with retry on 429."""
+    import time
+    import requests as req
+    for attempt in range(3):
+        r = getattr(req, method)(url, **kwargs)
+        if r.status_code != 429:
+            return r
+        time.sleep(5 * (attempt + 1))
+    return r
+
+
 def _update_cache_campaigns(group_name, campaign_id, campaign_name, action):
     """Patch overview_v2 cache after assign/unassign so changes persist."""
     import db as store
@@ -180,7 +192,6 @@ def assign_group():
         return _cors(make_response("", 200))
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
-    import requests as req
     body = request.get_json(silent=True) or {}
     group_name = body.get("group_name", "")
     campaign_id = body.get("campaign_id")
@@ -193,8 +204,8 @@ def assign_group():
     if err:
         return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
-    r = req.post(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
-                 json={"email_account_ids": account_ids}, timeout=30)
+    r = _sl_request("post", f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
+                    json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
         camp_name = _get_campaign_name(campaign_id)
         _update_cache_campaigns(group_name, campaign_id, camp_name, "add")
@@ -209,21 +220,20 @@ def unassign_group():
         return _cors(make_response("", 200))
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
-    import requests as req
     body = request.get_json(silent=True) or {}
     group_name = body.get("group_name", "")
     campaign_id = body.get("campaign_id")
     if not group_name or not campaign_id:
         return _cors(jsonify({"error": "group_name and campaign_id required"})), 400
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
+    if not sl_key:
+        return _cors(jsonify({"error": "SMARTLEAD_API_KEY not configured"})), 500
     account_ids, err = _resolve_group_account_ids(group_name)
     if err:
         return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
     sl = "https://server.smartlead.ai/api/v1"
-    if not sl_key:
-        return _cors(jsonify({"error": "SMARTLEAD_API_KEY not configured"})), 500
-    r = req.delete(f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
-                   json={"email_account_ids": account_ids}, timeout=30)
+    r = _sl_request("delete", f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
+                    json={"email_account_ids": account_ids}, timeout=30)
     if r.status_code == 200:
         camp_name = _get_campaign_name(campaign_id)
         _update_cache_campaigns(group_name, campaign_id, camp_name, "remove")
