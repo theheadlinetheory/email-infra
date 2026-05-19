@@ -87,9 +87,9 @@ def fetch_tag_mappings():
     return mappings
 
 
-def fetch_health_metrics():
-    end = datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+def fetch_health_metrics(start_date=None, end_date=None):
+    end = end_date or datetime.now().strftime("%Y-%m-%d")
+    start = start_date or (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     try:
         r = _api_get(
             f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
@@ -372,6 +372,62 @@ def sync():
     print(f"  Cache written: {client_count} clients")
 
     # Store daily health snapshot for trend charts
+    existing, _ = store.cache_get("health_history")
+    history = existing if isinstance(existing, list) else []
+
+    # Backfill past 14 days if history is thin
+    if len(history) < 3:
+        print("  Backfilling health history for past 14 days...")
+        account_groups = {}
+        for c in overview["clients"]:
+            for ad in (c.get("group_a") or {}).get("account_details", []):
+                account_groups[ad["email"]] = (c["name"], "A")
+            for ad in (c.get("group_b") or {}).get("account_details", []):
+                account_groups[ad["email"]] = (c["name"], "B")
+        for g in overview.get("acquisition_groups", []):
+            for ad in g.get("account_details", []):
+                account_groups[ad["email"]] = (g["name"], None)
+        for g in overview.get("generic_groups", []):
+            for ad in g.get("account_details", []):
+                account_groups[ad["email"]] = (g["name"], None)
+
+        for days_ago in range(14, 0, -1):
+            day = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+            if any(h.get("date") == day for h in history):
+                continue
+            print(f"    Fetching {day}...")
+            day_health = fetch_health_metrics(start_date=day, end_date=day)
+            if not day_health:
+                continue
+            snap = {"date": day, "groups": {}}
+            group_rates = {}
+            for email, metrics in day_health.items():
+                info = account_groups.get(email)
+                if not info:
+                    continue
+                gname, letter = info
+                br = parse_rate(metrics.get("bounce_rate"))
+                rr = parse_rate(metrics.get("reply_rate"))
+                sent = metrics.get("sent", 0)
+                for key in ([gname, f"{gname} {letter}"] if letter else [gname]):
+                    if key not in group_rates:
+                        group_rates[key] = {"bounces": [], "replies": [], "sent": 0}
+                    if br is not None:
+                        group_rates[key]["bounces"].append(br)
+                    if rr is not None:
+                        group_rates[key]["replies"].append(rr)
+                    group_rates[key]["sent"] += sent
+            for key, r in group_rates.items():
+                snap["groups"][key] = {
+                    "bounce": round(sum(r["bounces"]) / len(r["bounces"]), 1) if r["bounces"] else None,
+                    "reply": round(sum(r["replies"]) / len(r["replies"]), 1) if r["replies"] else None,
+                    "sent": r["sent"],
+                }
+            history.append(snap)
+        history.sort(key=lambda h: h.get("date", ""))
+        print(f"  Backfill complete: {len(history)} days")
+
+    # Today's snapshot from current data
     today = datetime.now().strftime("%Y-%m-%d")
     snapshot = {"date": today, "groups": {}}
     for c in overview["clients"]:
@@ -384,8 +440,6 @@ def sync():
         snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0)}
     for g in overview.get("generic_groups", []):
         snapshot["groups"][g["name"]] = {"bounce": g.get("avg_bounce_rate"), "reply": g.get("avg_reply_rate"), "sent": g.get("total_sent", 0)}
-    existing, _ = store.cache_get("health_history")
-    history = existing if isinstance(existing, list) else []
     history = [h for h in history if h.get("date") != today]
     history.append(snapshot)
     history = history[-90:]
