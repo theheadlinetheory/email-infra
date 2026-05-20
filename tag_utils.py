@@ -48,7 +48,7 @@ def get_group_tag_from_account(account: dict) -> str | None:
     """
     for t in account.get("tags", []):
         name = t.get("name", "")
-        if name.lower() == "zapmail":
+        if name.lower() in ("zapmail", "premium inboxes"):
             continue
         if re.match(r'^\d{1,2}/\d{1,2}/\d{2}$', name):
             continue
