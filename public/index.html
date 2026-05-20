@@ -374,7 +374,7 @@ async function refreshStats() {
     if (btn) { btn.classList.remove('syncing'); btn.disabled = false; }
 }
 
-var currentTab = 'clients';
+var currentTab = location.hash === '#acquisition' ? 'acquisition' : 'clients';
 
 function render() {
     document.getElementById('loading').style.display = 'none';
@@ -1291,6 +1291,7 @@ function statsHtml(s) {
 
 function showTab(tab) {
     currentTab = tab;
+    location.hash = tab === 'clients' ? '' : tab;
     document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
     document.querySelectorAll('.tab').forEach(function(t) {
         if ((tab === 'clients' && t.textContent.trim() === 'Clients') ||
