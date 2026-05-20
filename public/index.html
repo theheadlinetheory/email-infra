@@ -236,15 +236,26 @@ async function syncDashboard() {
     try {
         var pw = getCookie('dashboard_pw') || new URLSearchParams(location.search).get('pw') || '';
         var qs = pw ? '?pw=' + pw : '';
-        var resp = await fetch('/api/overview' + qs);
+        var headers = {};
+        var token = localStorage.getItem('fb_token');
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        var syncResp = await fetch('/api/sync' + qs, { method: 'POST', headers: headers });
+        var syncResult = await syncResp.json();
+        if (!syncResp.ok) {
+            console.error('Sync failed:', syncResult);
+            alert('Sync failed: ' + (syncResult.error || syncResult.message || 'Unknown error'));
+            if (btn) btn.classList.remove('syncing');
+            return;
+        }
+        var resp = await fetch('/api/overview' + qs, { headers: headers });
         if (resp.ok) {
             var newData = await resp.json();
             if (!newData.loading) { data = newData; }
         }
-        var hResp = await fetch('/api/health-history' + qs);
+        var hResp = await fetch('/api/health-history' + qs, { headers: headers });
         if (hResp.ok) historyData = await hResp.json();
         render();
-    } catch (e) {}
+    } catch (e) { console.error('Sync error:', e); alert('Sync error: ' + e.message); }
     if (btn) btn.classList.remove('syncing');
 }
 

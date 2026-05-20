@@ -30,7 +30,10 @@ warnings.filterwarnings("ignore")
 import requests
 from datetime import datetime, timedelta
 from pathlib import Path
-import sheets  # Google Sheets integration
+try:
+    import sheets
+except ImportError:
+    sheets = None
 
 # ─── CONFIG ───
 

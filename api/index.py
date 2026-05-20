@@ -102,6 +102,23 @@ def health_history():
     return _cors(jsonify(history or []))
 
 
+@app.route("/api/sync", methods=["POST", "OPTIONS"])
+def trigger_sync():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import sync
+        sync.store._CACHE_WRITE_ENABLED = True
+        ok = sync.sync()
+        if ok:
+            return _cors(jsonify({"ok": True, "message": "Sync complete"}))
+        return _cors(jsonify({"ok": False, "message": "Sync aborted (insufficient data)"})), 500
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 def _sl_request(method, url, **kwargs):
     """SmartLead API request with retry on 429."""
     import time
