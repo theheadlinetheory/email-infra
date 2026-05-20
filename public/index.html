@@ -111,6 +111,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .util-sync-btn.syncing { animation: spin 1s linear infinite; pointer-events: none; color: #22c55e; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+/* Campaign breakdown table */
+.camp-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 16px; }
+.camp-table th { text-align: left; color: #64748b; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #1e2130; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.camp-table td { padding: 8px 12px; color: #e2e8f0; border-bottom: 1px solid #1e2130; }
+.camp-table tr:hover td { background: rgba(34,197,94,0.04); }
+.camp-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.camp-table .bar-cell { width: 120px; }
+.camp-table .mini-bar { height: 6px; border-radius: 3px; background: #1a1d28; overflow: hidden; }
+.camp-table .mini-bar-fill { height: 100%; border-radius: 3px; }
+.camp-table-wrap { background: #12141f; border: 1px solid #1e2130; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; }
+.camp-table-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px; }
+
 /* Sync progress toast */
 .sync-toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; background: #1a1d28; border: 1px solid #2a2d38; border-radius: 12px; padding: 16px 20px; width: 320px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); transition: opacity 0.3s, transform 0.3s; }
 .sync-toast.hidden { opacity: 0; transform: translateY(20px); pointer-events: none; }
@@ -204,6 +216,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 <div id="acquisition-tab" style="display:none;">
     <div id="acq-util-bar"></div>
+    <div id="acq-campaign-table"></div>
     <div class="stats-row" id="acq-stats"></div>
     <div class="section-title">Acquisition Groups</div>
     <div class="cards-grid" id="acq-grid"></div>
@@ -539,11 +552,51 @@ function renderUtilBar() {
         '</div>';
 }
 
+function renderCampaignTable() {
+    var campStats = data.acq_campaign_stats || [];
+    if (!campStats.length) { document.getElementById('acq-campaign-table').innerHTML = ''; return; }
+    var sorted = campStats.slice().sort(function(a, b) { return (b.today_sent || 0) - (a.today_sent || 0); });
+    var maxSent = Math.max.apply(null, sorted.map(function(c) { return c.today_sent || 0; })) || 1;
+    var totalToday = sorted.reduce(function(s, c) { return s + (c.today_sent || 0); }, 0);
+    var totalYest = sorted.reduce(function(s, c) { return s + (c.yesterday_sent || 0); }, 0);
+    var totalRemaining = sorted.reduce(function(s, c) { return s + (c.remaining || 0); }, 0);
+    var totalAccts = sorted.reduce(function(s, c) { return s + (c.accounts || 0); }, 0);
+    var rows = sorted.map(function(c) {
+        var pct = maxSent > 0 ? Math.round((c.today_sent || 0) / maxSent * 100) : 0;
+        var color = (c.today_sent || 0) > 0 ? '#f59e0b' : '#334155';
+        return '<tr>' +
+            '<td>' + esc(c.name.replace(/ acquisition/i, '').replace(/ retarget/i, ' RT').trim()) + '</td>' +
+            '<td class="num">' + (c.today_sent || 0).toLocaleString() + '</td>' +
+            '<td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill" style="width:' + pct + '%;background:' + color + ';"></div></div></td>' +
+            '<td class="num">' + (c.yesterday_sent || 0).toLocaleString() + '</td>' +
+            '<td class="num">' + (c.remaining || 0).toLocaleString() + '</td>' +
+            '<td class="num">' + (c.accounts || 0) + '</td>' +
+        '</tr>';
+    }).join('');
+    rows += '<tr style="border-top:2px solid #2a2d38;font-weight:600;">' +
+        '<td>Total</td>' +
+        '<td class="num">' + totalToday.toLocaleString() + '</td>' +
+        '<td class="bar-cell"></td>' +
+        '<td class="num">' + totalYest.toLocaleString() + '</td>' +
+        '<td class="num">' + totalRemaining.toLocaleString() + '</td>' +
+        '<td class="num">' + totalAccts + '</td>' +
+    '</tr>';
+    document.getElementById('acq-campaign-table').innerHTML =
+        '<div class="camp-table-wrap">' +
+            '<div class="camp-table-title">Campaign Breakdown</div>' +
+            '<table class="camp-table">' +
+                '<tr><th>Campaign</th><th class="num">Today</th><th>Volume</th><th class="num">Yesterday</th><th class="num">Remaining</th><th class="num">Accounts</th></tr>' +
+                rows +
+            '</table>' +
+        '</div>';
+}
+
 function renderAcquisition() {
     var groups = data.acquisition_groups || [];
     var total = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
     var inCamp = groups.reduce(function(s, g) { return s + g.in_campaign; }, 0);
     renderUtilBar();
+    renderCampaignTable();
     document.getElementById('acq-stats').innerHTML =
         statBox(groups.length, 'Acquisition Groups') +
         statBox(total, 'Total Accounts') +
