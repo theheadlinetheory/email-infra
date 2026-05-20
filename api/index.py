@@ -136,6 +136,27 @@ def trigger_sync():
         return _cors(jsonify({"error": str(e)})), 500
 
 
+@app.route("/api/refresh-stats", methods=["POST", "OPTIONS"])
+def refresh_stats():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import sync
+        sync.store._CACHE_WRITE_ENABLED = True
+        stats = sync.fetch_acq_campaign_stats()
+        data, _ = store.cache_get("overview_v2")
+        if data:
+            data["acq_campaign_stats"] = stats
+            store.cache_patch("overview_v2", data)
+        return _cors(jsonify({"ok": True, "campaigns": len(stats)}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/sync-progress")
 def sync_progress():
     if not _check_auth():

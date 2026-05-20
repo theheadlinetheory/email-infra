@@ -360,6 +360,19 @@ async function syncDashboard() {
     }
 }
 
+async function refreshStats() {
+    var btn = document.querySelector('.stats-refresh-btn');
+    if (btn) { btn.classList.add('syncing'); btn.disabled = true; }
+    try {
+        var resp = await fetch('/api/refresh-stats' + _authQs(), { method: 'POST', headers: _authHeaders() });
+        if (resp.ok) {
+            var ov = await fetch('/api/overview' + _authQs(), { headers: _authHeaders() });
+            if (ov.ok) { data = await ov.json(); render(); }
+        }
+    } catch (e) {}
+    if (btn) { btn.classList.remove('syncing'); btn.disabled = false; }
+}
+
 var currentTab = 'clients';
 
 function render() {
@@ -496,7 +509,7 @@ function renderUtilBar() {
 
     var modes = [['today','Today'],['tomorrow','Tomorrow'],['yesterday','Yesterday'],['7d','7D Avg']];
     var btns = '<div style="display:flex;gap:4px;align-items:center;">';
-    btns += '<button class="util-sync-btn" onclick="syncDashboard()" title="Sync SmartLead data">&#8635;</button>';
+    btns += '<button class="util-sync-btn stats-refresh-btn" onclick="refreshStats()" title="Refresh sending stats">&#8635;</button>';
     for (var i = 0; i < modes.length; i++) {
         btns += '<button class="time-btn' + (acqUtilMode === modes[i][0] ? ' active' : '') + '" onclick="acqUtilMode=\'' + modes[i][0] + '\';renderUtilBar()">' + modes[i][1] + '</button>';
     }
