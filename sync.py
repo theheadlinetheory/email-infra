@@ -128,7 +128,7 @@ def _api_get(url, params=None, timeout=15, headers=None):
     return None
 
 
-def fetch_campaign_accounts():
+def fetch_campaign_accounts(progress_cb=None):
     """Fetch all active/paused campaigns and their email accounts.
     Returns email -> list of {id, name, status} campaign info.
     No timeout — retries with backoff until every campaign is fetched.
@@ -145,6 +145,8 @@ def fetch_campaign_accounts():
     print(f"  Found {len(active)} active/paused campaigns (excluding subsequences)")
 
     for i, camp in enumerate(active):
+        if progress_cb:
+            progress_cb(i, len(active))
         camp_info = {"id": camp["id"], "name": camp.get("name", ""), "status": camp.get("status", "")}
         cr = _api_get(
             f"{SMARTLEAD_API}/campaigns/{camp['id']}/email-accounts",
@@ -378,53 +380,67 @@ def fetch_acq_campaign_stats():
     return stats
 
 
-def sync():
+def sync(progress_cb=None):
+    def _report(pct, msg):
+        print(f"  [{pct}%] {msg}")
+        if progress_cb:
+            try:
+                progress_cb(pct, msg)
+            except Exception:
+                pass
+
     print(f"[sync] Starting at {datetime.now().strftime('%H:%M:%S')}")
+    _report(0, "Starting sync...")
 
-    print("  Fetching CRM clients...")
+    _report(2, "Fetching CRM clients...")
     crm_names = fetch_crm_clients()
-    print(f"  Got {len(crm_names)} CRM clients")
+    _report(5, f"Got {len(crm_names)} CRM clients")
 
-    print("  Fetching SmartLead accounts...")
+    _report(6, "Fetching SmartLead accounts...")
     accounts = fetch_all_accounts()
-    print(f"  Got {len(accounts)} accounts")
+    _report(15, f"Got {len(accounts)} accounts")
 
     if len(accounts) < 100:
-        print(f"  ABORT: only {len(accounts)} accounts (rate limited?), skipping cache write")
+        _report(0, f"Aborted: only {len(accounts)} accounts (rate limited?)")
         return False
 
-    print("  Fetching tag mappings via GQL...")
+    _report(16, "Fetching tag mappings...")
     tag_map = fetch_tag_mappings()
-    print(f"  Got tags for {len(tag_map)} accounts")
+    _report(22, f"Got tags for {len(tag_map)} accounts")
 
     for a in accounts:
         a["tags"] = tag_map.get(a["id"], [])
 
-    print("  Fetching health metrics...")
+    _report(23, "Fetching health metrics...")
     health = fetch_health_metrics()
-    print(f"  Got {len(health)} health records")
+    _report(30, f"Got {len(health)} health records")
 
     today_str = datetime.now().strftime("%Y-%m-%d")
-    print("  Fetching today's sent counts...")
+    _report(31, "Fetching today's sent counts...")
     health_today = fetch_health_metrics(start_date=today_str, end_date=today_str)
-    print(f"  Got {len(health_today)} daily health records")
+    _report(35, f"Got {len(health_today)} daily records")
 
-    print("  Fetching campaign mappings...")
-    campaign_map = fetch_campaign_accounts()
-    print(f"  Got campaigns for {len(campaign_map)} email accounts")
+    _report(36, "Fetching campaign account mappings...")
+    def _camp_progress(i, total):
+        pct = 36 + int((i / max(total, 1)) * 49)
+        _report(pct, f"Fetching campaigns ({i + 1}/{total})...")
+    campaign_map = fetch_campaign_accounts(progress_cb=_camp_progress)
+    _report(85, f"Got campaigns for {len(campaign_map)} accounts")
 
+    _report(86, "Building overview...")
     overview = build_overview(accounts, health, crm_names, campaign_map, health_today)
     client_count = len(overview["clients"])
-    print(f"  Built overview: {client_count} clients, {overview['total_accounts']} accounts")
+    _report(88, f"Built: {client_count} clients, {overview['total_accounts']} accounts")
 
     if client_count < 8:
-        print(f"  ABORT: only {client_count} clients (need >= 8), skipping cache write")
+        _report(0, f"Aborted: only {client_count} clients (need >= 8)")
         return False
 
-    print("  Fetching acquisition campaign stats...")
+    _report(89, "Fetching acquisition campaign stats...")
     overview["acq_campaign_stats"] = fetch_acq_campaign_stats()
-    print(f"  Got stats for {len(overview['acq_campaign_stats'])} acquisition campaigns")
+    _report(95, f"Got stats for {len(overview['acq_campaign_stats'])} acquisition campaigns")
 
+    _report(96, "Writing cache...")
     store.cache_set("overview_v2", overview)
     print(f"  Cache written: {client_count} clients")
 
@@ -503,10 +519,11 @@ def sync():
     store.cache_set("health_history", history)
     print(f"  Health snapshot saved ({len(history)} days in history)")
 
-    # Verify
+    _report(99, "Verifying cache...")
     cached, ts = store.cache_get("overview_v2")
     verified = len((cached or {}).get("clients", []))
     print(f"  Verified: {verified} clients in cache")
+    _report(100, f"Sync complete — {verified} clients, {overview['total_accounts']} accounts")
     print(f"[sync] Done at {datetime.now().strftime('%H:%M:%S')}")
     return True
 

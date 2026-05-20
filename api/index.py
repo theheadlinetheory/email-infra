@@ -108,15 +108,40 @@ def trigger_sync():
         return _cors(make_response("", 200))
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    import time as _time
+    store._CACHE_WRITE_ENABLED = True
+
+    def progress_cb(pct, msg):
+        try:
+            store.cache_set("sync_progress", {
+                "pct": pct, "msg": msg, "ts": _time.time(), "status": "running"
+            })
+        except Exception:
+            pass
+
+    store.cache_set("sync_progress", {"pct": 0, "msg": "Starting sync...", "ts": _time.time(), "status": "running"})
     try:
         import sync
         sync.store._CACHE_WRITE_ENABLED = True
-        ok = sync.sync()
+        ok = sync.sync(progress_cb=progress_cb)
+        status = "done" if ok else "error"
+        msg = "Sync complete" if ok else "Sync aborted (insufficient data)"
+        store.cache_set("sync_progress", {"pct": 100 if ok else 0, "msg": msg, "ts": _time.time(), "status": status})
         if ok:
-            return _cors(jsonify({"ok": True, "message": "Sync complete"}))
-        return _cors(jsonify({"ok": False, "message": "Sync aborted (insufficient data)"})), 500
+            return _cors(jsonify({"ok": True, "message": msg}))
+        return _cors(jsonify({"ok": False, "message": msg})), 500
     except Exception as e:
+        store.cache_set("sync_progress", {"pct": 0, "msg": str(e), "ts": _time.time(), "status": "error"})
         return _cors(jsonify({"error": str(e)})), 500
+
+
+@app.route("/api/sync-progress")
+def sync_progress():
+    if not _check_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+    data, _ = _get_cache("sync_progress")
+    return _cors(jsonify(data or {"status": "idle", "pct": 0, "msg": ""}))
 
 
 def _sl_request(method, url, **kwargs):

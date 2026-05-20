@@ -109,6 +109,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .util-sync-btn.syncing { animation: spin 1s linear infinite; pointer-events: none; color: #22c55e; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+/* Sync progress modal */
+.sync-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(4px); }
+.sync-modal { background: #1a1d28; border: 1px solid #2a2d38; border-radius: 16px; padding: 32px 40px; width: 440px; max-width: 90vw; text-align: center; }
+.sync-modal h3 { margin: 0 0 20px; color: #e2e8f0; font-size: 18px; font-weight: 600; }
+.sync-progress-track { background: #0f1117; border-radius: 10px; height: 20px; overflow: hidden; margin-bottom: 16px; }
+.sync-progress-fill { background: linear-gradient(90deg, #22c55e, #4ade80); height: 100%; border-radius: 10px; transition: width 0.4s ease; min-width: 0; }
+.sync-pct { color: #22c55e; font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+.sync-msg { color: #94a3b8; font-size: 14px; margin-bottom: 6px; min-height: 20px; }
+.sync-eta { color: #64748b; font-size: 13px; min-height: 18px; }
+.sync-done .sync-progress-fill { background: linear-gradient(90deg, #22c55e, #16a34a); }
+.sync-error .sync-progress-fill { background: #ef4444; }
+
 /* Campaign modal */
 .camp-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; }
 .camp-stat { background: #0f1117; border-radius: 8px; padding: 12px; text-align: center; }
@@ -165,6 +177,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <button class="tab" onclick="showTab('acquisition')">Acquisition</button>
 </div>
 
+<div id="sync-overlay" class="sync-overlay" style="display:none;">
+    <div class="sync-modal" id="sync-modal">
+        <h3>Syncing SmartLead Data</h3>
+        <div class="sync-pct" id="sync-pct">0%</div>
+        <div class="sync-progress-track"><div class="sync-progress-fill" id="sync-fill" style="width:0%"></div></div>
+        <div class="sync-msg" id="sync-msg">Connecting...</div>
+        <div class="sync-eta" id="sync-eta"></div>
+    </div>
+</div>
 <div id="loading" class="loading">Loading dashboard...</div>
 
 <div id="clients-tab" style="display:none;">
@@ -230,33 +251,111 @@ async function load() {
     }
 }
 
+var _syncPollId = null;
+var _syncStartTime = null;
+
+function _authHeaders() {
+    var h = {};
+    var token = localStorage.getItem('fb_token');
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return h;
+}
+
+function _authQs() {
+    var pw = getCookie('dashboard_pw') || new URLSearchParams(location.search).get('pw') || '';
+    return pw ? '?pw=' + pw : '';
+}
+
+function _showSyncModal() {
+    document.getElementById('sync-overlay').style.display = 'flex';
+    document.getElementById('sync-modal').className = 'sync-modal';
+    _updateSyncUI(0, 'Connecting...', '');
+}
+
+function _hideSyncModal() {
+    setTimeout(function() { document.getElementById('sync-overlay').style.display = 'none'; }, 1500);
+}
+
+function _updateSyncUI(pct, msg, eta) {
+    document.getElementById('sync-pct').textContent = Math.round(pct) + '%';
+    document.getElementById('sync-fill').style.width = pct + '%';
+    document.getElementById('sync-msg').textContent = msg || '';
+    document.getElementById('sync-eta').textContent = eta || '';
+}
+
+function _formatEta(ms) {
+    if (!ms || ms < 0 || !isFinite(ms)) return '';
+    var secs = Math.ceil(ms / 1000);
+    if (secs < 5) return 'Almost done...';
+    if (secs < 60) return '~' + secs + 's remaining';
+    var mins = Math.floor(secs / 60);
+    return '~' + mins + 'm ' + (secs % 60) + 's remaining';
+}
+
+async function _pollSyncProgress() {
+    try {
+        var resp = await fetch('/api/sync-progress' + _authQs(), { headers: _authHeaders() });
+        if (!resp.ok) return;
+        var p = await resp.json();
+        var pct = p.pct || 0;
+        var elapsed = Date.now() - _syncStartTime;
+        var eta = pct > 3 ? _formatEta((elapsed / pct) * (100 - pct)) : 'Estimating...';
+        _updateSyncUI(pct, p.msg || '', eta);
+
+        if (p.status === 'done') {
+            _updateSyncUI(100, p.msg || 'Sync complete', '');
+            document.getElementById('sync-modal').className = 'sync-modal sync-done';
+            _stopSyncPoll();
+            await _reloadDashboardData();
+            _hideSyncModal();
+        } else if (p.status === 'error') {
+            _updateSyncUI(pct, p.msg || 'Sync failed', '');
+            document.getElementById('sync-modal').className = 'sync-modal sync-error';
+            _stopSyncPoll();
+            _hideSyncModal();
+        }
+    } catch (e) {}
+}
+
+function _stopSyncPoll() {
+    if (_syncPollId) { clearInterval(_syncPollId); _syncPollId = null; }
+    var btn = document.querySelector('.util-sync-btn');
+    if (btn) btn.classList.remove('syncing');
+}
+
+async function _reloadDashboardData() {
+    var qs = _authQs();
+    var h = _authHeaders();
+    var resp = await fetch('/api/overview' + qs, { headers: h });
+    if (resp.ok) { var d = await resp.json(); if (!d.loading) data = d; }
+    var hResp = await fetch('/api/health-history' + qs, { headers: h });
+    if (hResp.ok) historyData = await hResp.json();
+    render();
+}
+
 async function syncDashboard() {
     var btn = document.querySelector('.util-sync-btn');
     if (btn) btn.classList.add('syncing');
+    _syncStartTime = Date.now();
+    _showSyncModal();
+    _syncPollId = setInterval(_pollSyncProgress, 1500);
     try {
-        var pw = getCookie('dashboard_pw') || new URLSearchParams(location.search).get('pw') || '';
-        var qs = pw ? '?pw=' + pw : '';
-        var headers = {};
-        var token = localStorage.getItem('fb_token');
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        var syncResp = await fetch('/api/sync' + qs, { method: 'POST', headers: headers });
-        var syncResult = await syncResp.json();
-        if (!syncResp.ok) {
-            console.error('Sync failed:', syncResult);
-            alert('Sync failed: ' + (syncResult.error || syncResult.message || 'Unknown error'));
-            if (btn) btn.classList.remove('syncing');
-            return;
+        var resp = await fetch('/api/sync' + _authQs(), { method: 'POST', headers: _authHeaders() });
+        var result = await resp.json();
+        if (!resp.ok && _syncPollId) {
+            _updateSyncUI(0, result.error || result.message || 'Sync failed', '');
+            document.getElementById('sync-modal').className = 'sync-modal sync-error';
+            _stopSyncPoll();
+            _hideSyncModal();
         }
-        var resp = await fetch('/api/overview' + qs, { headers: headers });
-        if (resp.ok) {
-            var newData = await resp.json();
-            if (!newData.loading) { data = newData; }
+    } catch (e) {
+        if (_syncPollId) {
+            _updateSyncUI(0, 'Network error: ' + e.message, '');
+            document.getElementById('sync-modal').className = 'sync-modal sync-error';
+            _stopSyncPoll();
+            _hideSyncModal();
         }
-        var hResp = await fetch('/api/health-history' + qs, { headers: headers });
-        if (hResp.ok) historyData = await hResp.json();
-        render();
-    } catch (e) { console.error('Sync error:', e); alert('Sync error: ' + e.message); }
-    if (btn) btn.classList.remove('syncing');
+    }
 }
 
 var currentTab = 'clients';
