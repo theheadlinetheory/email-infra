@@ -100,8 +100,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .util-bar-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
 .util-bar-title { font-size: 14px; font-weight: 600; color: #f1f5f9; }
 .util-bar-pct { font-size: 28px; font-weight: 700; }
-.util-bar-track { height: 16px; background: #0f1117; border-radius: 8px; overflow: hidden; display: flex; }
-.util-bar-fill { height: 100%; border-radius: 8px; transition: width 0.4s ease; display: inline-block; vertical-align: top; }
+.util-bar-track { height: 16px; background: #0f1117; border-radius: 8px; overflow: visible; display: flex; }
+.util-bar-fill { height: 100%; border-radius: 8px; transition: width 0.4s ease; display: inline-block; vertical-align: top; position: relative; cursor: default; }
+.util-bar-fill:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #1e293b; color: #e2e8f0; font-size: 11px; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; z-index: 10; border: 1px solid #334155; }
 .util-bar-predicted { background: rgba(74,222,128,0.25); border-radius: 0 8px 8px 0; }
 .util-bar-labels { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #94a3b8; }
 .util-sync-btn { background: #1a1d28; border: 1px solid #2a2d38; color: #94a3b8; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
@@ -521,10 +522,10 @@ function renderUtilBar() {
     var unusedPct = Math.max(0, 100 - sentPct - (showPredicted ? predictPct - sentPct : 0) - unassignedPct);
 
     var barHtml = '';
-    if (sentPct > 0) barHtml += '<div class="util-bar-fill" style="width:' + sentPct + '%;background:' + sentColor + ';" title="' + sent.toLocaleString() + ' confirmed sent"></div>';
-    if (showPredicted) barHtml += '<div class="util-bar-fill util-bar-predicted" style="width:' + (predictPct - sentPct) + '%;" title="~' + (predicted - sent).toLocaleString() + ' predicted remaining"></div>';
-    if (unusedPct > 0) barHtml += '<div class="util-bar-fill" style="width:' + unusedPct + '%;background:rgba(34,197,94,0.12);" title="' + Math.max(0, assignedCap - predicted).toLocaleString() + '/day unused assigned capacity"></div>';
-    if (unassignedPct > 0) barHtml += '<div class="util-bar-fill" style="width:' + unassignedPct + '%;background:rgba(100,116,139,0.3);border-radius:0 8px 8px 0;" title="' + idleVol.toLocaleString() + '/day idle (' + unassignedAccts + ' unassigned accounts)"></div>';
+    if (sentPct > 0) barHtml += '<div class="util-bar-fill" style="width:' + sentPct + '%;background:' + sentColor + ';" data-tip="' + sent.toLocaleString() + ' confirmed sent"></div>';
+    if (showPredicted) barHtml += '<div class="util-bar-fill util-bar-predicted" style="width:' + (predictPct - sentPct) + '%;" data-tip="~' + (predicted - sent).toLocaleString() + ' predicted remaining"></div>';
+    if (unusedPct > 0) barHtml += '<div class="util-bar-fill" style="width:' + unusedPct + '%;background:rgba(34,197,94,0.12);" data-tip="' + Math.max(0, assignedCap - predicted).toLocaleString() + '/day unused assigned capacity"></div>';
+    if (unassignedPct > 0) barHtml += '<div class="util-bar-fill" style="width:' + unassignedPct + '%;background:rgba(100,116,139,0.3);border-radius:0 8px 8px 0;" data-tip="' + idleVol.toLocaleString() + '/day idle (' + unassignedAccts + ' unassigned)"></div>';
     var subHtml = sublabel ? '<span style="color:#4ade80;font-size:11px;margin-left:8px;">' + sublabel + '</span>' : '';
     var idleLabel = unassignedAccts > 0 ? '<span style="color:#64748b;font-size:11px;margin-left:8px;">' + (unassignedAccts * 15).toLocaleString() + '/day idle (' + unassignedAccts + ' unassigned)</span>' : '';
 
