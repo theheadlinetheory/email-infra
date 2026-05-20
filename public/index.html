@@ -459,7 +459,7 @@ function renderUtilBar() {
     var groups = data.acquisition_groups || [];
     var campStats = data.acq_campaign_stats || [];
     var totalAccts = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
-    var inCampaignAccts = campStats.reduce(function(s, c) { return s + (c.accounts || 0); }, 0);
+    var inCampaignAccts = groups.reduce(function(s, g) { return s + (g.in_campaign || 0); }, 0);
     var unassignedAccts = totalAccts - inCampaignAccts;
     var dailyCapacity = totalAccts * 15;
 
