@@ -122,6 +122,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .camp-table .mini-bar-fill { height: 100%; border-radius: 3px; }
 .camp-table-wrap { background: #12141f; border: 1px solid #1e2130; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; }
 .camp-table-title { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 12px; }
+.camp-table-wrap.collapsed .camp-table { display: none; }
+.camp-table-wrap.collapsed .camp-table-title { margin-bottom: 0; }
+.chevron { display: inline-block; transform: rotate(-90deg); }
+.chevron.open { transform: rotate(0deg); }
 
 /* Sync progress toast */
 .sync-toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; background: #1a1d28; border: 1px solid #2a2d38; border-radius: 12px; padding: 16px 20px; width: 320px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); transition: opacity 0.3s, transform 0.3s; }
@@ -581,10 +585,15 @@ function renderCampaignTable() {
         '<td class="num">' + totalRemaining.toLocaleString() + '</td>' +
         '<td class="num">' + totalAccts + '</td>' +
     '</tr>';
-    document.getElementById('acq-campaign-table').innerHTML =
+    var el = document.getElementById('acq-campaign-table');
+    var wasOpen = el.querySelector('.camp-table') !== null;
+    el.innerHTML =
         '<div class="camp-table-wrap">' +
-            '<div class="camp-table-title">Campaign Breakdown</div>' +
-            '<table class="camp-table">' +
+            '<div class="camp-table-title" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="this.parentElement.classList.toggle(\'collapsed\');this.querySelector(\'.chevron\').classList.toggle(\'open\')">' +
+                '<span>Campaign Breakdown</span>' +
+                '<span class="chevron' + (wasOpen ? ' open' : '') + '" style="font-size:12px;color:#64748b;transition:transform 0.2s;">&#9660;</span>' +
+            '</div>' +
+            '<table class="camp-table" style="' + (wasOpen ? '' : 'display:none;') + '">' +
                 '<tr><th>Campaign</th><th class="num">Today</th><th>Volume</th><th class="num">Yesterday</th><th class="num">Remaining</th><th class="num">Accounts</th></tr>' +
                 rows +
             '</table>' +
