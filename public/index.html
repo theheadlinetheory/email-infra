@@ -457,7 +457,8 @@ function renderUtilBar() {
     var campStats = data.acq_campaign_stats || [];
     var totalAccts = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
     var inCampaignAccts = campStats.reduce(function(s, c) { return s + (c.accounts || 0); }, 0);
-    var dailyCapacity = inCampaignAccts * 15;
+    var unassignedAccts = totalAccts - inCampaignAccts;
+    var dailyCapacity = totalAccts * 15;
 
     var sent = 0, predicted = 0, label = '', sublabel = '';
     if (acqUtilMode === 'today') {
@@ -498,18 +499,24 @@ function renderUtilBar() {
     }
     btns += '</div>';
 
+    var unassignedPct = dailyCapacity > 0 ? Math.round((unassignedAccts * 15 / dailyCapacity) * 100) : 0;
+
     var barHtml = '<div class="util-bar-fill" style="width:' + sentPct + '%;background:' + sentColor + ';"></div>';
     if (showPredicted) {
         barHtml += '<div class="util-bar-fill util-bar-predicted" style="width:' + (predictPct - sentPct) + '%;"></div>';
     }
+    if (unassignedPct > 0) {
+        barHtml += '<div class="util-bar-fill" style="width:' + unassignedPct + '%;background:rgba(100,116,139,0.3);border-radius:0 8px 8px 0;position:absolute;right:0;top:0;height:100%;"></div>';
+    }
     var subHtml = sublabel ? '<span style="color:#4ade80;font-size:11px;margin-left:8px;">' + sublabel + '</span>' : '';
+    var idleLabel = unassignedAccts > 0 ? '<span style="color:#64748b;font-size:11px;margin-left:8px;">' + (unassignedAccts * 15).toLocaleString() + '/day idle (' + unassignedAccts + ' unassigned)</span>' : '';
 
     document.getElementById('acq-util-bar').innerHTML =
         '<div class="util-bar-container">' +
             '<div class="util-bar-header"><span class="util-bar-title">Acquisition Sending</span>' + btns + '</div>' +
             '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px;"><span class="util-bar-pct" style="color:' + sentColor + '">' + displayPct + '%</span><span style="font-size:13px;color:#94a3b8;">' + (acqUtilMode === 'tomorrow' ? 'predicted capacity' : 'of capacity') + '</span>' + subHtml + '</div>' +
-            '<div class="util-bar-track">' + barHtml + '</div>' +
-            '<div class="util-bar-labels"><span>' + label + '</span><span>' + dailyCapacity.toLocaleString() + '/day capacity</span></div>' +
+            '<div class="util-bar-track" style="position:relative;">' + barHtml + '</div>' +
+            '<div class="util-bar-labels"><span>' + label + '</span><span>' + dailyCapacity.toLocaleString() + '/day capacity' + idleLabel + '</span></div>' +
         '</div>';
 }
 
