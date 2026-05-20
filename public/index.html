@@ -364,10 +364,7 @@ async function refreshStats() {
     var btn = document.querySelector('.stats-refresh-btn');
     if (btn) { btn.classList.add('syncing'); btn.disabled = true; }
     try {
-        var ac = new AbortController();
-        var tid = setTimeout(function() { ac.abort(); }, 60000);
-        var resp = await fetch('/api/refresh-stats' + _authQs(), { method: 'POST', headers: _authHeaders(), signal: ac.signal });
-        clearTimeout(tid);
+        var resp = await fetch('/api/refresh-stats' + _authQs(), { method: 'POST', headers: _authHeaders() });
         if (resp.ok) {
             var ov = await fetch('/api/overview' + _authQs(), { headers: _authHeaders() });
             if (ov.ok) { data = await ov.json(); render(); }
