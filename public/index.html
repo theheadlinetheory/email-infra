@@ -456,12 +456,13 @@ function renderUtilBar() {
     var groups = data.acquisition_groups || [];
     var campStats = data.acq_campaign_stats || [];
     var totalAccts = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
-    var dailyCapacity = totalAccts * 15;
+    var inCampaignAccts = campStats.reduce(function(s, c) { return s + (c.accounts || 0); }, 0);
+    var dailyCapacity = inCampaignAccts * 15;
 
     var sent = 0, predicted = 0, label = '', sublabel = '';
     if (acqUtilMode === 'today') {
         sent = campStats.reduce(function(s, c) { return s + (c.today_sent || 0); }, 0);
-        predicted = campStats.reduce(function(s, c) { return s + Math.min(c.remaining || 0, c.accounts * 15); }, 0);
+        predicted = Math.min(dailyCapacity, campStats.reduce(function(s, c) { return s + Math.min(c.remaining || 0, c.accounts * 15); }, 0));
         label = sent > 0 ? sent.toLocaleString() + ' confirmed sent' : 'No sends recorded yet today';
         sublabel = '~' + predicted.toLocaleString() + ' predicted total';
     } else if (acqUtilMode === 'yesterday') {
