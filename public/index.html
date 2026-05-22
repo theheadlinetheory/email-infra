@@ -1144,17 +1144,25 @@ function renderChart(groupKey, range) {
     else if (range === '14D') cutoff = 14;
     else if (range === '30D') cutoff = 30;
 
-    var points = [];
+    var dataByDate = {};
     for (var i = 0; i < historyData.length; i++) {
         var h = historyData[i];
-        var d = new Date(h.date + 'T12:00:00');
-        if (cutoff > 0 && (now - d) > cutoff * 86400000 + 43200000) continue;
         var gd = (h.groups || {})[groupKey] || (h.groups || {})[groupKey.replace(/ [AB]$/, '')];
-        if (!gd) continue;
-        points.push({ date: h.date, bounce: gd.bounce, reply: gd.reply });
+        if (gd) dataByDate[h.date] = { bounce: gd.bounce, reply: gd.reply };
     }
 
-    if (!points.length) {
+    var days = cutoff > 0 ? cutoff : Math.max(Object.keys(dataByDate).length, 14);
+    var points = [];
+    var lastBounce = null, lastReply = null;
+    for (var d = days; d >= 0; d--) {
+        var dt = new Date(now); dt.setDate(dt.getDate() - d);
+        var key = dt.toISOString().slice(0, 10);
+        var dd = dataByDate[key];
+        if (dd) { lastBounce = dd.bounce; lastReply = dd.reply; }
+        points.push({ date: key, bounce: lastBounce, reply: lastReply });
+    }
+
+    if (!points.length || (lastBounce === null && lastReply === null)) {
         el.innerHTML = '<div class="chart-empty">No data for this time range.</div>';
         return;
     }
