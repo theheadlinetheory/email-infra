@@ -471,6 +471,7 @@ function renderGeneric() {
 }
 
 var acqUtilMode = 'today';
+function isWeekend(d) { var day = d.getDay(); return day === 0 || day === 6; }
 
 function getAcqDailySent(dateStr) {
     if (!historyData || !historyData.length) return null;
@@ -497,28 +498,46 @@ function renderUtilBar() {
     var dailyCapacity = totalAccts * 15;
 
     var sent = 0, predicted = 0, label = '', sublabel = '';
+    var now = new Date();
     if (acqUtilMode === 'today') {
-        sent = campStats.reduce(function(s, c) { return s + (c.today_sent || 0); }, 0);
-        predicted = Math.min(dailyCapacity, campStats.reduce(function(s, c) { return s + Math.min(c.remaining || 0, c.accounts * 15); }, 0));
-        label = sent > 0 ? sent.toLocaleString() + ' confirmed sent' : 'No sends recorded yet today';
-        sublabel = '~' + predicted.toLocaleString() + ' predicted total';
+        if (isWeekend(now)) {
+            sent = 0; predicted = 0;
+            label = 'No sends on weekends';
+        } else {
+            sent = campStats.reduce(function(s, c) { return s + (c.today_sent || 0); }, 0);
+            predicted = Math.min(dailyCapacity, campStats.reduce(function(s, c) { return s + Math.min(c.remaining || 0, c.accounts * 15); }, 0));
+            label = sent > 0 ? sent.toLocaleString() + ' confirmed sent' : 'No sends recorded yet today';
+            sublabel = '~' + predicted.toLocaleString() + ' predicted total';
+        }
     } else if (acqUtilMode === 'yesterday') {
-        sent = campStats.reduce(function(s, c) { return s + (c.yesterday_sent || 0); }, 0);
-        label = sent > 0 ? sent.toLocaleString() + ' sent yesterday' : 'No data for yesterday';
+        var yday = new Date(now); yday.setDate(yday.getDate() - 1);
+        if (isWeekend(yday)) {
+            sent = 0;
+            label = 'No sends on weekends';
+        } else {
+            sent = campStats.reduce(function(s, c) { return s + (c.yesterday_sent || 0); }, 0);
+            label = sent > 0 ? sent.toLocaleString() + ' sent yesterday' : 'No data for yesterday';
+        }
     } else if (acqUtilMode === 'tomorrow') {
-        predicted = campStats.reduce(function(s, c) {
-            if ((c.remaining || 0) < 1) return s;
-            var recentDaily = Math.max(c.today_sent || 0, c.yesterday_sent || 0);
-            var cap = c.accounts * 15;
-            return s + Math.min(recentDaily > 0 ? recentDaily : cap, c.remaining, cap);
-        }, 0);
-        sent = 0;
-        label = '~' + predicted.toLocaleString() + ' predicted sends';
-        sublabel = 'Based on live lead counts + recent daily volume';
+        var tmrw = new Date(now); tmrw.setDate(tmrw.getDate() + 1);
+        if (isWeekend(tmrw)) {
+            predicted = 0; sent = 0;
+            label = 'No sends on weekends';
+        } else {
+            predicted = campStats.reduce(function(s, c) {
+                if ((c.remaining || 0) < 1) return s;
+                var recentDaily = Math.max(c.today_sent || 0, c.yesterday_sent || 0);
+                var cap = c.accounts * 15;
+                return s + Math.min(recentDaily > 0 ? recentDaily : cap, c.remaining, cap);
+            }, 0);
+            sent = 0;
+            label = '~' + predicted.toLocaleString() + ' predicted sends';
+            sublabel = 'Based on live lead counts + recent daily volume';
+        }
     } else {
         var totalSent7d = groups.reduce(function(s, g) { return s + (g.total_sent || 0); }, 0);
-        sent = Math.round(totalSent7d / 7);
-        label = sent.toLocaleString() + ' emails/day (7-day avg)';
+        sent = Math.round(totalSent7d / 5);
+        label = sent.toLocaleString() + ' emails/day (weekday avg)';
     }
 
     var sentPct = (dailyCapacity > 0 && sent) ? Math.min(Math.round((sent / dailyCapacity) * 100), 100) : 0;
@@ -527,7 +546,7 @@ function renderUtilBar() {
     var sentColor = displayPct >= 60 ? '#22c55e' : displayPct >= 30 ? '#f59e0b' : '#ef4444';
     var showPredicted = (acqUtilMode === 'today' || acqUtilMode === 'tomorrow') && predictPct > sentPct;
 
-    var modes = [['today','Today'],['tomorrow','Tomorrow'],['yesterday','Yesterday'],['7d','7D Avg']];
+    var modes = [['today','Today'],['tomorrow','Tomorrow'],['yesterday','Yesterday'],['7d','Wkly Avg']];
     var btns = '<div style="display:flex;gap:4px;align-items:center;">';
     btns += '<button class="util-sync-btn stats-refresh-btn" onclick="refreshStats()" title="Refresh sending stats">&#8635;</button>';
     for (var i = 0; i < modes.length; i++) {
@@ -630,7 +649,7 @@ function renderAcquisition() {
                 cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'good' : '') +
                 cardStat('Bounce Rate', fmtRate(g.avg_bounce_rate), rateClass(g.avg_bounce_rate, 3, 1)) +
                 cardStat('Reply Rate', fmtRate(g.avg_reply_rate), rateClassAsc(g.avg_reply_rate, 5, 2)) +
-                cardStat('Sent (7d)', g.total_sent || 0) +
+                cardStat('Sent (wk)', g.total_sent || 0) +
             '</div>' +
         '</div>';
     }).join('');
@@ -944,7 +963,9 @@ function drawProjectionChart(camp, totalAccts) {
         var dateStr = (d.getMonth() + 1) + '/' + d.getDate();
 
         var sends;
-        if (remaining <= 0) {
+        if (isWeekend(d)) {
+            sends = 0;
+        } else if (remaining <= 0) {
             sends = 0;
         } else if (remaining < newLeadsPerDay) {
             sends = Math.round(remaining * seqSteps * 0.5);
@@ -955,7 +976,7 @@ function drawProjectionChart(camp, totalAccts) {
         }
 
         points.push({ date: dateStr, sends: Math.round(sends), day: day });
-        if (sends < 1 && day > 3) break;
+        if (sends < 1 && day > 3 && !isWeekend(d)) break;
     }
 
     if (!points.length) { el.innerHTML = '<div class="chart-empty">No projection data.</div>'; return; }
