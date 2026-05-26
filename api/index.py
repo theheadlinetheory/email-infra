@@ -306,6 +306,62 @@ def unassign_group():
     return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
 
 
+@app.route("/api/subscriptions")
+def subscriptions():
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import requests as req
+    from datetime import datetime, timezone
+    zm_key = os.environ.get("ZAPMAIL_API_KEY", "")
+    if not zm_key:
+        return _cors(jsonify({"error": "ZAPMAIL_API_KEY not configured"})), 500
+    headers = {"Content-Type": "application/json", "x-auth-zapmail": zm_key, "x-service-provider": "GOOGLE"}
+    try:
+        r = req.get("https://api.zapmail.ai/api/v2/subscriptions", headers=headers, timeout=15)
+        raw = r.json()
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 502
+    subs = raw if isinstance(raw, list) else raw.get("data", [])
+    now = datetime.now(timezone.utc)
+    result = []
+    total_monthly = 0
+    total_mailboxes = 0
+    action_needed_count = 0
+    for s in subs:
+        if s.get("subscriptionStatus") != "ACTIVE":
+            continue
+        period_end = s.get("periodEnd", "")
+        try:
+            renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        days_until = (renews - now).days
+        price = s.get("price", 0)
+        mailboxes = s.get("totalMailboxQuantity", 0)
+        total_monthly += price
+        total_mailboxes += mailboxes
+        action_needed = days_until <= 16
+        if action_needed:
+            action_needed_count += 1
+        result.append({
+            "id": s.get("id"),
+            "subscription_id": s.get("subscriptionId"),
+            "price": price,
+            "mailboxes": mailboxes,
+            "renews": renews.strftime("%Y-%m-%d"),
+            "days_until_renewal": days_until,
+            "action_needed": action_needed,
+            "created": s.get("subscriptionCreationDate", "")[:10],
+        })
+    result.sort(key=lambda x: x["renews"])
+    return _cors(jsonify({
+        "subscriptions": result,
+        "total_monthly": total_monthly,
+        "total_mailboxes": total_mailboxes,
+        "action_needed_count": action_needed_count,
+    }))
+
+
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
 def catch_all(path):
     if request.method == "OPTIONS":
