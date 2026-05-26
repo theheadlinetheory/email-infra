@@ -1139,24 +1139,29 @@ def _sync_smartlead_data():
         clients = overview.get("clients", [])
         new_count = len(clients)
 
-        existing, _ = store.cache_get("overview")
+        # Merge acquisition groups into overview (sync.py does this natively)
+        try:
+            acq_data = _compute_acquisition()
+            if acq_data.get("total_groups", 0) > 0:
+                overview["acquisition_groups"] = acq_data.get("groups", [])
+                store.cache_set("acquisition", acq_data)
+                print(f"[sync] Cached {acq_data['total_groups']} acquisition groups")
+        except Exception as e:
+            print(f"[sync] Error computing acquisition: {e}")
+        if "acquisition_groups" not in overview:
+            overview["acquisition_groups"] = []
+        if "generic_groups" not in overview:
+            overview["generic_groups"] = []
+
+        existing, _ = store.cache_get("overview_v2")
         existing_count = len((existing or {}).get("clients", [])) if existing else 0
 
         should_cache = (new_count >= 8 and new_count >= existing_count) or (existing_count == 0 and new_count > 0)
         if should_cache:
-            store.cache_set("overview", overview)
+            store.cache_set("overview_v2", overview)
             print(f"[sync] Cached overview — {new_count} clients (was {existing_count})")
         else:
             print(f"[sync] SKIPPING cache write — only {new_count} clients vs {existing_count} in cache (need >= 8, likely partial sync)")
-
-        # Cache acquisition data
-        try:
-            acq_data = _compute_acquisition()
-            if acq_data.get("total_groups", 0) > 0:
-                store.cache_set("acquisition", acq_data)
-                print(f"[sync] Cached {acq_data['total_groups']} acquisition groups")
-        except Exception as e:
-            print(f"[sync] Error caching acquisition: {e}")
 
         # Pre-cache client accounts for each client
         for cl in overview.get("clients", []):
@@ -1295,16 +1300,16 @@ def sync_spaceship_to_sheet():
 # --- API endpoint logic (cache-first) ---
 
 def api_overview():
-    """Return overview from Supabase cache only. Cache is populated locally."""
+    """Return overview from Supabase cache only. Cache is populated by sync.py."""
     try:
-        cached, synced_at = store.cache_get("overview")
-        if cached and len(cached.get("clients", [])) > 0:
+        cached, synced_at = store.cache_get("overview_v2")
+        if cached and (cached.get("clients") or cached.get("acquisition_groups")):
             cached["_cached"] = True
             cached["_synced_at"] = synced_at
             return cached
     except Exception as e:
         print(f"[api_overview] Cache read failed: {e}")
-    return {"loading": True, "message": "Cache empty — run sync locally",
+    return {"loading": True, "message": "Cache empty — run sync.py locally",
             "clients": [], "total_accounts": 0, "in_campaign": 0,
             "smtp_failures": 0, "imap_failures": 0, "unassigned": 0,
             "blocked": [], "acquisition_groups": [], "generic_groups": []}
