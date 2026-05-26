@@ -227,6 +227,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="cards-grid" id="acq-grid"></div>
     <div class="section-title" style="margin-top:24px;">Campaign Board</div>
     <div id="kanban-board"></div>
+    <div class="section-title" style="margin-top:24px;">Zapmail Subscriptions</div>
+    <div id="subs-section"></div>
 </div>
 
 <div class="chart-tooltip" id="chart-tooltip"></div>
@@ -421,8 +423,12 @@ function renderClients() {
     grid.innerHTML = clients.map(function(c, i) {
         var hasB = c.group_b_count > 0;
         var s = c.group_a || c;
+        var cBr = s.avg_bounce_rate;
+        var cBounceBadge = '';
+        if (cBr != null && cBr >= 3) cBounceBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#7f1d1d;color:#fca5a5;margin-left:6px">HIGH BOUNCE</span>';
+        else if (cBr != null && cBr >= 2) cBounceBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">BOUNCE</span>';
         return '<div class="client-card" id="card-' + i + '" onclick="openModal(\'client\',' + i + ')">' +
-            '<div class="card-header"><div class="card-name">' + esc(c.name) + '</div><div class="card-count">' + c.accounts + ' accounts</div></div>' +
+            '<div class="card-header"><div class="card-name">' + esc(c.name) + cBounceBadge + '</div><div class="card-count">' + c.accounts + ' accounts</div></div>' +
             (hasB ?
                 '<div class="group-toggle" onclick="event.stopPropagation()">' +
                     '<button class="group-btn active" onclick="cardToggle(' + i + ',\'a\')">Group A · ' + c.group_a_count + '</button>' +
@@ -641,8 +647,12 @@ function renderAcquisition() {
         var isLars = (g.name || '').match(/\bG\b/);
         var owner = isLars ? 'Lars' : 'Aidan';
         var ownerClass = isLars ? 'acq-lars' : 'acq-aidan';
+        var br = g.avg_bounce_rate;
+        var bounceBadge = '';
+        if (br != null && br >= 3) bounceBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#7f1d1d;color:#fca5a5;margin-left:6px">HIGH BOUNCE</span>';
+        else if (br != null && br >= 2) bounceBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">BOUNCE</span>';
         return '<div class="acq-card" onclick="openModal(\'acq\',' + i + ')">' +
-            '<div class="acq-header"><span class="acq-name">' + esc(g.name) + '</span><span class="acq-badge ' + ownerClass + '">' + owner + '</span></div>' +
+            '<div class="acq-header"><span class="acq-name">' + esc(g.name) + bounceBadge + '</span><span class="acq-badge ' + ownerClass + '">' + owner + '</span></div>' +
             '<div class="card-stats">' +
                 cardStat('Accounts', g.accounts) +
                 cardStat('Domains', g.total_domains || 0) +
@@ -654,6 +664,58 @@ function renderAcquisition() {
         '</div>';
     }).join('');
     renderKanban();
+    renderSubscriptions();
+}
+
+function renderSubscriptions() {
+    var el = document.getElementById('subs-section');
+    if (!el) return;
+    if (data._subs_loading) return;
+    if (data._subs_data) { _renderSubsTable(el, data._subs_data); return; }
+    el.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b">Loading subscriptions...</div>';
+    data._subs_loading = true;
+    fetch('/api/subscriptions').then(function(r) { return r.json(); }).then(function(d) {
+        data._subs_data = d;
+        data._subs_loading = false;
+        _renderSubsTable(el, d);
+    }).catch(function() {
+        data._subs_loading = false;
+        el.innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444">Failed to load subscriptions</div>';
+    });
+}
+function _renderSubsTable(el, d) {
+    var subs = d.subscriptions || [];
+    if (!subs.length) { el.innerHTML = '<div class="empty-state">No active subscriptions.</div>'; return; }
+    var actionCount = d.action_needed_count || 0;
+    var html = '<div style="display:flex;gap:16px;padding:0 24px 12px;flex-wrap:wrap">' +
+        '<div class="stat-box"><div class="stat-val">' + subs.length + '</div><div class="stat-label">Active Subs</div></div>' +
+        '<div class="stat-box"><div class="stat-val">$' + (d.total_monthly || 0).toLocaleString() + '</div><div class="stat-label">Monthly</div></div>' +
+        '<div class="stat-box"><div class="stat-val">' + (d.total_mailboxes || 0).toLocaleString() + '</div><div class="stat-label">Mailboxes</div></div>' +
+        '<div class="stat-box"><div class="stat-val" style="' + (actionCount > 0 ? 'color:#f59e0b' : '') + '">' + actionCount + '</div><div class="stat-label">Renewing ≤16d</div></div>' +
+    '</div>';
+    html += '<div style="padding:0 24px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+    html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left">' +
+        '<th style="padding:8px 12px">Renews</th><th style="padding:8px 12px">Days</th>' +
+        '<th style="padding:8px 12px">Price</th><th style="padding:8px 12px">Mailboxes</th>' +
+        '<th style="padding:8px 12px">Created</th><th style="padding:8px 12px">Status</th></tr></thead><tbody>';
+    for (var i = 0; i < subs.length; i++) {
+        var s = subs[i];
+        var rowBg = s.action_needed ? 'background:rgba(239,68,68,0.08)' : '';
+        var dayColor = s.days_until_renewal <= 3 ? '#ef4444' : s.days_until_renewal <= 16 ? '#f59e0b' : '#22c55e';
+        var statusLabel;
+        if (s.days_until_renewal <= 3) statusLabel = '<span style="color:#fca5a5;background:#7f1d1d;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700">RENEWING NOW</span>';
+        else if (s.action_needed) statusLabel = '<span style="color:#fbbf24;background:#78350f;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600">CANCEL WINDOW</span>';
+        else statusLabel = '<span style="color:#86efac;font-size:10px">OK</span>';
+        html += '<tr style="border-bottom:1px solid #1e293b;' + rowBg + '">' +
+            '<td style="padding:8px 12px;color:#f1f5f9">' + s.renews + '</td>' +
+            '<td style="padding:8px 12px;color:' + dayColor + ';font-weight:600">' + s.days_until_renewal + 'd</td>' +
+            '<td style="padding:8px 12px;color:#f1f5f9">$' + s.price + '</td>' +
+            '<td style="padding:8px 12px;color:#94a3b8">' + s.mailboxes + '</td>' +
+            '<td style="padding:8px 12px;color:#64748b">' + s.created + '</td>' +
+            '<td style="padding:8px 12px">' + statusLabel + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
 }
 
 function renderKanban() {

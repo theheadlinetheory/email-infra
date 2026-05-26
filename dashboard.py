@@ -524,7 +524,7 @@ def calculate_health_score(account, health_data, in_warmup_period=False):
     """Calculate health score (0-100) for an inbox.
 
     During warmup (first 14 days): score = reputation only.
-    After warmup: reputation (80%) + campaign reply rate (20%).
+    After warmup: reputation (60%) + bounce rate (20%) + reply rate (20%).
     No-data defaults to 100 (new/unused accounts are healthy).
     Returns dict with score and list of flag reasons.
     """
@@ -549,15 +549,25 @@ def calculate_health_score(account, health_data, in_warmup_period=False):
     except (ValueError, TypeError):
         rep_score = 100  # no data = healthy
 
-    # Reply rate only matters with enough send volume (100+ emails)
-    # Below that, rates swing wildly from single events
     total_sent = h.get("sent", 0) or 0
     if in_warmup_period or total_sent < 100:
         score = round(rep_score)
         return {"score": score, "flags": flags}
 
-    # Sufficient data: add campaign reply rate (20%)
-    # 100pts at ≥2%, linear 0-100 across 0.5-2%, 0pts at ≤0.5%
+    # Bounce rate: ≤1% = 100, 1-3% = linear, ≥3% = 0 + flag
+    br = parse_rate(h.get("bounce_rate"))
+    if br is not None:
+        if br <= 1:
+            bounce_score = 100
+        elif br >= 3:
+            bounce_score = 0
+            flags.append("bounce")
+        else:
+            bounce_score = ((3 - br) / 2) * 100
+    else:
+        bounce_score = 100
+
+    # Reply rate: ≥2% = 100, 0.5-2% = linear, ≤0.5% = 0 + flag
     rr = parse_rate(h.get("reply_rate"))
     if rr is not None:
         if rr >= 2:
@@ -570,7 +580,7 @@ def calculate_health_score(account, health_data, in_warmup_period=False):
     else:
         reply_score = 100
 
-    score = round(rep_score * 0.80 + reply_score * 0.20)
+    score = round(rep_score * 0.60 + bounce_score * 0.20 + reply_score * 0.20)
 
     return {"score": score, "flags": flags}
 
@@ -2714,8 +2724,47 @@ def api_placement_tests():
 
 
 def api_subscriptions():
-    """Get ZapMail subscription/billing data."""
-    return zm_get_subscriptions()
+    """Get ZapMail subscription/billing data with renewal warnings."""
+    raw = zm_get_subscriptions()
+    subs = raw if isinstance(raw, list) else raw.get("data", [])
+    now = datetime.now(timezone.utc)
+    result = []
+    total_monthly = 0
+    total_mailboxes = 0
+    action_needed_count = 0
+    for s in subs:
+        if s.get("subscriptionStatus") != "ACTIVE":
+            continue
+        period_end = s.get("periodEnd", "")
+        try:
+            renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        days_until = (renews - now).days
+        price = s.get("price", 0)
+        mailboxes = s.get("totalMailboxQuantity", 0)
+        total_monthly += price
+        total_mailboxes += mailboxes
+        action_needed = days_until <= 16
+        if action_needed:
+            action_needed_count += 1
+        result.append({
+            "id": s.get("id"),
+            "subscription_id": s.get("subscriptionId"),
+            "price": price,
+            "mailboxes": mailboxes,
+            "renews": renews.strftime("%Y-%m-%d"),
+            "days_until_renewal": days_until,
+            "action_needed": action_needed,
+            "created": s.get("subscriptionCreationDate", "")[:10],
+        })
+    result.sort(key=lambda x: x["renews"])
+    return {
+        "subscriptions": result,
+        "total_monthly": total_monthly,
+        "total_mailboxes": total_mailboxes,
+        "action_needed_count": action_needed_count,
+    }
 
 
 # --- Generic Groups ---
@@ -3988,7 +4037,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pw = params.get("pw", [None])[0]
 
         if path == "/" or path == "/dashboard.html":
-            self._serve_file("dashboard.html", "text/html", set_cookie=pw)
+            self._serve_file("public/index.html", "text/html", set_cookie=pw)
         elif path.startswith("/css/") or path.startswith("/js/"):
             mime_types = {".css": "text/css", ".js": "application/javascript"}
             ext = os.path.splitext(path)[1]
@@ -4466,12 +4515,10 @@ def main():
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8099))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
 
-    from server.app import DashboardHandler as NewHandler
-
     class ThreadedServer(ThreadingMixIn, HTTPServer):
         daemon_threads = True
 
-    server = ThreadedServer((host, port), NewHandler)
+    server = ThreadedServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://{host}:{port}", flush=True)
 
     threading.Thread(target=_deferred_init, daemon=True).start()
