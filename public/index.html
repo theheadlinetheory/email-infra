@@ -674,11 +674,12 @@ function renderSubscriptions() {
     if (data._subs_data) { _renderSubsTable(el, data._subs_data); return; }
     el.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b">Loading subscriptions...</div>';
     data._subs_loading = true;
-    fetch('/api/subscriptions').then(function(r) { return r.json(); }).then(function(d) {
-        data._subs_data = d;
+    fetch('/api/subscriptions' + _authQs(), { headers: _authHeaders() }).then(function(r) { return r.json(); }).then(function(d) {
         data._subs_loading = false;
+        if (d.error) { el.innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444">' + esc(d.error) + '</div>'; return; }
+        data._subs_data = d;
         _renderSubsTable(el, d);
-    }).catch(function() {
+    }).catch(function(e) {
         data._subs_loading = false;
         el.innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444">Failed to load subscriptions</div>';
     });
