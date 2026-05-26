@@ -473,7 +473,7 @@ def get_health_metrics(days=7):
             f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
             headers=sl_internal_headers(),
             params={"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
-            timeout=15,
+            timeout=30,
         )
         if r.status_code != 200:
             return _health_cache["data"] or {}
@@ -1142,11 +1142,10 @@ def _sync_smartlead_data():
         existing, _ = store.cache_get("overview")
         existing_count = len((existing or {}).get("clients", [])) if existing else 0
 
-        if new_count >= 8 and new_count >= existing_count:
+        should_cache = (new_count >= 8 and new_count >= existing_count) or (existing_count == 0 and new_count > 0)
+        if should_cache:
             store.cache_set("overview", overview)
-            import traceback
             print(f"[sync] Cached overview — {new_count} clients (was {existing_count})")
-            print(f"[sync] Write caller: {''.join(traceback.format_stack()[-3:-1])}")
         else:
             print(f"[sync] SKIPPING cache write — only {new_count} clients vs {existing_count} in cache (need >= 8, likely partial sync)")
 
@@ -1161,9 +1160,12 @@ def _sync_smartlead_data():
 
         # Pre-cache client accounts for each client
         for cl in overview.get("clients", []):
+            cl_id = cl.get("id")
+            if not cl_id:
+                continue
             try:
-                cl_data = _compute_client_accounts(cl["id"])
-                store.cache_set(f"client_accounts_{cl['id']}", cl_data)
+                cl_data = _compute_client_accounts(cl_id)
+                store.cache_set(f"client_accounts_{cl_id}", cl_data)
             except Exception as e:
                 print(f"[sync] Error caching client {cl.get('name')}: {e}")
 
