@@ -269,6 +269,13 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
             domain = email.split("@")[-1] if "@" in email else ""
             h = health.get(email, {})
             acct_camps = campaign_map.get(email, [])
+            raw_rep = a.get("warmup_details", {}).get("warmup_reputation", "?")
+            warmup_reputation = None
+            if isinstance(raw_rep, str) and raw_rep.endswith("%"):
+                try:
+                    warmup_reputation = int(raw_rep[:-1])
+                except ValueError:
+                    pass
             account_details.append({
                 "id": a.get("id"),
                 "email": email,
@@ -280,14 +287,17 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
                 "warmup_enabled": bool(a.get("warmup_enabled")),
                 "in_campaign": len(acct_camps) > 0,
                 "campaign_names": [c["name"] for c in acct_camps],
+                "warmup_reputation": warmup_reputation,
             })
         account_details.sort(key=lambda x: x["email"])
+        rep_values = [ad["warmup_reputation"] for ad in account_details if ad["warmup_reputation"] is not None]
         return {
             "in_campaign": assigned,
             "smtp_failures": smtp_fail,
             "total_domains": len(domains),
             "avg_bounce_rate": round(sum(bounce_rates) / len(bounce_rates), 1) if bounce_rates else None,
             "avg_reply_rate": round(sum(reply_rates) / len(reply_rates), 1) if reply_rates else None,
+            "avg_warmup_reputation": round(sum(rep_values) / len(rep_values), 1) if rep_values else None,
             "total_sent": total_sent,
             "daily_sent": daily_sent,
             "daily_capacity": len(accts) * 15,
