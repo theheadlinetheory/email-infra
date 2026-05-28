@@ -402,6 +402,8 @@ def create_replacement():
         "warming_started_at": None,
         "swapped_at": None,
         "cancelled_at": None,
+        "old_cancelled": False,
+        "old_cancel_date": None,
     }
     state["jobs"].append(job)
     store.set_state("domain_replacements", state)
@@ -450,6 +452,9 @@ def update_replacement():
             job["cancelled_at"] = now
     if new_domain:
         job["new_domain"] = new_domain
+    if body.get("old_cancelled"):
+        job["old_cancelled"] = True
+        job["old_cancel_date"] = _dt.now().strftime("%Y-%m-%d")
     store.set_state("domain_replacements", state)
     return _cors(jsonify({"ok": True, "job": job}))
 

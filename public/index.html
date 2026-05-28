@@ -776,46 +776,90 @@ function flagDomainFromMaint(domain, groupName, groupType, bounceRate) {
     });
 }
 
-function renderReplacementTracker() {
-    var el = document.getElementById('replacement-tracker');
-    if (!el) return;
-    var jobs = (data._replacements || []).filter(function(j) {
-        return j.status !== 'cancelled';
-    });
-    if (!jobs.length) { el.innerHTML = ''; return; }
-    var active = jobs.filter(function(j) { return j.status !== 'swapped'; });
-    var done = jobs.filter(function(j) { return j.status === 'swapped'; });
-    var statusColors = {
-        flagged: { bg: '#7f1d1d', text: '#fca5a5', label: 'FLAGGED' },
+function _isJobComplete(j) {
+    return (j.status === 'swapped' && j.old_cancelled) || j.status === 'cancelled';
+}
+function _warmupDays(j) {
+    if (!j.warming_started_at) return 0;
+    return Math.floor((Date.now() - new Date(j.warming_started_at + 'T00:00:00').getTime()) / 86400000);
+}
+function _jobRowColor(j) {
+    if (j.status === 'flagged') return 'border-left:3px solid #ef4444;background:rgba(127,29,29,0.15);';
+    if (j.status === 'warming') return 'border-left:3px solid #f59e0b;background:rgba(120,53,15,0.15);';
+    if (j.status === 'ready') return 'border-left:3px solid #10b981;background:rgba(6,78,59,0.15);';
+    if (j.status === 'swapped' && !j.old_cancelled) return 'border-left:3px solid #3b82f6;background:rgba(30,64,175,0.1);';
+    return '';
+}
+function _statusBadge(j) {
+    var map = {
+        flagged: { bg: '#7f1d1d', text: '#fca5a5', label: 'NEEDS ATTENTION' },
         warming: { bg: '#78350f', text: '#fbbf24', label: 'WARMING' },
         ready: { bg: '#064e3b', text: '#6ee7b7', label: 'READY TO SWAP' },
-        swapped: { bg: '#1e293b', text: '#94a3b8', label: 'SWAPPED' }
+        swapped: { bg: '#1e3a5f', text: '#93c5fd', label: 'SWAPPED' },
+        cancelled: { bg: '#1e293b', text: '#64748b', label: 'ABANDONED' }
     };
-    var html = '<div style="margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:16px 20px;">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
-    html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;">Domain Replacements <span style="color:#64748b;font-weight:400;">(' + active.length + ' active)</span></div>';
-    html += '</div>';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    var sc = map[j.status] || map.flagged;
+    var badge = '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + sc.bg + ';color:' + sc.text + ';font-weight:600;">' + sc.label + '</span>';
+    if (j.status === 'warming') {
+        var d = _warmupDays(j);
+        var remaining = Math.max(0, 14 - d);
+        badge += ' <span style="font-size:10px;color:#fbbf24;font-weight:600;">Day ' + d + '/14' + (remaining > 0 ? ' (' + remaining + ' left)' : ' ✔') + '</span>';
+    }
+    if (j.status === 'swapped') {
+        badge += j.old_cancelled
+            ? ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#6ee7b7;font-weight:600;">OLD CANCELLED</span>'
+            : ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#7f1d1d;color:#fca5a5;font-weight:600;">OLD STILL ACTIVE</span>';
+    }
+    return badge;
+}
+function _replacementTable(jobs, isArchived) {
+    if (!jobs.length) return '<div style="color:#475569;font-size:12px;padding:8px 0;">None</div>';
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
     html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;">' +
         '<th style="padding:6px 10px">Old Domain</th><th style="padding:6px 10px">Group</th>' +
         '<th style="padding:6px 10px">Bounce</th><th style="padding:6px 10px">Status</th>' +
-        '<th style="padding:6px 10px">New Domain</th><th style="padding:6px 10px">Actions</th></tr></thead><tbody>';
-    var allJobs = active.concat(done);
-    for (var i = 0; i < allJobs.length; i++) {
-        var j = allJobs[i];
-        var sc = statusColors[j.status] || statusColors.flagged;
-        var statusBadge = '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + sc.bg + ';color:' + sc.text + ';font-weight:600;">' + sc.label + '</span>';
-        var rowOpacity = j.status === 'swapped' ? 'opacity:0.5;' : '';
-        var actions = _replacementActions(j);
-        html += '<tr style="border-bottom:1px solid #1e293b;' + rowOpacity + '">' +
+        '<th style="padding:6px 10px">New Domain</th>' +
+        (isArchived ? '<th style="padding:6px 10px">Completed</th>' : '<th style="padding:6px 10px">Actions</th>') +
+        '</tr></thead><tbody>';
+    for (var i = 0; i < jobs.length; i++) {
+        var j = jobs[i];
+        var rowStyle = isArchived ? 'opacity:0.6;' : _jobRowColor(j);
+        html += '<tr style="border-bottom:1px solid #1e293b;' + rowStyle + '">' +
             '<td style="padding:6px 10px;color:#f1f5f9;">' + esc(j.old_domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;">' + esc(j.group_name) + '</td>' +
             '<td style="padding:6px 10px;color:#ef4444;font-weight:600;">' + j.bounce_rate + '%</td>' +
-            '<td style="padding:6px 10px;">' + statusBadge + '</td>' +
-            '<td style="padding:6px 10px;color:#94a3b8;">' + (j.new_domain ? esc(j.new_domain) : '<span style="color:#475569">—</span>') + '</td>' +
-            '<td style="padding:6px 10px;">' + actions + '</td></tr>';
+            '<td style="padding:6px 10px;">' + _statusBadge(j) + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;">' + (j.new_domain ? esc(j.new_domain) : '<span style="color:#475569">—</span>') + '</td>';
+        if (isArchived) {
+            var dt = j.status === 'cancelled' ? j.cancelled_at : (j.old_cancel_date || j.swapped_at || '');
+            html += '<td style="padding:6px 10px;color:#64748b;">' + (dt || '—') + '</td>';
+        } else {
+            html += '<td style="padding:6px 10px;">' + _replacementActions(j) + '</td>';
+        }
+        html += '</tr>';
     }
-    html += '</tbody></table></div>';
+    html += '</tbody></table>';
+    return html;
+}
+function renderReplacementTracker() {
+    var el = document.getElementById('replacement-tracker');
+    if (!el) return;
+    var jobs = data._replacements || [];
+    if (!jobs.length) { el.innerHTML = ''; return; }
+    var active = jobs.filter(function(j) { return !_isJobComplete(j); });
+    var archived = jobs.filter(function(j) { return _isJobComplete(j); });
+    var needsAttention = active.filter(function(j) { return j.status === 'flagged' || (j.status === 'swapped' && !j.old_cancelled); }).length;
+    var html = '<div style="margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:16px 20px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+    html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;">Domain Replacements';
+    if (needsAttention > 0) html += ' <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#7f1d1d;color:#fca5a5;font-weight:600;">' + needsAttention + ' need attention</span>';
+    html += ' <span style="color:#64748b;font-weight:400;font-size:12px;">(' + active.length + ' active, ' + archived.length + ' archived)</span></div></div>';
+    html += _replacementTable(active, false);
+    if (archived.length) {
+        html += '<details style="margin-top:12px;"><summary style="cursor:pointer;color:#64748b;font-size:12px;font-weight:600;padding:4px 0;">Archived (' + archived.length + ')</summary>';
+        html += '<div style="margin-top:8px;">' + _replacementTable(archived, true) + '</div></details>';
+    }
+    html += '</div>';
     el.innerHTML = html;
 }
 function _replacementActions(j) {
@@ -824,16 +868,16 @@ function _replacementActions(j) {
     if (j.status === 'flagged') {
         actions += '<button onclick="setReplacementDomain(\'' + j.id + '\')" style="' + btnStyle + 'background:#064e3b;color:#6ee7b7;">Set New Domain</button>';
     } else if (j.status === 'warming') {
-        var warmDays = j.warming_started_at ? Math.floor((Date.now() - new Date(j.warming_started_at + 'T00:00:00').getTime()) / 86400000) : 0;
-        actions += '<span style="font-size:10px;color:#fbbf24;margin-right:6px;">Day ' + warmDays + '/14</span>';
-        if (warmDays >= 14) {
+        if (_warmupDays(j) >= 14) {
             actions += '<button onclick="updateReplacement(\'' + j.id + '\',\'ready\')" style="' + btnStyle + 'background:#064e3b;color:#6ee7b7;">Mark Ready</button>';
         }
     } else if (j.status === 'ready') {
         actions += '<button onclick="updateReplacement(\'' + j.id + '\',\'swapped\')" style="' + btnStyle + 'background:#1e40af;color:#93c5fd;">Mark Swapped</button>';
+    } else if (j.status === 'swapped' && !j.old_cancelled) {
+        actions += '<button onclick="markOldCancelled(\'' + j.id + '\')" style="' + btnStyle + 'background:#78350f;color:#fbbf24;">Cancel Old Sub</button>';
     }
-    if (j.status !== 'swapped') {
-        actions += '<button onclick="cancelReplacement(\'' + j.id + '\')" style="' + btnStyle + 'background:transparent;color:#64748b;border:1px solid #334155;">&times;</button>';
+    if (j.status !== 'swapped' || !j.old_cancelled) {
+        actions += '<button onclick="cancelReplacement(\'' + j.id + '\')" style="' + btnStyle + 'background:transparent;color:#64748b;border:1px solid #334155;" title="Abandon this replacement">&times;</button>';
     }
     return actions;
 }
@@ -859,8 +903,19 @@ function updateReplacement(jobId, newStatus) {
         else alert(d.error || 'Error');
     });
 }
+function markOldCancelled(jobId) {
+    if (!confirm('Mark the old domain subscription as cancelled? (It will stay active until billing cycle ends)')) return;
+    fetch('/api/replacements/update' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ id: jobId, old_cancelled: true })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) refreshReplacements();
+        else alert(d.error || 'Error');
+    });
+}
 function cancelReplacement(jobId) {
-    if (!confirm('Cancel this replacement?')) return;
+    if (!confirm('Abandon this replacement job? (Use this if you no longer need to replace this domain)')) return;
     fetch('/api/replacements/update' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
