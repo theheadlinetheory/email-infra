@@ -220,6 +220,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <div id="acquisition-tab" style="display:none;">
+    <div id="replacement-tracker"></div>
     <div id="acq-util-bar"></div>
     <div id="acq-campaign-table"></div>
     <div class="stats-row" id="acq-stats"></div>
@@ -271,6 +272,10 @@ async function load() {
             var hResp = await fetch('/api/health-history' + qs);
             if (hResp.ok) historyData = await hResp.json();
         } catch (e) {}
+        try {
+            var rResp = await fetch('/api/replacements' + qs);
+            if (rResp.ok) { var rd = await rResp.json(); data._replacements = rd.jobs || []; }
+        } catch (e) { data._replacements = []; }
         render();
     } catch (err) {
         document.getElementById('loading').textContent = 'Error: ' + err.message;
@@ -664,7 +669,108 @@ function renderAcquisition() {
         '</div>';
     }).join('');
     renderKanban();
+    renderReplacementTracker();
     renderSubscriptions();
+}
+
+function renderReplacementTracker() {
+    var el = document.getElementById('replacement-tracker');
+    if (!el) return;
+    var jobs = (data._replacements || []).filter(function(j) {
+        return j.status !== 'cancelled';
+    });
+    if (!jobs.length) { el.innerHTML = ''; return; }
+    var active = jobs.filter(function(j) { return j.status !== 'swapped'; });
+    var done = jobs.filter(function(j) { return j.status === 'swapped'; });
+    var statusColors = {
+        flagged: { bg: '#7f1d1d', text: '#fca5a5', label: 'FLAGGED' },
+        warming: { bg: '#78350f', text: '#fbbf24', label: 'WARMING' },
+        ready: { bg: '#064e3b', text: '#6ee7b7', label: 'READY TO SWAP' },
+        swapped: { bg: '#1e293b', text: '#94a3b8', label: 'SWAPPED' }
+    };
+    var html = '<div style="margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:16px 20px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+    html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;">Domain Replacements <span style="color:#64748b;font-weight:400;">(' + active.length + ' active)</span></div>';
+    html += '</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;">' +
+        '<th style="padding:6px 10px">Old Domain</th><th style="padding:6px 10px">Group</th>' +
+        '<th style="padding:6px 10px">Bounce</th><th style="padding:6px 10px">Status</th>' +
+        '<th style="padding:6px 10px">New Domain</th><th style="padding:6px 10px">Actions</th></tr></thead><tbody>';
+    var allJobs = active.concat(done);
+    for (var i = 0; i < allJobs.length; i++) {
+        var j = allJobs[i];
+        var sc = statusColors[j.status] || statusColors.flagged;
+        var statusBadge = '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + sc.bg + ';color:' + sc.text + ';font-weight:600;">' + sc.label + '</span>';
+        var rowOpacity = j.status === 'swapped' ? 'opacity:0.5;' : '';
+        var actions = _replacementActions(j);
+        html += '<tr style="border-bottom:1px solid #1e293b;' + rowOpacity + '">' +
+            '<td style="padding:6px 10px;color:#f1f5f9;">' + esc(j.old_domain) + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;">' + esc(j.group_name) + '</td>' +
+            '<td style="padding:6px 10px;color:#ef4444;font-weight:600;">' + j.bounce_rate + '%</td>' +
+            '<td style="padding:6px 10px;">' + statusBadge + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;">' + (j.new_domain ? esc(j.new_domain) : '<span style="color:#475569">—</span>') + '</td>' +
+            '<td style="padding:6px 10px;">' + actions + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+}
+function _replacementActions(j) {
+    var btnStyle = 'padding:3px 10px;font-size:11px;border-radius:4px;cursor:pointer;border:none;margin-right:4px;';
+    var actions = '';
+    if (j.status === 'flagged') {
+        actions += '<button onclick="setReplacementDomain(\'' + j.id + '\')" style="' + btnStyle + 'background:#064e3b;color:#6ee7b7;">Set New Domain</button>';
+    } else if (j.status === 'warming') {
+        var warmDays = j.warming_started_at ? Math.floor((Date.now() - new Date(j.warming_started_at + 'T00:00:00').getTime()) / 86400000) : 0;
+        actions += '<span style="font-size:10px;color:#fbbf24;margin-right:6px;">Day ' + warmDays + '/14</span>';
+        if (warmDays >= 14) {
+            actions += '<button onclick="updateReplacement(\'' + j.id + '\',\'ready\')" style="' + btnStyle + 'background:#064e3b;color:#6ee7b7;">Mark Ready</button>';
+        }
+    } else if (j.status === 'ready') {
+        actions += '<button onclick="updateReplacement(\'' + j.id + '\',\'swapped\')" style="' + btnStyle + 'background:#1e40af;color:#93c5fd;">Mark Swapped</button>';
+    }
+    if (j.status !== 'swapped') {
+        actions += '<button onclick="cancelReplacement(\'' + j.id + '\')" style="' + btnStyle + 'background:transparent;color:#64748b;border:1px solid #334155;">&times;</button>';
+    }
+    return actions;
+}
+function setReplacementDomain(jobId) {
+    var newDomain = prompt('Enter the new domain replacing this one:');
+    if (!newDomain) return;
+    fetch('/api/replacements/update' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ id: jobId, new_domain: newDomain, status: 'warming' })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) refreshReplacements();
+        else alert(d.error || 'Error');
+    });
+}
+function updateReplacement(jobId, newStatus) {
+    fetch('/api/replacements/update' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ id: jobId, status: newStatus })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) refreshReplacements();
+        else alert(d.error || 'Error');
+    });
+}
+function cancelReplacement(jobId) {
+    if (!confirm('Cancel this replacement?')) return;
+    fetch('/api/replacements/update' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ id: jobId, status: 'cancelled' })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) refreshReplacements();
+        else alert(d.error || 'Error');
+    });
+}
+function refreshReplacements() {
+    fetch('/api/replacements' + _authQs(), { headers: _authHeaders() })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { data._replacements = d.jobs || []; renderReplacementTracker(); });
 }
 
 function renderSubscriptions() {
@@ -1177,6 +1283,7 @@ function renderModal() {
     html += statsHtml(g);
     html += chartSection(chartKey);
     html += campaignHtml(g);
+    html += domainBreakdown(g);
     html += accountTable(g);
 
     document.getElementById('modal-body').innerHTML = html;
@@ -1414,12 +1521,82 @@ function campaignHtml(s) {
     return html;
 }
 
+function domainBreakdown(s) {
+    var accts = s.account_details || [];
+    if (!accts.length) return '';
+    var byDomain = {};
+    for (var i = 0; i < accts.length; i++) {
+        var a = accts[i];
+        var d = a.domain || (a.email || '').split('@')[1] || '';
+        if (!byDomain[d]) byDomain[d] = { bounces: [], replies: [], reps: [], accounts: 0, sent: 0 };
+        byDomain[d].accounts++;
+        byDomain[d].sent += a.sent || 0;
+        if (a.bounce_rate != null) byDomain[d].bounces.push(a.bounce_rate);
+        if (a.reply_rate != null) byDomain[d].replies.push(a.reply_rate);
+        if (a.warmup_reputation != null) byDomain[d].reps.push(a.warmup_reputation);
+    }
+    var domains = Object.keys(byDomain).sort();
+    if (domains.length <= 1) return '';
+    var html = '<div class="detail-header">Domains (' + domains.length + ')</div>';
+    html += '<div class="account-table-wrap"><table class="account-table"><thead><tr>' +
+        '<th>Domain</th><th>Inboxes</th><th>Bounce</th><th>Reply</th><th>Health</th><th>Sent</th><th></th>' +
+    '</tr></thead><tbody>';
+    for (var i = 0; i < domains.length; i++) {
+        var d = domains[i];
+        var info = byDomain[d];
+        var avgB = info.bounces.length ? Math.round(info.bounces.reduce(function(a,b){return a+b;},0) / info.bounces.length * 10) / 10 : null;
+        var avgR = info.replies.length ? Math.round(info.replies.reduce(function(a,b){return a+b;},0) / info.replies.length * 10) / 10 : null;
+        var avgRep = info.reps.length ? Math.round(info.reps.reduce(function(a,b){return a+b;},0) / info.reps.length) : null;
+        var brCls = avgB == null ? '' : avgB >= 3 ? 'color:#ef4444;font-weight:600' : avgB >= 1 ? 'color:#f59e0b' : 'color:#22c55e';
+        var rrCls = avgR == null ? '' : avgR >= 5 ? 'color:#22c55e' : avgR >= 2 ? 'color:#e2e8f0' : 'color:#64748b';
+        var repCls = avgRep == null ? '' : avgRep >= 90 ? 'color:#22c55e' : avgRep >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
+        var alreadyFlagged = (data._replacements || []).some(function(j) {
+            return j.old_domain === d && j.status !== 'swapped' && j.status !== 'cancelled';
+        });
+        var flagBtn = '';
+        if (avgB != null && avgB >= 3 && !alreadyFlagged) {
+            flagBtn = '<button onclick="event.stopPropagation();flagDomain(\'' + d.replace(/'/g, "\\'") + '\',' + avgB + ')" ' +
+                'style="padding:2px 8px;font-size:10px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:4px;cursor:pointer;">Flag</button>';
+        } else if (alreadyFlagged) {
+            flagBtn = '<span style="font-size:10px;color:#fbbf24;">Flagged</span>';
+        }
+        html += '<tr><td style="color:#e2e8f0">' + esc(d) + '</td>' +
+            '<td>' + info.accounts + '</td>' +
+            '<td style="' + brCls + '">' + (avgB != null ? avgB + '%' : '—') + '</td>' +
+            '<td style="' + rrCls + '">' + (avgR != null ? avgR + '%' : '—') + '</td>' +
+            '<td style="' + repCls + '">' + (avgRep != null ? avgRep + '%' : '—') + '</td>' +
+            '<td>' + info.sent + '</td>' +
+            '<td>' + flagBtn + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+function flagDomain(domain, bounceRate) {
+    if (!confirm('Flag ' + domain + ' (' + bounceRate + '% bounce) for replacement?')) return;
+    var info = getModalInfo();
+    var g = getModalGroup();
+    var groupType = modalState.type === 'acq' ? 'acquisition' : (modalState.type === 'generic' ? 'generic' : 'client');
+    var campaigns = (g.campaigns || []).map(function(c) { return c.name; });
+    fetch('/api/replacements' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ old_domain: domain, group_name: info.name, group_type: groupType, bounce_rate: bounceRate, campaigns: campaigns })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) {
+            data._replacements = data._replacements || [];
+            data._replacements.push(d.job);
+            renderModal();
+            renderReplacementTracker();
+        } else { alert(d.error || 'Error'); }
+    });
+}
+
 function accountTable(s) {
     var accts = s.account_details || [];
     if (!accts.length) return '';
     var html = '<div class="detail-header">Accounts (' + accts.length + ')</div>';
     html += '<div class="account-table-wrap"><table class="account-table"><thead><tr>' +
-        '<th>Email</th><th>Bounce</th><th>Reply</th><th>Sent</th><th>SMTP</th><th>Campaign</th>' +
+        '<th>Email</th><th>Bounce</th><th>Reply</th><th>Health</th><th>Sent</th><th>SMTP</th><th>Campaign</th>' +
     '</tr></thead><tbody>';
     for (var i = 0; i < accts.length; i++) {
         var a = accts[i];
@@ -1427,10 +1604,13 @@ function accountTable(s) {
         var rr = a.reply_rate != null ? a.reply_rate + '%' : '—';
         var brCls = a.bounce_rate == null ? '' : a.bounce_rate >= 3 ? 'color:#ef4444' : a.bounce_rate >= 1 ? 'color:#f59e0b' : 'color:#22c55e';
         var rrCls = a.reply_rate == null ? '' : a.reply_rate >= 5 ? 'color:#22c55e' : a.reply_rate >= 2 ? 'color:#e2e8f0' : 'color:#64748b';
+        var rep = a.warmup_reputation != null ? a.warmup_reputation + '%' : '—';
+        var repCls = a.warmup_reputation == null ? '' : a.warmup_reputation >= 90 ? 'color:#22c55e' : a.warmup_reputation >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
         var smtp = a.smtp_ok ? '<span style="color:#22c55e">&#10003;</span>' : '<span style="color:#ef4444">&#10007;</span>';
         var camp = a.in_campaign ? '<span style="color:#22c55e">&#10003;</span>' : '<span style="color:#64748b">—</span>';
         html += '<tr><td style="color:#e2e8f0;white-space:nowrap">' + esc(a.email) + '</td>' +
             '<td style="' + brCls + '">' + br + '</td><td style="' + rrCls + '">' + rr + '</td>' +
+            '<td style="' + repCls + '">' + rep + '</td>' +
             '<td>' + (a.sent || 0) + '</td><td style="text-align:center">' + smtp + '</td><td style="text-align:center">' + camp + '</td></tr>';
     }
     html += '</tbody></table></div>';
