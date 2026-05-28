@@ -1679,6 +1679,88 @@ def _enrich_groups_with_campaigns(groups, group_emails):
     return conflicts
 
 
+def api_get_replacements():
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    return state
+
+def api_create_replacement(body):
+    import uuid
+    required = ["old_domain", "group_name", "group_type", "bounce_rate"]
+    for field in required:
+        if not body.get(field):
+            return {"error": f"{field} required"}
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    for j in state["jobs"]:
+        if j["old_domain"] == body["old_domain"] and j["status"] not in ("swapped", "cancelled"):
+            return {"error": f"{body['old_domain']} already flagged"}
+    job = {
+        "id": str(uuid.uuid4())[:8],
+        "old_domain": body["old_domain"],
+        "new_domain": None,
+        "group_name": body["group_name"],
+        "group_type": body["group_type"],
+        "bounce_rate": body["bounce_rate"],
+        "status": "flagged",
+        "campaigns": body.get("campaigns", []),
+        "flagged_at": datetime.now().strftime("%Y-%m-%d"),
+        "warming_started_at": None,
+        "swapped_at": None,
+        "cancelled_at": None,
+    }
+    state["jobs"].append(job)
+    store.set_state("domain_replacements", state)
+    return {"ok": True, "job": job}
+
+def api_update_replacement(body):
+    job_id = body.get("id")
+    if not job_id:
+        return {"error": "id required"}
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    job = None
+    for j in state["jobs"]:
+        if j["id"] == job_id:
+            job = j
+            break
+    if not job:
+        return {"error": "Job not found"}
+    new_status = body.get("status")
+    new_domain = body.get("new_domain")
+    valid_transitions = {
+        "flagged": ["warming", "cancelled"],
+        "warming": ["ready", "cancelled"],
+        "ready": ["swapped", "cancelled"],
+        "swapped": ["cancelled"],
+    }
+    if new_status:
+        allowed = valid_transitions.get(job["status"], [])
+        if new_status not in allowed:
+            return {"error": f"Cannot go from {job['status']} to {new_status}"}
+        job["status"] = new_status
+        now = datetime.now().strftime("%Y-%m-%d")
+        if new_status == "warming":
+            job["warming_started_at"] = now
+        elif new_status == "swapped":
+            job["swapped_at"] = now
+        elif new_status == "cancelled":
+            job["cancelled_at"] = now
+    if new_domain:
+        job["new_domain"] = new_domain
+    store.set_state("domain_replacements", state)
+    return {"ok": True, "job": job}
+
+def api_delete_replacement(body):
+    job_id = body.get("id")
+    if not job_id:
+        return {"error": "id required"}
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    before = len(state["jobs"])
+    state["jobs"] = [j for j in state["jobs"] if j["id"] != job_id]
+    if len(state["jobs"]) == before:
+        return {"error": "Job not found"}
+    store.set_state("domain_replacements", state)
+    return {"ok": True}
+
+
 def api_acquisition():
     """Acquisition inbox groups with health metrics and campaign assignments."""
     try:
@@ -4094,6 +4176,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_subscriptions())
                 elif path == "/api/untagged-count":
                     self._json_response(api_untagged_count())
+                elif path == "/api/replacements":
+                    self._json_response(api_get_replacements())
                 elif path == "/api/acquisition":
                     self._json_response(api_acquisition())
                 elif path == "/api/acquisition-campaigns":
@@ -4428,6 +4512,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response(result, 400 if "error" in result else 200)
         elif path == "/api/aging-pool/activate":
             result = api_aging_pool_activate(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/replacements":
+            result = api_create_replacement(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/replacements/update":
+            result = api_update_replacement(body)
+            self._json_response(result, 400 if "error" in result else 200)
+        elif path == "/api/replacements/delete":
+            result = api_delete_replacement(body)
             self._json_response(result, 400 if "error" in result else 200)
         else:
             self._error(404, "Not found")

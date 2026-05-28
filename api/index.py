@@ -362,6 +362,118 @@ def subscriptions():
     }))
 
 
+@app.route("/api/replacements")
+def get_replacements():
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    return _cors(jsonify(state))
+
+
+@app.route("/api/replacements", methods=["POST", "OPTIONS"])
+def create_replacement():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    import uuid as _uuid
+    from datetime import datetime as _dt
+    body = request.get_json(silent=True) or {}
+    required = ["old_domain", "group_name", "group_type", "bounce_rate"]
+    for field in required:
+        if not body.get(field):
+            return _cors(jsonify({"error": f"{field} required"})), 400
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    for j in state["jobs"]:
+        if j["old_domain"] == body["old_domain"] and j["status"] not in ("swapped", "cancelled"):
+            return _cors(jsonify({"error": f"{body['old_domain']} already flagged"})), 400
+    job = {
+        "id": str(_uuid.uuid4())[:8],
+        "old_domain": body["old_domain"],
+        "new_domain": None,
+        "group_name": body["group_name"],
+        "group_type": body["group_type"],
+        "bounce_rate": body["bounce_rate"],
+        "status": "flagged",
+        "campaigns": body.get("campaigns", []),
+        "flagged_at": _dt.now().strftime("%Y-%m-%d"),
+        "warming_started_at": None,
+        "swapped_at": None,
+        "cancelled_at": None,
+    }
+    state["jobs"].append(job)
+    store.set_state("domain_replacements", state)
+    return _cors(jsonify({"ok": True, "job": job}))
+
+
+@app.route("/api/replacements/update", methods=["POST", "OPTIONS"])
+def update_replacement():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    from datetime import datetime as _dt
+    body = request.get_json(silent=True) or {}
+    job_id = body.get("id")
+    if not job_id:
+        return _cors(jsonify({"error": "id required"})), 400
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    job = None
+    for j in state["jobs"]:
+        if j["id"] == job_id:
+            job = j
+            break
+    if not job:
+        return _cors(jsonify({"error": "Job not found"})), 404
+    new_status = body.get("status")
+    new_domain = body.get("new_domain")
+    valid_transitions = {
+        "flagged": ["warming", "cancelled"],
+        "warming": ["ready", "cancelled"],
+        "ready": ["swapped", "cancelled"],
+        "swapped": ["cancelled"],
+    }
+    if new_status:
+        allowed = valid_transitions.get(job["status"], [])
+        if new_status not in allowed:
+            return _cors(jsonify({"error": f"Cannot go from {job['status']} to {new_status}"})), 400
+        job["status"] = new_status
+        now = _dt.now().strftime("%Y-%m-%d")
+        if new_status == "warming":
+            job["warming_started_at"] = now
+        elif new_status == "swapped":
+            job["swapped_at"] = now
+        elif new_status == "cancelled":
+            job["cancelled_at"] = now
+    if new_domain:
+        job["new_domain"] = new_domain
+    store.set_state("domain_replacements", state)
+    return _cors(jsonify({"ok": True, "job": job}))
+
+
+@app.route("/api/replacements/delete", methods=["POST", "OPTIONS"])
+def delete_replacement():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    body = request.get_json(silent=True) or {}
+    job_id = body.get("id")
+    if not job_id:
+        return _cors(jsonify({"error": "id required"})), 400
+    state = store.get_state("domain_replacements") or {"jobs": []}
+    before = len(state["jobs"])
+    state["jobs"] = [j for j in state["jobs"] if j["id"] != job_id]
+    if len(state["jobs"]) == before:
+        return _cors(jsonify({"error": "Job not found"})), 404
+    store.set_state("domain_replacements", state)
+    return _cors(jsonify({"ok": True}))
+
+
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
 def catch_all(path):
     if request.method == "OPTIONS":
