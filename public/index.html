@@ -198,6 +198,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 <div class="tabs">
     <button class="tab active" onclick="showTab('clients')">Clients</button>
     <button class="tab" onclick="showTab('acquisition')">Acquisition</button>
+    <button class="tab" onclick="showTab('maintenance')">Maintenance</button>
 </div>
 
 <div id="sync-toast" class="sync-toast hidden">
@@ -220,7 +221,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <div id="acquisition-tab" style="display:none;">
-    <div id="replacement-tracker"></div>
     <div id="acq-util-bar"></div>
     <div id="acq-campaign-table"></div>
     <div class="stats-row" id="acq-stats"></div>
@@ -228,6 +228,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="cards-grid" id="acq-grid"></div>
     <div class="section-title" style="margin-top:24px;">Campaign Board</div>
     <div id="kanban-board"></div>
+</div>
+
+<div id="maintenance-tab" style="display:none;">
+    <div id="replacement-tracker"></div>
+    <div id="maint-domain-health"></div>
     <div class="section-title" style="margin-top:24px;">Zapmail Subscriptions</div>
     <div id="subs-section"></div>
 </div>
@@ -400,7 +405,7 @@ async function refreshStats() {
     if (btn) { btn.classList.remove('syncing'); btn.disabled = false; }
 }
 
-var currentTab = location.hash === '#acquisition' ? 'acquisition' : 'clients';
+var currentTab = location.hash === '#acquisition' ? 'acquisition' : location.hash === '#maintenance' ? 'maintenance' : 'clients';
 
 function render() {
     document.getElementById('loading').style.display = 'none';
@@ -409,6 +414,7 @@ function render() {
     renderClients();
     renderGeneric();
     renderAcquisition();
+    if (currentTab === 'maintenance') renderMaintenance();
     showTab(currentTab);
 }
 
@@ -669,8 +675,105 @@ function renderAcquisition() {
         '</div>';
     }).join('');
     renderKanban();
+}
+
+function renderMaintenance() {
     renderReplacementTracker();
+    renderDomainHealth();
     renderSubscriptions();
+}
+
+function renderDomainHealth() {
+    var el = document.getElementById('maint-domain-health');
+    if (!el) return;
+    var allDomains = [];
+    var sources = [
+        { groups: data.acquisition_groups || [], type: 'acquisition' },
+        { groups: data.generic_groups || [], type: 'generic' },
+    ];
+    var clients = data.clients || [];
+    for (var ci = 0; ci < clients.length; ci++) {
+        var c = clients[ci];
+        if (c.group_a && c.group_a.account_details) sources.push({ groups: [c.group_a], type: 'client', nameOverride: c.name + ' A' });
+        if (c.group_b && c.group_b.account_details) sources.push({ groups: [c.group_b], type: 'client', nameOverride: c.name + ' B' });
+        if (!c.group_a && c.account_details) sources.push({ groups: [c], type: 'client', nameOverride: c.name });
+    }
+    for (var si = 0; si < sources.length; si++) {
+        var src = sources[si];
+        for (var gi = 0; gi < src.groups.length; gi++) {
+            var g = src.groups[gi];
+            var accts = g.account_details || [];
+            var byDom = {};
+            for (var ai = 0; ai < accts.length; ai++) {
+                var a = accts[ai];
+                var d = a.domain || (a.email || '').split('@')[1] || '';
+                if (!byDom[d]) byDom[d] = { bounces: [], reps: [], sent: 0, inboxes: 0 };
+                byDom[d].inboxes++;
+                byDom[d].sent += a.sent || 0;
+                if (a.bounce_rate != null) byDom[d].bounces.push(a.bounce_rate);
+                if (a.warmup_reputation != null) byDom[d].reps.push(a.warmup_reputation);
+            }
+            var gName = src.nameOverride || g.name || '';
+            var domKeys = Object.keys(byDom);
+            for (var di = 0; di < domKeys.length; di++) {
+                var dk = domKeys[di];
+                var info = byDom[dk];
+                var avgB = info.bounces.length ? Math.round(info.bounces.reduce(function(a,b){return a+b;},0) / info.bounces.length * 10) / 10 : null;
+                var avgRep = info.reps.length ? Math.round(info.reps.reduce(function(a,b){return a+b;},0) / info.reps.length) : null;
+                allDomains.push({ domain: dk, group: gName, type: src.type, bounce: avgB, health: avgRep, inboxes: info.inboxes, sent: info.sent });
+            }
+        }
+    }
+    var flagged = allDomains.filter(function(d) { return d.bounce != null && d.bounce >= 3; });
+    flagged.sort(function(a, b) { return b.bounce - a.bounce; });
+    if (!flagged.length) { el.innerHTML = '<div style="padding:20px 24px;color:#22c55e;font-size:13px;">All domains under 3% bounce rate.</div>'; return; }
+    var html = '<div class="section-title" style="margin-top:16px;">Domains Needing Attention (' + flagged.length + ')</div>';
+    html += '<div style="padding:0 24px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left">' +
+        '<th style="padding:6px 10px">Domain</th><th style="padding:6px 10px">Group</th><th style="padding:6px 10px">Type</th>' +
+        '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Bounce</th><th style="padding:6px 10px">Health</th>' +
+        '<th style="padding:6px 10px">Sent</th><th style="padding:6px 10px"></th></tr></thead><tbody>';
+    for (var i = 0; i < flagged.length; i++) {
+        var d = flagged[i];
+        var alreadyFlagged = (data._replacements || []).some(function(j) {
+            return j.old_domain === d.domain && j.status !== 'swapped' && j.status !== 'cancelled';
+        });
+        var brCls = d.bounce >= 5 ? 'color:#ef4444;font-weight:700' : 'color:#ef4444;font-weight:600';
+        var repCls = d.health == null ? '' : d.health >= 90 ? 'color:#22c55e' : d.health >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
+        var typeLabel = d.type === 'acquisition' ? '<span style="color:#3b82f6">ACQ</span>' : d.type === 'generic' ? '<span style="color:#a78bfa">GEN</span>' : '<span style="color:#22c55e">CLIENT</span>';
+        var btn = '';
+        if (alreadyFlagged) {
+            btn = '<span style="font-size:10px;color:#fbbf24;">Flagged</span>';
+        } else {
+            btn = '<button onclick="flagDomainFromMaint(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\',\'' + d.type + '\',' + d.bounce + ')" ' +
+                'style="padding:2px 8px;font-size:10px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:4px;cursor:pointer;">Flag</button>';
+        }
+        html += '<tr style="border-bottom:1px solid #1e293b">' +
+            '<td style="padding:6px 10px;color:#f1f5f9">' + esc(d.domain) + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8">' + esc(d.group) + '</td>' +
+            '<td style="padding:6px 10px">' + typeLabel + '</td>' +
+            '<td style="padding:6px 10px">' + d.inboxes + '</td>' +
+            '<td style="padding:6px 10px;' + brCls + '">' + d.bounce + '%</td>' +
+            '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
+            '<td style="padding:6px 10px">' + d.sent + '</td>' +
+            '<td style="padding:6px 10px">' + btn + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+}
+function flagDomainFromMaint(domain, groupName, groupType, bounceRate) {
+    if (!confirm('Flag ' + domain + ' (' + bounceRate + '% bounce) for replacement?')) return;
+    fetch('/api/replacements' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ old_domain: domain, group_name: groupName, group_type: groupType, bounce_rate: bounceRate, campaigns: [] })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) {
+            data._replacements = data._replacements || [];
+            data._replacements.push(d.job);
+            renderMaintenance();
+        } else { alert(d.error || 'Error'); }
+    });
 }
 
 function renderReplacementTracker() {
@@ -770,7 +873,7 @@ function cancelReplacement(jobId) {
 function refreshReplacements() {
     fetch('/api/replacements' + _authQs(), { headers: _authHeaders() })
         .then(function(r) { return r.json(); })
-        .then(function(d) { data._replacements = d.jobs || []; renderReplacementTracker(); });
+        .then(function(d) { data._replacements = d.jobs || []; if (currentTab === 'maintenance') renderMaintenance(); else renderReplacementTracker(); });
 }
 
 function renderSubscriptions() {
@@ -1586,7 +1689,7 @@ function flagDomain(domain, bounceRate) {
             data._replacements = data._replacements || [];
             data._replacements.push(d.job);
             renderModal();
-            renderReplacementTracker();
+            if (currentTab === 'maintenance') renderMaintenance();
         } else { alert(d.error || 'Error'); }
     });
 }
@@ -1635,11 +1738,12 @@ function showTab(tab) {
     location.hash = tab === 'clients' ? '' : tab;
     document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
     document.querySelectorAll('.tab').forEach(function(t) {
-        if ((tab === 'clients' && t.textContent.trim() === 'Clients') ||
-            (tab === 'acquisition' && t.textContent.trim() === 'Acquisition')) t.classList.add('active');
+        if (t.textContent.trim().toLowerCase() === (tab === 'clients' ? 'clients' : tab)) t.classList.add('active');
     });
-    document.getElementById('clients-tab').style.display = tab === 'clients' ? 'block' : 'none';
-    document.getElementById('acquisition-tab').style.display = tab === 'acquisition' ? 'block' : 'none';
+    ['clients', 'acquisition', 'maintenance'].forEach(function(id) {
+        document.getElementById(id + '-tab').style.display = tab === id ? 'block' : 'none';
+    });
+    if (tab === 'maintenance') renderMaintenance();
 }
 
 function statBox(val, label, cls) { return '<div class="stat-box"><div class="stat-value ' + (cls || '') + '">' + val + '</div><div class="stat-label">' + label + '</div></div>'; }
