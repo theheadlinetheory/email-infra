@@ -683,7 +683,10 @@ var maintFilter = { type: 'all', group: '' };
 var expandedDomains = {};
 function toggleDomain(key) {
     expandedDomains[key] = !expandedDomains[key];
-    renderMaintenance();
+    if (key.indexOf('pool_') === 0) renderAvailablePool();
+    else if (key.indexOf('health_') === 0) renderDomainHealth();
+    else if (key.indexOf('rep_') === 0) renderReplacementTracker();
+    else renderMaintenance();
 }
 function _inboxDetailInner(domainName) {
     var allDom = _collectAllDomains();
