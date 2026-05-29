@@ -283,11 +283,11 @@ async function load() {
             var rResp = await fetch('/api/replacements' + qs);
             if (rResp.ok) { var rd = await rResp.json(); data._replacements = rd.jobs || []; }
         } catch (e) { data._replacements = []; }
-        try {
-            var rnResp = await fetch('/api/domain-renewals' + qs);
-            if (rnResp.ok) { var rn = await rnResp.json(); data._domainRenewals = rn.domain_renewals || {}; }
-        } catch (e) { data._domainRenewals = {}; }
+        data._domainRenewals = {};
         render();
+        fetch('/api/domain-renewals' + qs).then(function(r) { return r.ok ? r.json() : null; }).then(function(rn) {
+            if (rn && rn.domain_renewals) { data._domainRenewals = rn.domain_renewals; if (currentTab === 'maintenance') renderMaintenance(); }
+        }).catch(function() {});
     } catch (err) {
         document.getElementById('loading').textContent = 'Error: ' + err.message;
     }
