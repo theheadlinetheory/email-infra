@@ -960,7 +960,7 @@ function renderDomainHealth() {
     var el = document.getElementById('maint-domain-health');
     if (!el) return;
     var allDomains = _collectAllDomains().filter(function(d) { return _matchesMaintFilter(d); });
-    var flagged = allDomains.filter(function(d) { return d.bounce != null && d.bounce >= 3; });
+    var flagged = allDomains.filter(function(d) { return d.bounce != null && d.bounce >= 3 && d.days_until_renewal != null; });
     flagged.sort(function(a, b) {
         var aR = a.days_until_renewal != null ? a.days_until_renewal : 9999;
         var bR = b.days_until_renewal != null ? b.days_until_renewal : 9999;
@@ -989,11 +989,8 @@ function renderDomainHealth() {
             btn = '<button onclick="flagDomainFromMaint(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\',\'' + d.type + '\',' + d.bounce + ')" ' +
                 'style="padding:2px 8px;font-size:10px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:4px;cursor:pointer;">Flag</button>';
         }
-        var renewStr = '—', renewCls = 'color:#64748b';
-        if (d.days_until_renewal != null) {
-            renewStr = d.days_until_renewal + 'd';
-            renewCls = d.days_until_renewal <= 3 ? 'color:#ef4444;font-weight:700' : d.days_until_renewal <= 16 ? 'color:#f59e0b;font-weight:600' : 'color:#22c55e';
-        }
+        var renewStr = d.days_until_renewal + 'd';
+        var renewCls = d.days_until_renewal <= 3 ? 'color:#ef4444;font-weight:700' : d.days_until_renewal <= 16 ? 'color:#f59e0b;font-weight:600' : 'color:#22c55e';
         html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="openDomainModal(\'' + d.domain.replace(/'/g, "\\'") + '\')">' +
             '<td style="padding:6px 10px;color:#f1f5f9">' + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8">' + esc(d.group) + '</td>' +

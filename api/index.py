@@ -312,7 +312,7 @@ def subscriptions():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     import requests as req
     from datetime import datetime, timezone
-    zm_key = os.environ.get("ZAPMAIL_API_KEY", "")
+    zm_key = os.environ.get("ZAPMAIL_API_KEY", "").strip()
     if not zm_key:
         return _cors(jsonify({"error": "ZAPMAIL_API_KEY not configured"})), 500
     headers = {"Content-Type": "application/json", "x-auth-zapmail": zm_key, "x-service-provider": "GOOGLE"}
