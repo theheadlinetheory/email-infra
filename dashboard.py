@@ -2869,6 +2869,46 @@ def api_subscriptions():
     }
 
 
+def api_domain_renewals():
+    """Map each domain to its earliest subscription renewal date."""
+    from concurrent.futures import as_completed
+    raw = zm_get_subscriptions()
+    subs = raw if isinstance(raw, list) else raw.get("data", [])
+    now = datetime.now(timezone.utc)
+    active = []
+    for s in subs:
+        if s.get("subscriptionStatus") != "ACTIVE":
+            continue
+        period_end = s.get("periodEnd", "")
+        try:
+            renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        active.append({"id": s.get("id"), "renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days})
+    domain_map = {}
+    def fetch_mailboxes(sub):
+        try:
+            mboxes = zm_get_subscription_mailboxes(sub["id"])
+            if isinstance(mboxes, dict):
+                mboxes = mboxes.get("data", [])
+            pairs = []
+            for mb in (mboxes if isinstance(mboxes, list) else []):
+                email = mb.get("email", "")
+                domain = email.split("@")[1] if "@" in email else ""
+                if domain:
+                    pairs.append((domain, sub["renews"], sub["days_until"]))
+            return pairs
+        except Exception:
+            return []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(fetch_mailboxes, s): s for s in active}
+        for fut in as_completed(futures):
+            for domain, renews, days_until in fut.result():
+                if domain not in domain_map or days_until < domain_map[domain]["days_until"]:
+                    domain_map[domain] = {"renews": renews, "days_until": days_until}
+    return {"domain_renewals": domain_map}
+
+
 # --- Generic Groups ---
 
 def api_generic_groups():
@@ -4187,6 +4227,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_placement_tests())
                 elif path == "/api/subscriptions":
                     self._json_response(api_subscriptions())
+                elif path == "/api/domain-renewals":
+                    self._json_response(api_domain_renewals())
                 elif path == "/api/untagged-count":
                     self._json_response(api_untagged_count())
                 elif path == "/api/replacements":

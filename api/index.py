@@ -362,6 +362,59 @@ def subscriptions():
     }))
 
 
+@app.route("/api/domain-renewals")
+def domain_renewals():
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import requests as req
+    from datetime import datetime, timezone
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    zm_key = os.environ.get("ZAPMAIL_API_KEY", "")
+    if not zm_key:
+        return _cors(jsonify({"error": "ZAPMAIL_API_KEY not configured"})), 500
+    headers = {"Content-Type": "application/json", "x-auth-zapmail": zm_key, "x-service-provider": "GOOGLE"}
+    try:
+        r = req.get("https://api.zapmail.ai/api/v2/subscriptions", headers=headers, timeout=15)
+        raw = r.json()
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 502
+    subs = raw if isinstance(raw, list) else raw.get("data", [])
+    now = datetime.now(timezone.utc)
+    active = []
+    for s in subs:
+        if s.get("subscriptionStatus") != "ACTIVE":
+            continue
+        period_end = s.get("periodEnd", "")
+        try:
+            renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        active.append({"id": s.get("id"), "renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days})
+    domain_map = {}
+    def fetch_mailboxes(sub):
+        try:
+            r2 = req.get(f"https://api.zapmail.ai/api/v2/subscriptions/{sub['id']}/mailboxes", headers=headers, timeout=15)
+            mboxes = r2.json()
+            if isinstance(mboxes, dict):
+                mboxes = mboxes.get("data", [])
+            pairs = []
+            for mb in (mboxes if isinstance(mboxes, list) else []):
+                email = mb.get("email", "")
+                domain = email.split("@")[1] if "@" in email else ""
+                if domain:
+                    pairs.append((domain, sub["renews"], sub["days_until"]))
+            return pairs
+        except Exception:
+            return []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(fetch_mailboxes, s): s for s in active}
+        for fut in as_completed(futures):
+            for domain, renews, days_until in fut.result():
+                if domain not in domain_map or days_until < domain_map[domain]["days_until"]:
+                    domain_map[domain] = {"renews": renews, "days_until": days_until}
+    return _cors(jsonify({"domain_renewals": domain_map}))
+
+
 @app.route("/api/replacements")
 def get_replacements():
     if not _check_auth():

@@ -283,6 +283,10 @@ async function load() {
             var rResp = await fetch('/api/replacements' + qs);
             if (rResp.ok) { var rd = await rResp.json(); data._replacements = rd.jobs || []; }
         } catch (e) { data._replacements = []; }
+        try {
+            var rnResp = await fetch('/api/domain-renewals' + qs);
+            if (rnResp.ok) { var rn = await rnResp.json(); data._domainRenewals = rn.domain_renewals || {}; }
+        } catch (e) { data._domainRenewals = {}; }
         render();
     } catch (err) {
         document.getElementById('loading').textContent = 'Error: ' + err.message;
@@ -693,6 +697,10 @@ function openDomainModal(domainName, jobId) {
     if (match) {
         html += '<div style="font-size:12px;color:#64748b;margin-bottom:16px;">' + esc(match.group) + ' &middot; ' + match.inboxCount + ' inboxes';
         if (match.bounce != null) html += ' &middot; <span style="color:' + (match.bounce >= 3 ? '#ef4444' : match.bounce >= 1 ? '#f59e0b' : '#22c55e') + '">' + match.bounce + '% bounce</span>';
+        if (match.days_until_renewal != null) {
+            var rnC = match.days_until_renewal <= 3 ? '#ef4444' : match.days_until_renewal <= 16 ? '#f59e0b' : '#22c55e';
+            html += ' &middot; <span style="color:' + rnC + ';font-weight:600;">Renews in ' + match.days_until_renewal + 'd</span> <span style="color:#475569;">(' + match.renews + ')</span>';
+        }
         html += '</div>';
     }
     if (job) {
@@ -856,7 +864,8 @@ function _collectAllDomains() {
                 var avgB = info.bounces.length ? Math.round(info.bounces.reduce(function(a,b){return a+b;},0) / info.bounces.length * 10) / 10 : null;
                 var avgRep = info.reps.length ? Math.round(info.reps.reduce(function(a,b){return a+b;},0) / info.reps.length) : null;
                 var anyInCampaign = info.inboxes.some(function(x) { return x.in_campaign; });
-                all.push({ domain: dk, group: gName, type: src.type, bounce: avgB, health: avgRep, inboxCount: info.inboxes.length, sent: info.sent, inboxes: info.inboxes, inCampaign: anyInCampaign });
+                var renewal = (data._domainRenewals || {})[dk];
+                all.push({ domain: dk, group: gName, type: src.type, bounce: avgB, health: avgRep, inboxCount: info.inboxes.length, sent: info.sent, inboxes: info.inboxes, inCampaign: anyInCampaign, renews: renewal ? renewal.renews : null, days_until_renewal: renewal ? renewal.days_until : null });
             });
         }
     }
@@ -882,7 +891,7 @@ function renderAvailablePool() {
     html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
     html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;">' +
         '<th style="padding:6px 10px">Domain</th><th style="padding:6px 10px">Group</th>' +
-        '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Bounce</th>' +
+        '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Renewal</th><th style="padding:6px 10px">Bounce</th>' +
         '<th style="padding:6px 10px">Health</th><th style="padding:6px 10px">Sent (per inbox)</th>' +
         '<th style="padding:6px 10px"></th></tr></thead><tbody>';
     for (var i = 0; i < available.length; i++) {
@@ -891,12 +900,18 @@ function renderAvailablePool() {
         var repCls = d.health == null ? 'color:#64748b' : d.health >= 90 ? 'color:#22c55e' : d.health >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
         var sentParts = d.inboxes.map(function(x) { return x.sent || 0; });
         var sentStr = sentParts.join(' / ');
+        var renewPoolStr = '—', renewPoolCls = 'color:#64748b';
+        if (d.days_until_renewal != null) {
+            renewPoolStr = d.days_until_renewal + 'd';
+            renewPoolCls = d.days_until_renewal <= 3 ? 'color:#ef4444;font-weight:700' : d.days_until_renewal <= 16 ? 'color:#f59e0b;font-weight:600' : 'color:#22c55e';
+        }
         var hasFlagged = (data._replacements || []).some(function(j) { return j.status === 'flagged'; });
         var assignBtn = hasFlagged ? '<button onclick="showAssignPicker(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\')" style="padding:3px 10px;font-size:11px;border-radius:4px;cursor:pointer;border:none;background:#064e3b;color:#6ee7b7;">Assign</button>' : '';
         html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="openDomainModal(\'' + d.domain.replace(/'/g, "\\'") + '\')">' +
             '<td style="padding:6px 10px;color:#e2e8f0;">' + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;">' + esc(d.group) + '</td>' +
             '<td style="padding:6px 10px;color:#e2e8f0;">' + d.inboxCount + '</td>' +
+            '<td style="padding:6px 10px;' + renewPoolCls + '">' + renewPoolStr + '</td>' +
             '<td style="padding:6px 10px;' + brCls + '">' + (d.bounce != null ? d.bounce + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + sentStr + '</td>' +
@@ -936,13 +951,18 @@ function renderDomainHealth() {
     if (!el) return;
     var allDomains = _collectAllDomains().filter(function(d) { return _matchesMaintFilter(d); });
     var flagged = allDomains.filter(function(d) { return d.bounce != null && d.bounce >= 3; });
-    flagged.sort(function(a, b) { return b.bounce - a.bounce; });
+    flagged.sort(function(a, b) {
+        var aR = a.days_until_renewal != null ? a.days_until_renewal : 9999;
+        var bR = b.days_until_renewal != null ? b.days_until_renewal : 9999;
+        if (aR !== bR) return aR - bR;
+        return (b.bounce || 0) - (a.bounce || 0);
+    });
     if (!flagged.length) { el.innerHTML = '<div style="padding:20px 24px;color:#22c55e;font-size:13px;">All domains under 3% bounce rate.</div>'; return; }
     var html = '<div class="section-title" style="margin-top:16px;">Domains Needing Attention (' + flagged.length + ')</div>';
     html += '<div style="padding:0 24px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
     html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left">' +
         '<th style="padding:6px 10px">Domain</th><th style="padding:6px 10px">Group</th><th style="padding:6px 10px">Type</th>' +
-        '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Bounce</th><th style="padding:6px 10px">Health</th>' +
+        '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Renewal</th><th style="padding:6px 10px">Bounce</th><th style="padding:6px 10px">Health</th>' +
         '<th style="padding:6px 10px">Sent (per inbox)</th><th style="padding:6px 10px"></th></tr></thead><tbody>';
     for (var i = 0; i < flagged.length; i++) {
         var d = flagged[i];
@@ -959,11 +979,17 @@ function renderDomainHealth() {
             btn = '<button onclick="flagDomainFromMaint(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\',\'' + d.type + '\',' + d.bounce + ')" ' +
                 'style="padding:2px 8px;font-size:10px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:4px;cursor:pointer;">Flag</button>';
         }
+        var renewStr = '—', renewCls = 'color:#64748b';
+        if (d.days_until_renewal != null) {
+            renewStr = d.days_until_renewal + 'd';
+            renewCls = d.days_until_renewal <= 3 ? 'color:#ef4444;font-weight:700' : d.days_until_renewal <= 16 ? 'color:#f59e0b;font-weight:600' : 'color:#22c55e';
+        }
         html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="openDomainModal(\'' + d.domain.replace(/'/g, "\\'") + '\')">' +
             '<td style="padding:6px 10px;color:#f1f5f9">' + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8">' + esc(d.group) + '</td>' +
             '<td style="padding:6px 10px">' + typeLabel + '</td>' +
             '<td style="padding:6px 10px">' + d.inboxCount + '</td>' +
+            '<td style="padding:6px 10px;' + renewCls + '">' + renewStr + '</td>' +
             '<td style="padding:6px 10px;' + brCls + '">' + d.bounce + '%</td>' +
             '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + d.inboxes.map(function(x){return x.sent||0;}).join(' / ') + '</td>' +
