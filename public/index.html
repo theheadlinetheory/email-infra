@@ -924,16 +924,26 @@ function showAssignPicker(domain, sourceGroup) {
     var flagged = (data._replacements || []).filter(function(j) { return j.status === 'flagged'; });
     if (!flagged.length) { alert('No flagged domains to assign to.'); return; }
     if (flagged.length === 1) {
-        if (confirm('Assign ' + domain + ' as replacement for ' + flagged[0].old_domain + ' (' + flagged[0].group_name + ')?')) {
-            _assignDomain(flagged[0].id, domain);
-        }
+        _confirmAssign(flagged[0].id, domain, sourceGroup, (_collectAllDomains().filter(function(d){return d.domain===domain;})[0]||{}).inboxCount||3);
         return;
     }
-    var opts = flagged.map(function(j) { return j.old_domain + ' (' + j.group_name + ')'; });
-    var choice = prompt('Which flagged domain should ' + domain + ' replace?\\n\\n' + opts.map(function(o, i) { return (i + 1) + '. ' + o; }).join('\\n') + '\\n\\nEnter number:');
-    if (!choice) return;
-    var idx = parseInt(choice, 10) - 1;
-    if (idx >= 0 && idx < flagged.length) _assignDomain(flagged[idx].id, domain);
+    var html = '<div style="padding:20px 24px;">';
+    html += '<div style="font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">Assign ' + esc(domain) + '</div>';
+    html += '<div style="font-size:12px;color:#64748b;margin-bottom:16px;">Which flagged domain should this replace?</div>';
+    for (var i = 0; i < flagged.length; i++) {
+        var j = flagged[i];
+        var domMatch = _collectAllDomains().filter(function(d){return d.domain===domain;})[0];
+        var ic = domMatch ? domMatch.inboxCount : 3;
+        html += '<div style="padding:10px 12px;margin-bottom:6px;border:1px solid #334155;border-radius:8px;cursor:pointer;transition:background 0.15s;" ' +
+            'onmouseover="this.style.background=\'rgba(59,130,246,0.15)\'" onmouseout="this.style.background=\'transparent\'" ' +
+            'onclick="_confirmAssign(\'' + j.id + '\',\'' + domain.replace(/'/g, "\\'") + '\',\'' + esc(sourceGroup) + '\',' + ic + ')">' +
+            '<div style="color:#f1f5f9;font-weight:500;">' + esc(j.old_domain) + '</div>' +
+            '<div style="color:#94a3b8;font-size:11px;">' + esc(j.group_name) + ' &middot; ' + j.bounce_rate + '% bounce</div></div>';
+    }
+    html += '</div>';
+    document.getElementById('modal-body').innerHTML = html;
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
 }
 function _assignDomain(jobId, domain) {
     fetch('/api/replacements/update' + _authQs(), {
@@ -1122,26 +1132,70 @@ function _replacementActions(j) {
 }
 function setReplacementDomain(jobId) {
     var allDom = _collectAllDomains();
-    var available = allDom.filter(function(d) { return d.type === 'generic' && !d.inCampaign; });
-    available.sort(function(a, b) { return (a.bounce || 0) - (b.bounce || 0); });
-    if (!available.length) {
-        var manual = prompt('No reserve domains available. Enter a domain manually:');
-        if (manual) _assignDomain(jobId, manual);
-        return;
-    }
-    var opts = available.map(function(d, i) {
-        var sentParts = d.inboxes.map(function(x) { return x.sent || 0; }).join('/');
-        return (i + 1) + '. ' + d.domain + ' [' + d.group + '] ' + d.inboxCount + ' inboxes, bounce=' + (d.bounce != null ? d.bounce + '%' : '—') + ', sent=' + sentParts;
+    var available = allDom.filter(function(d) { return d.type === 'generic' && !d.inCampaign && d.inboxCount >= 3; });
+    available.sort(function(a, b) {
+        var aR = a.days_until_renewal != null ? a.days_until_renewal : 9999;
+        var bR = b.days_until_renewal != null ? b.days_until_renewal : 9999;
+        return aR - bR;
     });
-    var choice = prompt('Pick a replacement domain:\\n\\n' + opts.join('\\n') + '\\n\\n' + (available.length + 1) + '. Enter manually\\n\\nEnter number:');
-    if (!choice) return;
-    var idx = parseInt(choice, 10) - 1;
-    if (idx === available.length) {
-        var manual = prompt('Enter domain:');
-        if (manual) _assignDomain(jobId, manual);
-    } else if (idx >= 0 && idx < available.length) {
-        _assignDomain(jobId, available[idx].domain);
+    var html = '<div style="padding:20px 24px;">';
+    html += '<div style="font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">Select Replacement Domain</div>';
+    html += '<div style="font-size:12px;color:#64748b;margin-bottom:16px;">Showing reserve domains with 3+ inboxes, sorted by renewal date</div>';
+    if (!available.length) {
+        html += '<div style="padding:20px;color:#f59e0b;font-size:13px;">No reserve domains with 3+ inboxes available.</div>';
+    } else {
+        html += '<div style="max-height:400px;overflow-y:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;position:sticky;top:0;background:#1a1d28;">' +
+            '<th style="padding:8px 10px;">Domain</th><th style="padding:8px 10px;">Group</th>' +
+            '<th style="padding:8px 10px;">Inboxes</th><th style="padding:8px 10px;">Renewal</th>' +
+            '<th style="padding:8px 10px;">Bounce</th><th style="padding:8px 10px;">Health</th></tr></thead><tbody>';
+        for (var i = 0; i < available.length; i++) {
+            var d = available[i];
+            var brC = d.bounce == null ? 'color:#64748b' : d.bounce < 1 ? 'color:#22c55e' : d.bounce < 3 ? 'color:#f59e0b' : 'color:#ef4444';
+            var repC = d.health == null ? 'color:#64748b' : d.health >= 90 ? 'color:#22c55e' : d.health >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
+            var rnStr = '—', rnC = 'color:#64748b';
+            if (d.days_until_renewal != null) {
+                rnStr = d.days_until_renewal + 'd';
+                rnC = d.days_until_renewal <= 3 ? 'color:#ef4444;font-weight:700' : d.days_until_renewal <= 16 ? 'color:#f59e0b;font-weight:600' : 'color:#22c55e';
+            }
+            html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;transition:background 0.15s;" ' +
+                'onmouseover="this.style.background=\'rgba(59,130,246,0.15)\'" onmouseout="this.style.background=\'transparent\'" ' +
+                'onclick="_confirmAssign(\'' + jobId + '\',\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + esc(d.group) + '\',' + d.inboxCount + ')">' +
+                '<td style="padding:8px 10px;color:#e2e8f0;font-weight:500;">' + esc(d.domain) + '</td>' +
+                '<td style="padding:8px 10px;color:#94a3b8;">' + esc(d.group) + '</td>' +
+                '<td style="padding:8px 10px;color:#e2e8f0;">' + d.inboxCount + '</td>' +
+                '<td style="padding:8px 10px;' + rnC + '">' + rnStr + '</td>' +
+                '<td style="padding:8px 10px;' + brC + '">' + (d.bounce != null ? d.bounce + '%' : '—') + '</td>' +
+                '<td style="padding:8px 10px;' + repC + '">' + (d.health != null ? d.health + '%' : '—') + '</td></tr>';
+        }
+        html += '</tbody></table></div>';
     }
+    html += '</div>';
+    document.getElementById('modal-body').innerHTML = html;
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}
+function _confirmAssign(jobId, domain, group, inboxCount) {
+    var job = (data._replacements || []).filter(function(j) { return j.id === jobId; })[0];
+    if (!job) return;
+    var html = '<div style="padding:24px;">';
+    html += '<div style="font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:16px;">Confirm Replacement</div>';
+    html += '<div style="display:flex;gap:16px;margin-bottom:20px;">';
+    html += '<div style="flex:1;padding:12px;background:rgba(127,29,29,0.2);border:1px solid #991b1b;border-radius:8px;">';
+    html += '<div style="font-size:10px;font-weight:700;color:#ef4444;margin-bottom:4px;">REPLACING (OLD)</div>';
+    html += '<div style="color:#f1f5f9;font-weight:600;">' + esc(job.old_domain) + '</div>';
+    html += '<div style="color:#94a3b8;font-size:11px;">' + esc(job.group_name) + ' &middot; ' + job.bounce_rate + '% bounce</div></div>';
+    html += '<div style="flex:1;padding:12px;background:rgba(6,78,59,0.2);border:1px solid #064e3b;border-radius:8px;">';
+    html += '<div style="font-size:10px;font-weight:700;color:#22c55e;margin-bottom:4px;">REPLACEMENT (NEW)</div>';
+    html += '<div style="color:#f1f5f9;font-weight:600;">' + esc(domain) + '</div>';
+    html += '<div style="color:#94a3b8;font-size:11px;">' + esc(group) + ' &middot; ' + inboxCount + ' inboxes</div></div></div>';
+    html += '<div style="font-size:12px;color:#94a3b8;margin-bottom:16px;">This will start 14-day warmup monitoring. After warmup completes, you\'ll swap tags + forwarding, then tear down the old domain.</div>';
+    html += '<div style="display:flex;gap:8px;justify-content:flex-end;">';
+    html += '<button onclick="setReplacementDomain(\'' + jobId + '\')" style="padding:8px 16px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #334155;background:transparent;color:#94a3b8;">Back</button>';
+    html += '<button onclick="_assignDomain(\'' + jobId + '\',\'' + domain.replace(/'/g, "\\'") + '\')" style="padding:8px 16px;font-size:12px;border-radius:6px;cursor:pointer;border:none;background:#064e3b;color:#6ee7b7;font-weight:600;">Assign &amp; Start Warmup</button>';
+    html += '</div></div>';
+    document.getElementById('modal-body').innerHTML = html;
 }
 function updateReplacement(jobId, newStatus) {
     fetch('/api/replacements/update' + _authQs(), {
