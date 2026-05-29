@@ -939,15 +939,19 @@ function renderDomainHealth() {
             btn = '<button onclick="flagDomainFromMaint(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\',\'' + d.type + '\',' + d.bounce + ')" ' +
                 'style="padding:2px 8px;font-size:10px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:4px;cursor:pointer;">Flag</button>';
         }
-        html += '<tr style="border-bottom:1px solid #1e293b">' +
-            '<td style="padding:6px 10px;color:#f1f5f9">' + esc(d.domain) + '</td>' +
+        var hKey = 'health_' + d.domain;
+        var hExp = expandedDomains[hKey];
+        var arrow = '<span style="cursor:pointer;color:#64748b;margin-right:4px;font-size:10px;display:inline-block;transform:rotate(' + (hExp ? '90' : '0') + 'deg);transition:transform 0.15s;">&#9654;</span>';
+        html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="toggleDomain(\'' + hKey + '\')">' +
+            '<td style="padding:6px 10px;color:#f1f5f9">' + arrow + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8">' + esc(d.group) + '</td>' +
             '<td style="padding:6px 10px">' + typeLabel + '</td>' +
             '<td style="padding:6px 10px">' + d.inboxCount + '</td>' +
             '<td style="padding:6px 10px;' + brCls + '">' + d.bounce + '%</td>' +
             '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + d.inboxes.map(function(x){return x.sent||0;}).join(' / ') + '</td>' +
-            '<td style="padding:6px 10px">' + btn + '</td></tr>';
+            '<td style="padding:6px 10px" onclick="event.stopPropagation();">' + btn + '</td></tr>';
+        if (hExp) html += _inboxDetailRow(d.domain, 8);
     }
     html += '</tbody></table></div>';
     el.innerHTML = html;
