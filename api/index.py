@@ -406,6 +406,9 @@ def create_replacement():
         "old_cancel_date": None,
         "tags_updated": False,
         "forwarding_updated": False,
+        "removed_zapmail": False,
+        "removed_smartlead": False,
+        "domain_cancelled": False,
     }
     state["jobs"].append(job)
     store.set_state("domain_replacements", state)
@@ -457,7 +460,7 @@ def update_replacement():
     if body.get("old_cancelled"):
         job["old_cancelled"] = True
         job["old_cancel_date"] = _dt.now().strftime("%Y-%m-%d")
-    for flag in ("tags_updated", "forwarding_updated"):
+    for flag in ("tags_updated", "forwarding_updated", "removed_zapmail", "removed_smartlead", "domain_cancelled"):
         if flag in body:
             job[flag] = bool(body[flag])
     store.set_state("domain_replacements", state)

@@ -713,19 +713,30 @@ function _inboxDetailInner(domainName) {
     return html;
 }
 function _swapChecklist(j) {
-    var checks = [
-        { key: 'tags_updated', label: 'Tags updated (new inboxes re-tagged to ' + esc(j.group_name) + ')' },
+    var swapIn = [
+        { key: 'tags_updated', label: 'New inboxes re-tagged to ' + esc(j.group_name) },
         { key: 'forwarding_updated', label: 'Forwarding domain updated in Zapmail' },
     ];
-    var html = '<div style="padding:8px 30px 10px;border-top:1px solid #1e293b;">';
-    html += '<div style="font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px;">SWAP CHECKLIST</div>';
-    for (var i = 0; i < checks.length; i++) {
-        var c = checks[i];
-        var done = j[c.key];
-        var checkStyle = 'display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid ' + (done ? '#22c55e' : '#334155') + ';background:' + (done ? '#064e3b' : 'transparent') + ';text-align:center;line-height:14px;font-size:10px;color:#22c55e;cursor:pointer;margin-right:6px;vertical-align:middle;';
-        html += '<div style="margin-bottom:4px;">';
-        html += '<span onclick="event.stopPropagation();toggleSwapCheck(\'' + j.id + '\',\'' + c.key + '\',' + !done + ')" style="' + checkStyle + '">' + (done ? '&#10003;' : '') + '</span>';
-        html += '<span style="font-size:11px;color:' + (done ? '#22c55e' : '#94a3b8') + ';">' + c.label + '</span></div>';
+    var teardown = [
+        { key: 'removed_zapmail', label: 'Old inboxes removed from Zapmail' },
+        { key: 'removed_smartlead', label: 'Old inboxes removed from SmartLead' },
+        { key: 'domain_cancelled', label: 'Domain cancelled on provider (Porkbun/Spaceship)' },
+    ];
+    var html = '<div style="padding:8px 30px 10px;border-top:1px solid #1e293b;display:flex;gap:32px;flex-wrap:wrap;">';
+    var sections = [{ title: 'SWAP IN NEW', items: swapIn }, { title: 'TEARDOWN OLD', items: teardown }];
+    for (var s = 0; s < sections.length; s++) {
+        var sec = sections[s];
+        html += '<div style="flex:1;min-width:200px;">';
+        html += '<div style="font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px;">' + sec.title + '</div>';
+        for (var i = 0; i < sec.items.length; i++) {
+            var c = sec.items[i];
+            var done = j[c.key];
+            var checkStyle = 'display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid ' + (done ? '#22c55e' : '#334155') + ';background:' + (done ? '#064e3b' : 'transparent') + ';text-align:center;line-height:14px;font-size:10px;color:#22c55e;cursor:pointer;margin-right:6px;vertical-align:middle;';
+            html += '<div style="margin-bottom:4px;">';
+            html += '<span onclick="event.stopPropagation();toggleSwapCheck(\'' + j.id + '\',\'' + c.key + '\',' + !done + ')" style="' + checkStyle + '">' + (done ? '&#10003;' : '') + '</span>';
+            html += '<span style="font-size:11px;color:' + (done ? '#22c55e' : '#94a3b8') + ';">' + c.label + '</span></div>';
+        }
+        html += '</div>';
     }
     html += '</div>';
     return html;
@@ -975,7 +986,8 @@ function flagDomainFromMaint(domain, groupName, groupType, bounceRate) {
 }
 
 function _isJobComplete(j) {
-    return (j.status === 'swapped' && j.old_cancelled) || j.status === 'cancelled';
+    if (j.status === 'cancelled') return true;
+    return j.status === 'swapped' && j.removed_zapmail && j.removed_smartlead && j.domain_cancelled;
 }
 function _warmupDays(j) {
     if (!j.warming_started_at) return 0;
@@ -1004,9 +1016,10 @@ function _statusBadge(j) {
         badge += ' <span style="font-size:10px;color:#fbbf24;font-weight:600;">Day ' + d + '/14' + (remaining > 0 ? ' (' + remaining + ' left)' : ' ✔') + '</span>';
     }
     if (j.status === 'swapped') {
-        badge += j.old_cancelled
-            ? ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#6ee7b7;font-weight:600;">OLD CANCELLED</span>'
-            : ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#7f1d1d;color:#fca5a5;font-weight:600;">OLD STILL ACTIVE</span>';
+        var teardownDone = (j.removed_zapmail ? 1 : 0) + (j.removed_smartlead ? 1 : 0) + (j.domain_cancelled ? 1 : 0);
+        badge += teardownDone === 3
+            ? ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#6ee7b7;font-weight:600;">TEARDOWN DONE</span>'
+            : ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;font-weight:600;">TEARDOWN ' + teardownDone + '/3</span>';
     }
     return badge;
 }
@@ -1063,7 +1076,7 @@ function renderReplacementTracker() {
     if (!jobs.length) { el.innerHTML = ''; return; }
     var active = jobs.filter(function(j) { return !_isJobComplete(j); });
     var archived = jobs.filter(function(j) { return _isJobComplete(j); });
-    var needsAttention = active.filter(function(j) { return j.status === 'flagged' || (j.status === 'swapped' && !j.old_cancelled); }).length;
+    var needsAttention = active.filter(function(j) { return j.status === 'flagged' || (j.status === 'swapped' && !_isJobComplete(j)); }).length;
     var html = '<div style="margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:16px 20px;">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
     html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;">Domain Replacements';
@@ -1088,10 +1101,8 @@ function _replacementActions(j) {
         }
     } else if (j.status === 'ready') {
         actions += '<button onclick="updateReplacement(\'' + j.id + '\',\'swapped\')" style="' + btnStyle + 'background:#1e40af;color:#93c5fd;">Mark Swapped</button>';
-    } else if (j.status === 'swapped' && !j.old_cancelled) {
-        actions += '<button onclick="markOldCancelled(\'' + j.id + '\')" style="' + btnStyle + 'background:#78350f;color:#fbbf24;">Cancel Old Sub</button>';
     }
-    if (j.status !== 'swapped' || !j.old_cancelled) {
+    if (!_isJobComplete(j)) {
         actions += '<button onclick="cancelReplacement(\'' + j.id + '\')" style="' + btnStyle + 'background:transparent;color:#64748b;border:1px solid #334155;" title="Abandon this replacement">&times;</button>';
     }
     return actions;
