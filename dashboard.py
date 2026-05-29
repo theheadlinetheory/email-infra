@@ -2870,7 +2870,15 @@ def api_subscriptions():
 
 
 def api_domain_renewals():
-    """Map each domain to its subscription renewal date via mailbox creation date correlation."""
+    """Return cached domain→renewal mapping. Built by sync_domain_renewals()."""
+    cached, _ = store.cache_get("domain_renewals")
+    if cached:
+        return cached
+    return {"domain_renewals": {}}
+
+
+def sync_domain_renewals():
+    """Build domain→subscription renewal mapping and cache it."""
     raw = zm_get_subscriptions()
     subs = raw if isinstance(raw, list) else raw.get("data", [])
     now = datetime.now(timezone.utc)
@@ -2900,7 +2908,10 @@ def api_domain_renewals():
         domain_name = d.get("domain", "")
         if mb_date in sub_by_date and domain_name:
             domain_map[domain_name] = sub_by_date[mb_date]
-    return {"domain_renewals": domain_map}
+    result = {"domain_renewals": domain_map}
+    store.cache_patch("domain_renewals", result)
+    print(f"[sync_domain_renewals] Cached {len(domain_map)} domain renewal mappings")
+    return result
 
 
 # --- Generic Groups ---

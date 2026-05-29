@@ -454,6 +454,14 @@ def sync(progress_cb=None):
     store.cache_set("overview_v2", overview)
     print(f"  Cache written: {client_count} clients")
 
+    _report(97, "Syncing domain renewals...")
+    from dashboard import sync_domain_renewals
+    try:
+        rn = sync_domain_renewals()
+        print(f"  Domain renewals: {len(rn.get('domain_renewals', {}))} mapped")
+    except Exception as e:
+        print(f"  Domain renewals failed: {e}")
+
     # Store daily health snapshot for trend charts
     existing, _ = store.cache_get("health_history")
     history = existing if isinstance(existing, list) else []

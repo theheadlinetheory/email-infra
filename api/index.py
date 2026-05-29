@@ -366,56 +366,11 @@ def subscriptions():
 def domain_renewals():
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
-    import requests as req
-    from datetime import datetime, timezone
-    zm_key = os.environ.get("ZAPMAIL_API_KEY", "")
-    if not zm_key:
-        return _cors(jsonify({"error": "ZAPMAIL_API_KEY not configured"})), 500
-    headers = {"Content-Type": "application/json", "x-auth-zapmail": zm_key, "x-service-provider": "GOOGLE"}
-    try:
-        r = req.get("https://api.zapmail.ai/api/v2/subscriptions", headers=headers, timeout=15)
-        raw = r.json()
-    except Exception as e:
-        return _cors(jsonify({"error": str(e)})), 502
-    subs = raw if isinstance(raw, list) else raw.get("data", [])
-    now = datetime.now(timezone.utc)
-    sub_by_date = {}
-    for s in subs:
-        if s.get("subscriptionStatus") != "ACTIVE":
-            continue
-        period_end = s.get("periodEnd", "")
-        try:
-            renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            continue
-        cd = s.get("subscriptionCreationDate", "")[:10]
-        if cd:
-            entry = {"renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days}
-            if cd not in sub_by_date or entry["days_until"] < sub_by_date[cd]["days_until"]:
-                sub_by_date[cd] = entry
-    all_domains = []
-    page = 1
-    while page <= 20:
-        try:
-            r2 = req.get(f"https://api.zapmail.ai/api/v2/domains?page={page}", headers=headers, timeout=15)
-            page_data = r2.json().get("data", {})
-            doms = page_data.get("domains", [])
-            all_domains.extend(doms)
-            if page >= page_data.get("totalPages", 1):
-                break
-            page += 1
-        except Exception:
-            break
-    domain_map = {}
-    for d in all_domains:
-        mboxes = d.get("mailboxes", [])
-        if not mboxes:
-            continue
-        mb_date = mboxes[0].get("createdAt", "")[:10]
-        domain_name = d.get("domain", "")
-        if mb_date in sub_by_date and domain_name:
-            domain_map[domain_name] = sub_by_date[mb_date]
-    return _cors(jsonify({"domain_renewals": domain_map}))
+    import db as store
+    cached, updated_at = store.cache_get("domain_renewals")
+    if cached:
+        return _cors(jsonify(cached))
+    return _cors(jsonify({"domain_renewals": {}}))
 
 
 @app.route("/api/replacements")
