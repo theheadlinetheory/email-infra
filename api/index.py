@@ -404,6 +404,8 @@ def create_replacement():
         "cancelled_at": None,
         "old_cancelled": False,
         "old_cancel_date": None,
+        "tags_updated": False,
+        "forwarding_updated": False,
     }
     state["jobs"].append(job)
     store.set_state("domain_replacements", state)
@@ -455,6 +457,9 @@ def update_replacement():
     if body.get("old_cancelled"):
         job["old_cancelled"] = True
         job["old_cancel_date"] = _dt.now().strftime("%Y-%m-%d")
+    for flag in ("tags_updated", "forwarding_updated"):
+        if flag in body:
+            job[flag] = bool(body[flag])
     store.set_state("domain_replacements", state)
     return _cors(jsonify({"ok": True, "job": job}))
 
