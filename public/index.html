@@ -231,7 +231,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <div id="maintenance-tab" style="display:none;">
+    <div id="maint-filters"></div>
     <div id="replacement-tracker"></div>
+    <div id="available-pool"></div>
     <div id="maint-domain-health"></div>
     <div class="section-title" style="margin-top:24px;">Zapmail Subscriptions</div>
     <div id="subs-section"></div>
@@ -677,27 +679,50 @@ function renderAcquisition() {
     renderKanban();
 }
 
+var maintFilter = { type: 'all', group: '' };
 function renderMaintenance() {
+    renderMaintFilters();
     renderReplacementTracker();
+    renderAvailablePool();
     renderDomainHealth();
     renderSubscriptions();
 }
-
-function renderDomainHealth() {
-    var el = document.getElementById('maint-domain-health');
+function renderMaintFilters() {
+    var el = document.getElementById('maint-filters');
     if (!el) return;
-    var allDomains = [];
+    var groups = new Set();
+    (data._replacements || []).forEach(function(j) { groups.add(j.group_name); });
+    _collectAllDomains().forEach(function(d) { groups.add(d.group); });
+    var groupOpts = '<option value="">All Groups</option>';
+    Array.from(groups).sort().forEach(function(g) {
+        groupOpts += '<option value="' + esc(g) + '"' + (maintFilter.group === g ? ' selected' : '') + '>' + esc(g) + '</option>';
+    });
+    var selStyle = 'padding:6px 10px;font-size:12px;background:#1a1d28;color:#e2e8f0;border:1px solid #334155;border-radius:6px;margin-right:8px;';
+    var btnStyle = function(active) { return 'padding:5px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid #334155;margin-right:4px;' + (active ? 'background:#3b82f6;color:#fff;border-color:#3b82f6;' : 'background:transparent;color:#94a3b8;'); };
+    el.innerHTML = '<div style="padding:12px 24px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+        '<span style="font-size:12px;color:#64748b;margin-right:4px;">Filter:</span>' +
+        '<button onclick="setMaintFilter(\'type\',\'all\')" style="' + btnStyle(maintFilter.type === 'all') + '">All</button>' +
+        '<button onclick="setMaintFilter(\'type\',\'client\')" style="' + btnStyle(maintFilter.type === 'client') + '">Client</button>' +
+        '<button onclick="setMaintFilter(\'type\',\'acquisition\')" style="' + btnStyle(maintFilter.type === 'acquisition') + '">Acquisition</button>' +
+        '<button onclick="setMaintFilter(\'type\',\'generic\')" style="' + btnStyle(maintFilter.type === 'generic') + '">Generic</button>' +
+        '<select onchange="setMaintFilter(\'group\',this.value)" style="' + selStyle + '">' + groupOpts + '</select>' +
+        '</div>';
+}
+function setMaintFilter(key, val) {
+    maintFilter[key] = val;
+    renderMaintenance();
+}
+function _collectAllDomains() {
+    var all = [];
     var sources = [
         { groups: data.acquisition_groups || [], type: 'acquisition' },
         { groups: data.generic_groups || [], type: 'generic' },
     ];
-    var clients = data.clients || [];
-    for (var ci = 0; ci < clients.length; ci++) {
-        var c = clients[ci];
+    (data.clients || []).forEach(function(c) {
         if (c.group_a && c.group_a.account_details) sources.push({ groups: [c.group_a], type: 'client', nameOverride: c.name + ' A' });
         if (c.group_b && c.group_b.account_details) sources.push({ groups: [c.group_b], type: 'client', nameOverride: c.name + ' B' });
         if (!c.group_a && c.account_details) sources.push({ groups: [c], type: 'client', nameOverride: c.name });
-    }
+    });
     for (var si = 0; si < sources.length; si++) {
         var src = sources[si];
         for (var gi = 0; gi < src.groups.length; gi++) {
@@ -707,23 +732,97 @@ function renderDomainHealth() {
             for (var ai = 0; ai < accts.length; ai++) {
                 var a = accts[ai];
                 var d = a.domain || (a.email || '').split('@')[1] || '';
-                if (!byDom[d]) byDom[d] = { bounces: [], reps: [], sent: 0, inboxes: 0 };
-                byDom[d].inboxes++;
+                if (!byDom[d]) byDom[d] = { inboxes: [], sent: 0, bounces: [], reps: [] };
+                byDom[d].inboxes.push({ email: a.email, sent: a.sent || 0, bounce: a.bounce_rate, rep: a.warmup_reputation, smtp_ok: a.smtp_ok, in_campaign: a.in_campaign });
                 byDom[d].sent += a.sent || 0;
                 if (a.bounce_rate != null) byDom[d].bounces.push(a.bounce_rate);
                 if (a.warmup_reputation != null) byDom[d].reps.push(a.warmup_reputation);
             }
             var gName = src.nameOverride || g.name || '';
-            var domKeys = Object.keys(byDom);
-            for (var di = 0; di < domKeys.length; di++) {
-                var dk = domKeys[di];
+            Object.keys(byDom).forEach(function(dk) {
                 var info = byDom[dk];
                 var avgB = info.bounces.length ? Math.round(info.bounces.reduce(function(a,b){return a+b;},0) / info.bounces.length * 10) / 10 : null;
                 var avgRep = info.reps.length ? Math.round(info.reps.reduce(function(a,b){return a+b;},0) / info.reps.length) : null;
-                allDomains.push({ domain: dk, group: gName, type: src.type, bounce: avgB, health: avgRep, inboxes: info.inboxes, sent: info.sent });
-            }
+                var anyInCampaign = info.inboxes.some(function(x) { return x.in_campaign; });
+                all.push({ domain: dk, group: gName, type: src.type, bounce: avgB, health: avgRep, inboxCount: info.inboxes.length, sent: info.sent, inboxes: info.inboxes, inCampaign: anyInCampaign });
+            });
         }
     }
+    return all;
+}
+function _matchesMaintFilter(item) {
+    if (maintFilter.type !== 'all' && item.type !== maintFilter.type) return false;
+    if (maintFilter.group && item.group !== maintFilter.group) return false;
+    return true;
+}
+
+function renderAvailablePool() {
+    var el = document.getElementById('available-pool');
+    if (!el) return;
+    var allDom = _collectAllDomains();
+    var available = allDom.filter(function(d) {
+        return d.type === 'generic' && !d.inCampaign && _matchesMaintFilter({ type: 'generic', group: d.group });
+    });
+    available.sort(function(a, b) { return (a.bounce || 0) - (b.bounce || 0); });
+    if (!available.length) { el.innerHTML = '<div style="padding:12px 24px;color:#64748b;font-size:12px;">No available reserve domains' + (maintFilter.type !== 'all' || maintFilter.group ? ' (matching filter)' : '') + '.</div>'; return; }
+    var html = '<div style="margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:16px 20px;">';
+    html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;margin-bottom:12px;">Available Reserve Domains <span style="color:#64748b;font-weight:400;font-size:12px;">(' + available.length + ' domains, ' + available.reduce(function(s,d){return s+d.inboxCount;},0) + ' inboxes)</span></div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;">' +
+        '<th style="padding:6px 10px">Domain</th><th style="padding:6px 10px">Group</th>' +
+        '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Bounce</th>' +
+        '<th style="padding:6px 10px">Health</th><th style="padding:6px 10px">Sent (per inbox)</th>' +
+        '<th style="padding:6px 10px"></th></tr></thead><tbody>';
+    for (var i = 0; i < available.length; i++) {
+        var d = available[i];
+        var brCls = d.bounce == null ? 'color:#64748b' : d.bounce < 1 ? 'color:#22c55e' : d.bounce < 3 ? 'color:#f59e0b' : 'color:#ef4444';
+        var repCls = d.health == null ? 'color:#64748b' : d.health >= 90 ? 'color:#22c55e' : d.health >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
+        var sentParts = d.inboxes.map(function(x) { return x.sent || 0; });
+        var sentStr = sentParts.join(' / ');
+        var hasFlagged = (data._replacements || []).some(function(j) { return j.status === 'flagged'; });
+        var assignBtn = hasFlagged ? '<button onclick="showAssignPicker(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\')" style="padding:3px 10px;font-size:11px;border-radius:4px;cursor:pointer;border:none;background:#064e3b;color:#6ee7b7;">Assign</button>' : '';
+        html += '<tr style="border-bottom:1px solid #1e293b;">' +
+            '<td style="padding:6px 10px;color:#e2e8f0;">' + esc(d.domain) + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;">' + esc(d.group) + '</td>' +
+            '<td style="padding:6px 10px;color:#e2e8f0;">' + d.inboxCount + '</td>' +
+            '<td style="padding:6px 10px;' + brCls + '">' + (d.bounce != null ? d.bounce + '%' : '—') + '</td>' +
+            '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + sentStr + '</td>' +
+            '<td style="padding:6px 10px;">' + assignBtn + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    el.innerHTML = html;
+}
+function showAssignPicker(domain, sourceGroup) {
+    var flagged = (data._replacements || []).filter(function(j) { return j.status === 'flagged'; });
+    if (!flagged.length) { alert('No flagged domains to assign to.'); return; }
+    if (flagged.length === 1) {
+        if (confirm('Assign ' + domain + ' as replacement for ' + flagged[0].old_domain + ' (' + flagged[0].group_name + ')?')) {
+            _assignDomain(flagged[0].id, domain);
+        }
+        return;
+    }
+    var opts = flagged.map(function(j) { return j.old_domain + ' (' + j.group_name + ')'; });
+    var choice = prompt('Which flagged domain should ' + domain + ' replace?\\n\\n' + opts.map(function(o, i) { return (i + 1) + '. ' + o; }).join('\\n') + '\\n\\nEnter number:');
+    if (!choice) return;
+    var idx = parseInt(choice, 10) - 1;
+    if (idx >= 0 && idx < flagged.length) _assignDomain(flagged[idx].id, domain);
+}
+function _assignDomain(jobId, domain) {
+    fetch('/api/replacements/update' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ id: jobId, new_domain: domain, status: 'warming' })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) refreshReplacements();
+        else alert(d.error || 'Error');
+    });
+}
+
+function renderDomainHealth() {
+    var el = document.getElementById('maint-domain-health');
+    if (!el) return;
+    var allDomains = _collectAllDomains().filter(function(d) { return _matchesMaintFilter(d); });
     var flagged = allDomains.filter(function(d) { return d.bounce != null && d.bounce >= 3; });
     flagged.sort(function(a, b) { return b.bounce - a.bounce; });
     if (!flagged.length) { el.innerHTML = '<div style="padding:20px 24px;color:#22c55e;font-size:13px;">All domains under 3% bounce rate.</div>'; return; }
@@ -732,7 +831,7 @@ function renderDomainHealth() {
     html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left">' +
         '<th style="padding:6px 10px">Domain</th><th style="padding:6px 10px">Group</th><th style="padding:6px 10px">Type</th>' +
         '<th style="padding:6px 10px">Inboxes</th><th style="padding:6px 10px">Bounce</th><th style="padding:6px 10px">Health</th>' +
-        '<th style="padding:6px 10px">Sent</th><th style="padding:6px 10px"></th></tr></thead><tbody>';
+        '<th style="padding:6px 10px">Sent (per inbox)</th><th style="padding:6px 10px"></th></tr></thead><tbody>';
     for (var i = 0; i < flagged.length; i++) {
         var d = flagged[i];
         var alreadyFlagged = (data._replacements || []).some(function(j) {
@@ -752,10 +851,10 @@ function renderDomainHealth() {
             '<td style="padding:6px 10px;color:#f1f5f9">' + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8">' + esc(d.group) + '</td>' +
             '<td style="padding:6px 10px">' + typeLabel + '</td>' +
-            '<td style="padding:6px 10px">' + d.inboxes + '</td>' +
+            '<td style="padding:6px 10px">' + d.inboxCount + '</td>' +
             '<td style="padding:6px 10px;' + brCls + '">' + d.bounce + '%</td>' +
             '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
-            '<td style="padding:6px 10px">' + d.sent + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + d.inboxes.map(function(x){return x.sent||0;}).join(' / ') + '</td>' +
             '<td style="padding:6px 10px">' + btn + '</td></tr>';
     }
     html += '</tbody></table></div>';
@@ -844,7 +943,9 @@ function _replacementTable(jobs, isArchived) {
 function renderReplacementTracker() {
     var el = document.getElementById('replacement-tracker');
     if (!el) return;
-    var jobs = data._replacements || [];
+    var jobs = (data._replacements || []).filter(function(j) {
+        return _matchesMaintFilter({ type: j.group_type, group: j.group_name });
+    });
     if (!jobs.length) { el.innerHTML = ''; return; }
     var active = jobs.filter(function(j) { return !_isJobComplete(j); });
     var archived = jobs.filter(function(j) { return _isJobComplete(j); });
@@ -882,16 +983,27 @@ function _replacementActions(j) {
     return actions;
 }
 function setReplacementDomain(jobId) {
-    var newDomain = prompt('Enter the new domain replacing this one:');
-    if (!newDomain) return;
-    fetch('/api/replacements/update' + _authQs(), {
-        method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ id: jobId, new_domain: newDomain, status: 'warming' })
-    }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.ok) refreshReplacements();
-        else alert(d.error || 'Error');
+    var allDom = _collectAllDomains();
+    var available = allDom.filter(function(d) { return d.type === 'generic' && !d.inCampaign; });
+    available.sort(function(a, b) { return (a.bounce || 0) - (b.bounce || 0); });
+    if (!available.length) {
+        var manual = prompt('No reserve domains available. Enter a domain manually:');
+        if (manual) _assignDomain(jobId, manual);
+        return;
+    }
+    var opts = available.map(function(d, i) {
+        var sentParts = d.inboxes.map(function(x) { return x.sent || 0; }).join('/');
+        return (i + 1) + '. ' + d.domain + ' [' + d.group + '] ' + d.inboxCount + ' inboxes, bounce=' + (d.bounce != null ? d.bounce + '%' : '—') + ', sent=' + sentParts;
     });
+    var choice = prompt('Pick a replacement domain:\\n\\n' + opts.join('\\n') + '\\n\\n' + (available.length + 1) + '. Enter manually\\n\\nEnter number:');
+    if (!choice) return;
+    var idx = parseInt(choice, 10) - 1;
+    if (idx === available.length) {
+        var manual = prompt('Enter domain:');
+        if (manual) _assignDomain(jobId, manual);
+    } else if (idx >= 0 && idx < available.length) {
+        _assignDomain(jobId, available[idx].domain);
+    }
 }
 function updateReplacement(jobId, newStatus) {
     fetch('/api/replacements/update' + _authQs(), {
