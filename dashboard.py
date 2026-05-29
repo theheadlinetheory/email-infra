@@ -2870,12 +2870,11 @@ def api_subscriptions():
 
 
 def api_domain_renewals():
-    """Map each domain to its earliest subscription renewal date."""
-    from concurrent.futures import as_completed
+    """Map each domain to its subscription renewal date via mailbox creation date correlation."""
     raw = zm_get_subscriptions()
     subs = raw if isinstance(raw, list) else raw.get("data", [])
     now = datetime.now(timezone.utc)
-    active = []
+    sub_by_date = {}
     for s in subs:
         if s.get("subscriptionStatus") != "ACTIVE":
             continue
@@ -2884,28 +2883,23 @@ def api_domain_renewals():
             renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             continue
-        active.append({"id": s.get("id"), "renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days})
+        cd = s.get("subscriptionCreationDate", "")[:10]
+        if cd:
+            entry = {"renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days}
+            if cd not in sub_by_date or entry["days_until"] < sub_by_date[cd]["days_until"]:
+                sub_by_date[cd] = entry
+    all_domains = zm_list_domains()
+    if not isinstance(all_domains, list):
+        all_domains = []
     domain_map = {}
-    def fetch_mailboxes(sub):
-        try:
-            mboxes = zm_get_subscription_mailboxes(sub["id"])
-            if isinstance(mboxes, dict):
-                mboxes = mboxes.get("data", [])
-            pairs = []
-            for mb in (mboxes if isinstance(mboxes, list) else []):
-                email = mb.get("email", "")
-                domain = email.split("@")[1] if "@" in email else ""
-                if domain:
-                    pairs.append((domain, sub["renews"], sub["days_until"]))
-            return pairs
-        except Exception:
-            return []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = {pool.submit(fetch_mailboxes, s): s for s in active}
-        for fut in as_completed(futures):
-            for domain, renews, days_until in fut.result():
-                if domain not in domain_map or days_until < domain_map[domain]["days_until"]:
-                    domain_map[domain] = {"renews": renews, "days_until": days_until}
+    for d in all_domains:
+        mboxes = d.get("mailboxes", [])
+        if not mboxes:
+            continue
+        mb_date = mboxes[0].get("createdAt", "")[:10]
+        domain_name = d.get("domain", "")
+        if mb_date in sub_by_date and domain_name:
+            domain_map[domain_name] = sub_by_date[mb_date]
     return {"domain_renewals": domain_map}
 
 

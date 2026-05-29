@@ -368,7 +368,6 @@ def domain_renewals():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     import requests as req
     from datetime import datetime, timezone
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     zm_key = os.environ.get("ZAPMAIL_API_KEY", "")
     if not zm_key:
         return _cors(jsonify({"error": "ZAPMAIL_API_KEY not configured"})), 500
@@ -380,7 +379,7 @@ def domain_renewals():
         return _cors(jsonify({"error": str(e)})), 502
     subs = raw if isinstance(raw, list) else raw.get("data", [])
     now = datetime.now(timezone.utc)
-    active = []
+    sub_by_date = {}
     for s in subs:
         if s.get("subscriptionStatus") != "ACTIVE":
             continue
@@ -389,29 +388,33 @@ def domain_renewals():
             renews = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             continue
-        active.append({"id": s.get("id"), "renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days})
-    domain_map = {}
-    def fetch_mailboxes(sub):
+        cd = s.get("subscriptionCreationDate", "")[:10]
+        if cd:
+            entry = {"renews": renews.strftime("%Y-%m-%d"), "days_until": (renews - now).days}
+            if cd not in sub_by_date or entry["days_until"] < sub_by_date[cd]["days_until"]:
+                sub_by_date[cd] = entry
+    all_domains = []
+    page = 1
+    while page <= 20:
         try:
-            r2 = req.get(f"https://api.zapmail.ai/api/v2/subscriptions/{sub['id']}/mailboxes", headers=headers, timeout=15)
-            mboxes = r2.json()
-            if isinstance(mboxes, dict):
-                mboxes = mboxes.get("data", [])
-            pairs = []
-            for mb in (mboxes if isinstance(mboxes, list) else []):
-                email = mb.get("email", "")
-                domain = email.split("@")[1] if "@" in email else ""
-                if domain:
-                    pairs.append((domain, sub["renews"], sub["days_until"]))
-            return pairs
+            r2 = req.get(f"https://api.zapmail.ai/api/v2/domains?page={page}", headers=headers, timeout=15)
+            page_data = r2.json().get("data", {})
+            doms = page_data.get("domains", [])
+            all_domains.extend(doms)
+            if page >= page_data.get("totalPages", 1):
+                break
+            page += 1
         except Exception:
-            return []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = {pool.submit(fetch_mailboxes, s): s for s in active}
-        for fut in as_completed(futures):
-            for domain, renews, days_until in fut.result():
-                if domain not in domain_map or days_until < domain_map[domain]["days_until"]:
-                    domain_map[domain] = {"renews": renews, "days_until": days_until}
+            break
+    domain_map = {}
+    for d in all_domains:
+        mboxes = d.get("mailboxes", [])
+        if not mboxes:
+            continue
+        mb_date = mboxes[0].get("createdAt", "")[:10]
+        domain_name = d.get("domain", "")
+        if mb_date in sub_by_date and domain_name:
+            domain_map[domain_name] = sub_by_date[mb_date]
     return _cors(jsonify({"domain_renewals": domain_map}))
 
 
