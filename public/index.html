@@ -680,13 +680,41 @@ function renderAcquisition() {
 }
 
 var maintFilter = { type: 'all', group: '' };
-var expandedDomains = {};
-function toggleDomain(key) {
-    expandedDomains[key] = !expandedDomains[key];
-    if (key.indexOf('pool_') === 0) renderAvailablePool();
-    else if (key.indexOf('health_') === 0) renderDomainHealth();
-    else if (key.indexOf('rep_') === 0) renderReplacementTracker();
-    else renderMaintenance();
+function openDomainModal(domainName, jobId) {
+    var allDom = _collectAllDomains();
+    var match = null;
+    for (var i = 0; i < allDom.length; i++) { if (allDom[i].domain === domainName) { match = allDom[i]; break; } }
+    var job = null;
+    if (jobId) {
+        job = (data._replacements || []).filter(function(j) { return j.id === jobId; })[0] || null;
+    }
+    var html = '<div style="padding:20px 24px;">';
+    html += '<div style="font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">' + esc(domainName) + '</div>';
+    if (match) {
+        html += '<div style="font-size:12px;color:#64748b;margin-bottom:16px;">' + esc(match.group) + ' &middot; ' + match.inboxCount + ' inboxes';
+        if (match.bounce != null) html += ' &middot; <span style="color:' + (match.bounce >= 3 ? '#ef4444' : match.bounce >= 1 ? '#f59e0b' : '#22c55e') + '">' + match.bounce + '% bounce</span>';
+        html += '</div>';
+    }
+    if (job) {
+        html += '<div style="margin-bottom:16px;">' + _statusBadge(job) + '</div>';
+        if (job.status !== 'flagged') {
+            html += '<div style="display:flex;gap:0;flex-wrap:wrap;border:1px solid #1e293b;border-radius:8px;overflow:hidden;margin-bottom:16px;">';
+            html += '<div style="flex:1;min-width:280px;padding:12px;"><div style="font-size:11px;font-weight:700;color:#ef4444;margin-bottom:8px;">OLD — ' + esc(job.old_domain) + '</div>' + _inboxDetailInner(job.old_domain) + '</div>';
+            if (job.new_domain) {
+                html += '<div style="flex:1;min-width:280px;padding:12px;border-left:1px solid #1e293b;"><div style="font-size:11px;font-weight:700;color:#22c55e;margin-bottom:8px;">NEW — ' + esc(job.new_domain) + '</div>' + _inboxDetailInner(job.new_domain) + '</div>';
+            }
+            html += '</div>';
+        }
+        html += _swapChecklist(job);
+        html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #1e293b;">' + _replacementActions(job) + '</div>';
+    } else if (match) {
+        html += '<div style="font-size:13px;font-weight:600;color:#94a3b8;margin-bottom:8px;">Inboxes</div>';
+        html += _inboxDetailInner(domainName);
+    }
+    html += '</div>';
+    document.getElementById('modal-body').innerHTML = html;
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
 }
 function _inboxDetailInner(domainName) {
     var allDom = _collectAllDomains();
@@ -695,18 +723,23 @@ function _inboxDetailInner(domainName) {
     if (!match || !match.inboxes.length) return '<div style="padding:6px 30px;color:#475569;font-size:11px;">No data in cache</div>';
     var html = '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
     html += '<thead><tr style="color:#475569;text-align:left;border-bottom:1px solid #1e293b;">' +
-        '<th style="padding:3px 10px 3px 30px;">Email</th><th style="padding:3px 10px;">Bounce</th>' +
-        '<th style="padding:3px 10px;">Health</th><th style="padding:3px 10px;">Sent</th>' +
+        '<th style="padding:3px 10px;">Email</th><th style="padding:3px 10px;">Bounce</th>' +
+        '<th style="padding:3px 10px;">Reply</th><th style="padding:3px 10px;">Health</th>' +
+        '<th style="padding:3px 10px;">Sent</th><th style="padding:3px 10px;">SMTP</th>' +
         '<th style="padding:3px 10px;">Campaign</th></tr></thead><tbody>';
     for (var i = 0; i < match.inboxes.length; i++) {
         var x = match.inboxes[i];
         var brC = x.bounce == null ? 'color:#475569' : x.bounce >= 3 ? 'color:#ef4444' : x.bounce >= 1 ? 'color:#f59e0b' : 'color:#22c55e';
+        var rrC = x.reply == null ? 'color:#475569' : x.reply >= 5 ? 'color:#22c55e' : x.reply >= 2 ? 'color:#e2e8f0' : 'color:#64748b';
         var repC = x.rep == null ? 'color:#475569' : x.rep >= 90 ? 'color:#22c55e' : x.rep >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
+        var smtpC = x.smtp_ok ? 'color:#22c55e' : 'color:#ef4444';
         html += '<tr style="border-bottom:1px solid #1a1d28;">' +
-            '<td style="padding:3px 10px 3px 30px;color:#94a3b8;">' + esc(x.email) + '</td>' +
+            '<td style="padding:3px 10px;color:#94a3b8;">' + esc(x.email) + '</td>' +
             '<td style="padding:3px 10px;' + brC + '">' + (x.bounce != null ? x.bounce + '%' : '—') + '</td>' +
+            '<td style="padding:3px 10px;' + rrC + '">' + (x.reply != null ? x.reply + '%' : '—') + '</td>' +
             '<td style="padding:3px 10px;' + repC + '">' + (x.rep != null ? x.rep + '%' : '—') + '</td>' +
             '<td style="padding:3px 10px;color:#94a3b8;">' + (x.sent || 0) + '</td>' +
+            '<td style="padding:3px 10px;' + smtpC + '">' + (x.smtp_ok ? 'OK' : 'FAIL') + '</td>' +
             '<td style="padding:3px 10px;color:#94a3b8;">' + (x.in_campaign ? 'Yes' : 'No') + '</td></tr>';
     }
     html += '</tbody></table>';
@@ -749,39 +782,15 @@ function toggleSwapCheck(jobId, key, val) {
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify(body)
     }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.ok) refreshReplacements();
-        else alert(d.error || 'Error');
+        if (d.ok) {
+            var jobs = data._replacements || [];
+            for (var i = 0; i < jobs.length; i++) {
+                if (jobs[i].id === jobId) { jobs[i] = d.job; break; }
+            }
+            openDomainModal(d.job.old_domain, jobId);
+            renderReplacementTracker();
+        } else alert(d.error || 'Error');
     });
-}
-function _inboxDetailRow(domainName, colSpan) {
-    var allDom = _collectAllDomains();
-    var match = null;
-    for (var i = 0; i < allDom.length; i++) { if (allDom[i].domain === domainName) { match = allDom[i]; break; } }
-    if (!match || !match.inboxes.length) return '<tr><td colspan="' + colSpan + '" style="padding:8px 20px;color:#475569;font-size:11px;">No inbox data</td></tr>';
-    var html = '<tr><td colspan="' + colSpan + '" style="padding:0;background:#0f1118;">';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;margin:0;">';
-    html += '<thead><tr style="color:#475569;text-align:left;border-bottom:1px solid #1e293b;">' +
-        '<th style="padding:4px 10px 4px 30px;">Email</th><th style="padding:4px 10px;">Bounce</th>' +
-        '<th style="padding:4px 10px;">Reply</th><th style="padding:4px 10px;">Health</th>' +
-        '<th style="padding:4px 10px;">Sent</th><th style="padding:4px 10px;">SMTP</th>' +
-        '<th style="padding:4px 10px;">Campaign</th></tr></thead><tbody>';
-    for (var i = 0; i < match.inboxes.length; i++) {
-        var x = match.inboxes[i];
-        var brC = x.bounce == null ? 'color:#475569' : x.bounce >= 3 ? 'color:#ef4444' : x.bounce >= 1 ? 'color:#f59e0b' : 'color:#22c55e';
-        var repC = x.rep == null ? 'color:#475569' : x.rep >= 90 ? 'color:#22c55e' : x.rep >= 70 ? 'color:#f59e0b' : 'color:#ef4444';
-        var smtpC = x.smtp_ok ? 'color:#22c55e' : 'color:#ef4444';
-        var campStr = x.in_campaign ? '<span style="color:#3b82f6;">Yes</span>' : '<span style="color:#475569;">No</span>';
-        html += '<tr style="border-bottom:1px solid #1a1d28;">' +
-            '<td style="padding:4px 10px 4px 30px;color:#94a3b8;">' + esc(x.email) + '</td>' +
-            '<td style="padding:4px 10px;' + brC + '">' + (x.bounce != null ? x.bounce + '%' : '—') + '</td>' +
-            '<td style="padding:4px 10px;color:#94a3b8;">' + (x.reply != null ? x.reply + '%' : '—') + '</td>' +
-            '<td style="padding:4px 10px;' + repC + '">' + (x.rep != null ? x.rep + '%' : '—') + '</td>' +
-            '<td style="padding:4px 10px;color:#94a3b8;">' + (x.sent || 0) + '</td>' +
-            '<td style="padding:4px 10px;' + smtpC + '">' + (x.smtp_ok ? 'OK' : 'FAIL') + '</td>' +
-            '<td style="padding:4px 10px;">' + campStr + '</td></tr>';
-    }
-    html += '</tbody></table></td></tr>';
-    return html;
 }
 function renderMaintenance() {
     renderMaintFilters();
@@ -884,17 +893,14 @@ function renderAvailablePool() {
         var sentStr = sentParts.join(' / ');
         var hasFlagged = (data._replacements || []).some(function(j) { return j.status === 'flagged'; });
         var assignBtn = hasFlagged ? '<button onclick="showAssignPicker(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\')" style="padding:3px 10px;font-size:11px;border-radius:4px;cursor:pointer;border:none;background:#064e3b;color:#6ee7b7;">Assign</button>' : '';
-        var isExp = expandedDomains['pool_' + d.domain];
-        var arrow = '<span onclick="event.stopPropagation();toggleDomain(\'pool_' + d.domain.replace(/'/g, "\\'") + '\')" style="cursor:pointer;color:#64748b;margin-right:4px;font-size:10px;display:inline-block;transform:rotate(' + (isExp ? '90' : '0') + 'deg);transition:transform 0.15s;">&#9654;</span>';
-        html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="toggleDomain(\'pool_' + d.domain.replace(/'/g, "\\'") + '\')">' +
-            '<td style="padding:6px 10px;color:#e2e8f0;">' + arrow + esc(d.domain) + '</td>' +
+        html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="openDomainModal(\'' + d.domain.replace(/'/g, "\\'") + '\')">' +
+            '<td style="padding:6px 10px;color:#e2e8f0;">' + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;">' + esc(d.group) + '</td>' +
             '<td style="padding:6px 10px;color:#e2e8f0;">' + d.inboxCount + '</td>' +
             '<td style="padding:6px 10px;' + brCls + '">' + (d.bounce != null ? d.bounce + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + sentStr + '</td>' +
             '<td style="padding:6px 10px;" onclick="event.stopPropagation();">' + assignBtn + '</td></tr>';
-        if (isExp) html += _inboxDetailRow(d.domain, 7);
     }
     html += '</tbody></table></div>';
     el.innerHTML = html;
@@ -953,11 +959,8 @@ function renderDomainHealth() {
             btn = '<button onclick="flagDomainFromMaint(\'' + d.domain.replace(/'/g, "\\'") + '\',\'' + d.group.replace(/'/g, "\\'") + '\',\'' + d.type + '\',' + d.bounce + ')" ' +
                 'style="padding:2px 8px;font-size:10px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:4px;cursor:pointer;">Flag</button>';
         }
-        var hKey = 'health_' + d.domain;
-        var hExp = expandedDomains[hKey];
-        var arrow = '<span style="cursor:pointer;color:#64748b;margin-right:4px;font-size:10px;display:inline-block;transform:rotate(' + (hExp ? '90' : '0') + 'deg);transition:transform 0.15s;">&#9654;</span>';
-        html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="toggleDomain(\'' + hKey + '\')">' +
-            '<td style="padding:6px 10px;color:#f1f5f9">' + arrow + esc(d.domain) + '</td>' +
+        html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="openDomainModal(\'' + d.domain.replace(/'/g, "\\'") + '\')">' +
+            '<td style="padding:6px 10px;color:#f1f5f9">' + esc(d.domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8">' + esc(d.group) + '</td>' +
             '<td style="padding:6px 10px">' + typeLabel + '</td>' +
             '<td style="padding:6px 10px">' + d.inboxCount + '</td>' +
@@ -965,7 +968,6 @@ function renderDomainHealth() {
             '<td style="padding:6px 10px;' + repCls + '">' + (d.health != null ? d.health + '%' : '—') + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;font-family:monospace;font-size:11px;">' + d.inboxes.map(function(x){return x.sent||0;}).join(' / ') + '</td>' +
             '<td style="padding:6px 10px" onclick="event.stopPropagation();">' + btn + '</td></tr>';
-        if (hExp) html += _inboxDetailRow(d.domain, 8);
     }
     html += '</tbody></table></div>';
     el.innerHTML = html;
@@ -1032,37 +1034,22 @@ function _replacementTable(jobs, isArchived) {
         '<th style="padding:6px 10px">New Domain</th>' +
         (isArchived ? '<th style="padding:6px 10px">Completed</th>' : '<th style="padding:6px 10px">Actions</th>') +
         '</tr></thead><tbody>';
-    var colSpan = 6;
     for (var i = 0; i < jobs.length; i++) {
         var j = jobs[i];
         var rowStyle = isArchived ? 'opacity:0.6;' : _jobRowColor(j);
-        var expKey = 'rep_' + j.id;
-        var isExp = expandedDomains[expKey];
-        var arrow = '<span style="cursor:pointer;color:#64748b;margin-right:4px;font-size:10px;display:inline-block;transform:rotate(' + (isExp ? '90' : '0') + 'deg);transition:transform 0.15s;">&#9654;</span>';
-        html += '<tr style="border-bottom:1px solid #1e293b;' + rowStyle + 'cursor:pointer;" onclick="toggleDomain(\'' + expKey + '\')">' +
-            '<td style="padding:6px 10px;color:#f1f5f9;">' + arrow + esc(j.old_domain) + '</td>' +
+        html += '<tr style="border-bottom:1px solid #1e293b;' + rowStyle + 'cursor:pointer;" onclick="openDomainModal(\'' + j.old_domain.replace(/'/g, "\\'") + '\',\'' + j.id + '\')">' +
+            '<td style="padding:6px 10px;color:#f1f5f9;">' + esc(j.old_domain) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;">' + esc(j.group_name) + '</td>' +
             '<td style="padding:6px 10px;color:#ef4444;font-weight:600;">' + j.bounce_rate + '%</td>' +
             '<td style="padding:6px 10px;">' + _statusBadge(j) + '</td>' +
             '<td style="padding:6px 10px;color:#94a3b8;">' + (j.new_domain ? esc(j.new_domain) : '<span style="color:#475569">—</span>') + '</td>';
         if (isArchived) {
             var dt = j.status === 'cancelled' ? j.cancelled_at : (j.old_cancel_date || j.swapped_at || '');
-            html += '<td style="padding:6px 10px;" onclick="event.stopPropagation();"><span style="color:#64748b;">' + (dt || '—') + '</span></td>';
+            html += '<td style="padding:6px 10px;color:#64748b;">' + (dt || '—') + '</td>';
         } else {
             html += '<td style="padding:6px 10px;" onclick="event.stopPropagation();">' + _replacementActions(j) + '</td>';
         }
         html += '</tr>';
-        if (isExp) {
-            html += '<tr><td colspan="' + colSpan + '" style="padding:0;background:#0f1118;">';
-            html += '<div style="display:flex;gap:0;flex-wrap:wrap;">';
-            html += '<div style="flex:1;min-width:300px;"><div style="padding:6px 10px 2px 30px;color:#ef4444;font-size:10px;font-weight:600;">OLD — ' + esc(j.old_domain) + '</div>' + _inboxDetailInner(j.old_domain) + '</div>';
-            if (j.new_domain) {
-                html += '<div style="flex:1;min-width:300px;border-left:1px solid #1e293b;"><div style="padding:6px 10px 2px 10px;color:#22c55e;font-size:10px;font-weight:600;">NEW — ' + esc(j.new_domain) + '</div>' + _inboxDetailInner(j.new_domain) + '</div>';
-            }
-            html += '</div>';
-            if (!isArchived) html += _swapChecklist(j);
-            html += '</td></tr>';
-        }
     }
     html += '</tbody></table>';
     return html;
