@@ -354,12 +354,13 @@ def fetch_acq_campaign_stats():
     if not r or r.status_code != 200:
         return []
     campaigns = r.json() if r.text.strip() else []
-    active_acq = [c for c in campaigns if c.get("status") == "ACTIVE"
+    active_acq = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")
                   and "acquisition" in c.get("name", "").lower()
                   and "subsequence" not in c.get("name", "").lower()]
 
     today = datetime.now().strftime("%Y-%m-%d")
     yest = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    alltime_start = "2025-01-01"
     stats = []
     for camp in active_acq:
         cid = camp["id"]
@@ -382,10 +383,23 @@ def fetch_acq_campaign_stats():
         yest_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics-by-date", {"api_key": SMARTLEAD_KEY, "start_date": yest, "end_date": yest}, timeout=15)
         yest_sent = int(yest_r.json().get("sent_count", 0)) if yest_r and yest_r.status_code == 200 else 0
 
+        all_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics-by-date", {"api_key": SMARTLEAD_KEY, "start_date": alltime_start, "end_date": today}, timeout=15)
+        if all_r and all_r.status_code == 200:
+            ad = all_r.json()
+            total_sent = int(ad.get("sent_count", 0))
+            total_opened = int(ad.get("unique_open_count", 0))
+            total_replied = int(ad.get("reply_count", 0))
+            total_bounced = int(ad.get("bounce_count", 0))
+        else:
+            total_sent = total_opened = total_replied = total_bounced = 0
+
         stats.append({
-            "id": cid, "name": camp["name"], "accounts": acct_count,
+            "id": cid, "name": camp["name"], "status": camp.get("status", ""),
+            "accounts": acct_count,
             "total_leads": total_leads, "completed": completed, "remaining": remaining,
             "today_sent": today_sent, "yesterday_sent": yest_sent,
+            "total_sent": total_sent, "total_opened": total_opened,
+            "total_replied": total_replied, "total_bounced": total_bounced,
         })
     return stats
 

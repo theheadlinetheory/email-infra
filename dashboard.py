@@ -2656,14 +2656,13 @@ def _send_inventory_alert(pool_name, count):
 
 def api_domain_inventory():
     """Get available domain inventory split by client and acquisition pools."""
-    client_domains = get_available_domains()
-    acquisition_domains = get_acquisition_domains()
+    client_domains = store.get_available_domains(pool="client")
+    acquisition_domains = store.get_available_domains(pool="acquisition")
     client_count = len(client_domains)
     acq_count = len(acquisition_domains)
     client_low = client_count < DOMAIN_INVENTORY_THRESHOLD
     acq_low = acq_count < DOMAIN_INVENTORY_THRESHOLD
 
-    # Send Slack alerts for low inventory (debounced)
     if client_low:
         _send_inventory_alert("Client", client_count)
     if acq_low:
@@ -2677,6 +2676,25 @@ def api_domain_inventory():
         "client_low": client_low,
         "acquisition_low": acq_low,
     }
+
+
+def api_domains_list():
+    """Full domain inventory from Supabase for the Domains tab."""
+    all_domains = store.get_all_domains()
+    summary = {"total": 0, "available": 0, "in_use": 0, "cancelled": 0, "do_not_use": 0,
+               "by_provider": {}, "by_pool": {}}
+    for d in all_domains:
+        summary["total"] += 1
+        s = d.get("status", "")
+        if s in summary:
+            summary[s] += 1
+        p = d.get("provider", "")
+        if p:
+            summary["by_provider"][p] = summary["by_provider"].get(p, 0) + 1
+        pool = d.get("pool", "")
+        if pool:
+            summary["by_pool"][pool] = summary["by_pool"].get(pool, 0) + 1
+    return {"domains": all_domains, "summary": summary}
 
 
 def api_aging_pool():
@@ -4216,6 +4234,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._json_response(api_zapmail_sync())
                 elif path == "/api/domains":
                     self._json_response(api_domains())
+                elif path == "/api/domains/inventory":
+                    self._json_response(api_domains_list())
                 elif path == "/api/pipeline/active":
                     self._json_response(api_pipeline_active())
                 elif path.startswith("/api/pipeline/") and len(path.split("/")) == 4:

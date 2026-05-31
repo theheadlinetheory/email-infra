@@ -358,6 +358,104 @@ def cache_patch(key: str, data) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Domain Inventory (replaces Google Sheets "THT Domains" tab)
+# ---------------------------------------------------------------------------
+
+def get_all_domains(status=None, pool=None, client=None):
+    """Get domains with optional filters. Returns list of dicts."""
+    params = {"select": "*", "order": "domain.asc"}
+    if status:
+        params["status"] = f"eq.{status}"
+    if pool:
+        params["pool"] = f"eq.{pool}"
+    if client:
+        params["client"] = f"eq.{client}"
+    all_rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        params["limit"] = str(page_size)
+        params["offset"] = str(offset)
+        rows = _request("GET", "/domains", params=params)
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return all_rows
+
+
+def get_available_domains(pool="client"):
+    """Get available domains for a pool. Replaces sheets.get_available_domains/get_acquisition_domains."""
+    return get_all_domains(status="available", pool=pool)
+
+
+def insert_domain(domain, provider, status="available", pool="client", client=""):
+    """Insert a single domain. Called after purchase."""
+    row = {
+        "domain": domain.strip().lower(),
+        "status": status,
+        "provider": provider.strip().lower(),
+        "client": client,
+        "pool": pool,
+        "updated_at": datetime.now().isoformat(),
+    }
+    _request("POST", "/domains", json_body=row,
+             headers={"Prefer": "resolution=merge-duplicates"})
+
+
+def insert_domains_batch(domains_list):
+    """Insert multiple domains at once. Each item: {domain, provider, status, pool, client}."""
+    rows = []
+    for d in domains_list:
+        rows.append({
+            "domain": d["domain"].strip().lower(),
+            "status": d.get("status", "available"),
+            "provider": d.get("provider", "").strip().lower(),
+            "client": d.get("client", ""),
+            "pool": d.get("pool", "client"),
+            "updated_at": datetime.now().isoformat(),
+        })
+    if rows:
+        _request("POST", "/domains", json_body=rows,
+                 headers={"Prefer": "resolution=merge-duplicates"})
+
+
+def claim_domains(domain_names, client_name):
+    """Mark domains as in_use and assign to a client. Replaces sheets.claim_domains."""
+    for name in domain_names:
+        _request("PATCH", "/domains",
+                 params={"domain": f"eq.{name.strip().lower()}"},
+                 json_body={"status": "in_use", "client": client_name,
+                            "updated_at": datetime.now().isoformat()})
+
+
+def update_domain(domain_name, **fields):
+    """Update arbitrary fields on a domain record."""
+    fields["updated_at"] = datetime.now().isoformat()
+    _request("PATCH", "/domains",
+             params={"domain": f"eq.{domain_name.strip().lower()}"},
+             json_body=fields)
+
+
+def get_domain_summary():
+    """Get counts by status, provider, pool."""
+    all_d = get_all_domains()
+    summary = {"total": len(all_d), "by_status": {}, "by_provider": {}, "by_pool": {}}
+    for d in all_d:
+        s = d.get("status", "")
+        summary["by_status"][s] = summary["by_status"].get(s, 0) + 1
+        p = d.get("provider", "")
+        if p:
+            summary["by_provider"][p] = summary["by_provider"].get(p, 0) + 1
+        pool = d.get("pool", "")
+        if pool:
+            summary["by_pool"][pool] = summary["by_pool"].get(pool, 0) + 1
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # Inbox History (audit log for every inbox state change)
 # ---------------------------------------------------------------------------
 

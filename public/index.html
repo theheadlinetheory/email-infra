@@ -199,6 +199,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <button class="tab active" onclick="showTab('clients')">Clients</button>
     <button class="tab" onclick="showTab('acquisition')">Acquisition</button>
     <button class="tab" onclick="showTab('maintenance')">Maintenance</button>
+    <button class="tab" onclick="showTab('domains')">Domains</button>
 </div>
 
 <div id="sync-toast" class="sync-toast hidden">
@@ -237,6 +238,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div id="maint-domain-health"></div>
     <div class="section-title" style="margin-top:24px;">Zapmail Subscriptions</div>
     <div id="subs-section"></div>
+</div>
+
+<div id="domains-tab" style="display:none;">
+    <div class="stats-row" id="domains-stats"></div>
+    <div id="domains-filters" style="padding:0 24px;margin-bottom:12px;"></div>
+    <div id="domains-table-wrap" style="padding:0 24px;"></div>
 </div>
 
 <div class="chart-tooltip" id="chart-tooltip"></div>
@@ -411,7 +418,7 @@ async function refreshStats() {
     if (btn) { btn.classList.remove('syncing'); btn.disabled = false; }
 }
 
-var currentTab = location.hash === '#acquisition' ? 'acquisition' : location.hash === '#maintenance' ? 'maintenance' : 'clients';
+var currentTab = location.hash === '#acquisition' ? 'acquisition' : location.hash === '#maintenance' ? 'maintenance' : location.hash === '#domains' ? 'domains' : 'clients';
 
 function render() {
     document.getElementById('loading').style.display = 'none';
@@ -608,44 +615,54 @@ function renderCampaignTable() {
     var campStats = data.acq_campaign_stats || [];
     if (!campStats.length) { document.getElementById('acq-campaign-table').innerHTML = ''; return; }
     var sorted = campStats.slice().sort(function(a, b) { return (b.today_sent || 0) - (a.today_sent || 0); });
-    var maxSent = Math.max.apply(null, sorted.map(function(c) { return c.today_sent || 0; })) || 1;
-    var totalToday = sorted.reduce(function(s, c) { return s + (c.today_sent || 0); }, 0);
-    var totalYest = sorted.reduce(function(s, c) { return s + (c.yesterday_sent || 0); }, 0);
-    var totalRemaining = sorted.reduce(function(s, c) { return s + (c.remaining || 0); }, 0);
-    var totalAccts = sorted.reduce(function(s, c) { return s + (c.accounts || 0); }, 0);
-    var rows = sorted.map(function(c) {
-        var pct = maxSent > 0 ? Math.round((c.today_sent || 0) / maxSent * 100) : 0;
-        var color = (c.today_sent || 0) > 0 ? '#f59e0b' : '#334155';
-        return '<tr>' +
-            '<td>' + esc(c.name.replace(/ acquisition/i, '').replace(/ retarget/i, ' RT').trim()) + '</td>' +
-            '<td class="num">' + (c.today_sent || 0).toLocaleString() + '</td>' +
-            '<td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill" style="width:' + pct + '%;background:' + color + ';"></div></div></td>' +
-            '<td class="num">' + (c.yesterday_sent || 0).toLocaleString() + '</td>' +
-            '<td class="num">' + (c.remaining || 0).toLocaleString() + '</td>' +
-            '<td class="num">' + (c.accounts || 0) + '</td>' +
-        '</tr>';
-    }).join('');
-    rows += '<tr style="border-top:2px solid #2a2d38;font-weight:600;">' +
-        '<td>Total</td>' +
-        '<td class="num">' + totalToday.toLocaleString() + '</td>' +
-        '<td class="bar-cell"></td>' +
-        '<td class="num">' + totalYest.toLocaleString() + '</td>' +
-        '<td class="num">' + totalRemaining.toLocaleString() + '</td>' +
-        '<td class="num">' + totalAccts + '</td>' +
-    '</tr>';
+
+    function _campCard(c) {
+        var name = c.name.replace(/ acquisition/i, '').replace(/ retarget/i, ' RT').trim();
+        var statusBg = c.status === 'ACTIVE' ? '#064e3b' : c.status === 'PAUSED' ? '#78350f' : '#1e293b';
+        var statusColor = c.status === 'ACTIVE' ? '#6ee7b7' : c.status === 'PAUSED' ? '#fbbf24' : '#64748b';
+        var ts = c.total_sent || 0;
+        var openRate = ts > 0 ? Math.round((c.total_opened || 0) / ts * 100) : 0;
+        var replyRate = ts > 0 ? Math.round((c.total_replied || 0) / ts * 1000) / 10 : 0;
+        var bounceRate = ts > 0 ? Math.round((c.total_bounced || 0) / ts * 1000) / 10 : 0;
+        var openCls = openRate >= 50 ? 'color:#22c55e' : openRate >= 30 ? 'color:#f59e0b' : 'color:#ef4444';
+        var replyCls = replyRate >= 3 ? 'color:#22c55e' : replyRate >= 1 ? 'color:#e2e8f0' : 'color:#64748b';
+        var bounceCls = bounceRate >= 3 ? 'color:#ef4444;font-weight:600' : bounceRate >= 1 ? 'color:#f59e0b' : 'color:#22c55e';
+        var progress = c.total_leads > 0 ? Math.round((c.completed || 0) / c.total_leads * 100) : 0;
+        var progressColor = progress >= 80 ? '#ef4444' : progress >= 50 ? '#f59e0b' : '#22c55e';
+
+        var html = '<div style="background:#1a1d28;border-radius:10px;padding:16px 20px;border:1px solid #2a2d38;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+        html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;">' + esc(name) + '</div>';
+        html += '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + statusBg + ';color:' + statusColor + ';font-weight:600;">' + (c.status || '?') + '</span>';
+        html += '</div>';
+
+        html += '<div style="margin-bottom:12px;">';
+        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-bottom:4px;"><span>Progress</span><span>' + (c.completed || 0).toLocaleString() + ' / ' + (c.total_leads || 0).toLocaleString() + ' leads (' + progress + '%)</span></div>';
+        html += '<div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + progress + '%;background:' + progressColor + ';border-radius:3px;transition:width 0.3s;"></div></div>';
+        html += '</div>';
+
+        html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">';
+        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;color:#e2e8f0;">' + ts.toLocaleString() + '</div><div style="font-size:10px;color:#64748b;">SENT</div></div>';
+        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;' + openCls + ';">' + openRate + '%</div><div style="font-size:10px;color:#64748b;">OPENED</div></div>';
+        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;' + replyCls + ';">' + replyRate + '%</div><div style="font-size:10px;color:#64748b;">REPLIED</div></div>';
+        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;' + bounceCls + ';">' + bounceRate + '%</div><div style="font-size:10px;color:#64748b;">BOUNCED</div></div>';
+        html += '</div>';
+
+        html += '<div style="display:flex;gap:12px;font-size:11px;color:#94a3b8;border-top:1px solid #1e293b;padding-top:8px;">';
+        html += '<span>Today: <b style="color:#f59e0b">' + (c.today_sent || 0) + '</b></span>';
+        html += '<span>Yesterday: <b>' + (c.yesterday_sent || 0) + '</b></span>';
+        html += '<span>Remaining: <b>' + (c.remaining || 0).toLocaleString() + '</b></span>';
+        html += '<span>Accounts: <b>' + (c.accounts || 0) + '</b></span>';
+        html += '</div></div>';
+        return html;
+    }
+
     var el = document.getElementById('acq-campaign-table');
-    var wasOpen = el.querySelector('.camp-table-wrap.open') !== null;
-    el.innerHTML =
-        '<div class="camp-table-wrap' + (wasOpen ? ' open' : '') + '">' +
-            '<div class="camp-table-title" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="toggleCampTable()">' +
-                '<span>Campaign Breakdown</span>' +
-                '<span class="camp-chevron" style="font-size:12px;color:#64748b;">&#9660;</span>' +
-            '</div>' +
-            '<table class="camp-table">' +
-                '<tr><th>Campaign</th><th class="num">Today</th><th>Volume</th><th class="num">Yesterday</th><th class="num">Remaining</th><th class="num">Accounts</th></tr>' +
-                rows +
-            '</table>' +
-        '</div>';
+    var html = '<div style="padding:12px 24px;"><div class="section-title" style="padding:0 0 8px;">Campaign Progress</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;">';
+    for (var i = 0; i < sorted.length; i++) html += _campCard(sorted[i]);
+    html += '</div></div>';
+    el.innerHTML = html;
 }
 
 function renderAcquisition() {
@@ -2087,6 +2104,87 @@ function statsHtml(s) {
     '</div>';
 }
 
+/* ── Domains Tab ── */
+
+var _domainsData = null;
+var _domainsFilter = { status: 'all', pool: 'all', search: '' };
+
+function renderDomainsTab() {
+    if (!_domainsData) {
+        document.getElementById('domains-stats').innerHTML = statBox('...', 'Loading');
+        document.getElementById('domains-table-wrap').innerHTML = '<div style="color:#64748b;padding:20px;text-align:center;">Loading domain inventory...</div>';
+        fetch('/api/domains/inventory' + _authQs(), { headers: _authHeaders() })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) {
+                if (d) { _domainsData = d; renderDomainsTab(); }
+                else { document.getElementById('domains-table-wrap').innerHTML = '<div style="color:#ef4444;padding:20px;text-align:center;">Failed to load domains</div>'; }
+            });
+        return;
+    }
+    var s = _domainsData.summary;
+    document.getElementById('domains-stats').innerHTML =
+        statBox(s.total, 'Total Domains') +
+        statBox(s.available, 'Available', 'good') +
+        statBox(s.in_use, 'In Use') +
+        statBox((s.by_provider || {}).spaceship || 0, 'Spaceship') +
+        statBox((s.by_provider || {}).porkbun || 0, 'Porkbun');
+
+    var f = _domainsFilter;
+    var btnS = function(active) { return 'padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid ' + (active ? '#22c55e' : '#334155') + ';background:' + (active ? '#064e3b' : 'transparent') + ';color:' + (active ? '#6ee7b7' : '#94a3b8') + ';margin-right:4px;'; };
+    var fhtml = '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">';
+    fhtml += '<div><span style="font-size:11px;color:#64748b;font-weight:600;margin-right:8px;">STATUS</span>';
+    ['all','available','in_use','do_not_use'].forEach(function(v) {
+        var label = v === 'all' ? 'All' : v === 'in_use' ? 'In Use' : v === 'available' ? 'Available' : 'DNU';
+        fhtml += '<button onclick="_domainsFilter.status=\'' + v + '\';renderDomainsTab()" style="' + btnS(f.status === v) + '">' + label + '</button>';
+    });
+    fhtml += '</div>';
+    fhtml += '<div><span style="font-size:11px;color:#64748b;font-weight:600;margin-right:8px;">POOL</span>';
+    ['all','client','acquisition'].forEach(function(v) {
+        var label = v === 'all' ? 'All' : v.charAt(0).toUpperCase() + v.slice(1);
+        fhtml += '<button onclick="_domainsFilter.pool=\'' + v + '\';renderDomainsTab()" style="' + btnS(f.pool === v) + '">' + label + '</button>';
+    });
+    fhtml += '</div>';
+    fhtml += '<div><input id="domain-search" type="text" placeholder="Search domains..." value="' + esc(f.search) + '" oninput="_domainsFilter.search=this.value.toLowerCase();renderDomainsTab()" style="padding:6px 12px;font-size:12px;border-radius:6px;border:1px solid #334155;background:#0f1117;color:#e2e8f0;width:200px;"></div>';
+    fhtml += '</div>';
+    document.getElementById('domains-filters').innerHTML = fhtml;
+
+    var domains = (_domainsData.domains || []).filter(function(d) {
+        if (f.status !== 'all' && d.status !== f.status) return false;
+        if (f.pool !== 'all' && d.pool !== f.pool) return false;
+        if (f.search && d.domain.indexOf(f.search) === -1 && (d.client || '').toLowerCase().indexOf(f.search) === -1) return false;
+        return true;
+    });
+
+    var statusBadge = function(st) {
+        var m = { available: { bg: '#064e3b', c: '#6ee7b7', l: 'AVAILABLE' }, in_use: { bg: '#1e3a5f', c: '#93c5fd', l: 'IN USE' }, cancelled: { bg: '#7f1d1d', c: '#fca5a5', l: 'CANCELLED' }, do_not_use: { bg: '#1e293b', c: '#64748b', l: 'DNU' } };
+        var x = m[st] || m.do_not_use;
+        return '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + x.bg + ';color:' + x.c + ';font-weight:600;">' + x.l + '</span>';
+    };
+    var poolBadge = function(p) {
+        return p === 'acquisition' ? '<span style="color:#3b82f6;font-size:11px;">ACQ</span>' : '<span style="color:#22c55e;font-size:11px;">CLIENT</span>';
+    };
+
+    var html = '<div style="margin-bottom:8px;font-size:12px;color:#64748b;">Showing ' + domains.length + ' of ' + s.total + ' domains</div>';
+    html += '<div style="overflow-x:auto;max-height:600px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;position:sticky;top:0;background:#0f1117;">' +
+        '<th style="padding:8px 10px;">Domain</th><th style="padding:8px 10px;">Status</th>' +
+        '<th style="padding:8px 10px;">Provider</th><th style="padding:8px 10px;">Pool</th>' +
+        '<th style="padding:8px 10px;">Client</th></tr></thead><tbody>';
+    for (var i = 0; i < domains.length; i++) {
+        var d = domains[i];
+        html += '<tr style="border-bottom:1px solid #1e293b;cursor:pointer;" onclick="openDomainModal(\'' + d.domain.replace(/'/g, "\\'") + '\')">' +
+            '<td style="padding:6px 10px;color:#f1f5f9;font-weight:500;">' + esc(d.domain) + '</td>' +
+            '<td style="padding:6px 10px;">' + statusBadge(d.status) + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;">' + esc(d.provider || '') + '</td>' +
+            '<td style="padding:6px 10px;">' + poolBadge(d.pool) + '</td>' +
+            '<td style="padding:6px 10px;color:#94a3b8;">' + esc(d.client || '—') + '</td></tr>';
+    }
+    html += '</tbody></table></div>';
+    document.getElementById('domains-table-wrap').innerHTML = html;
+    var searchEl = document.getElementById('domain-search');
+    if (searchEl && f.search) { searchEl.focus(); searchEl.setSelectionRange(f.search.length, f.search.length); }
+}
+
 /* ── Helpers ── */
 
 function showTab(tab) {
@@ -2096,10 +2194,11 @@ function showTab(tab) {
     document.querySelectorAll('.tab').forEach(function(t) {
         if (t.textContent.trim().toLowerCase() === (tab === 'clients' ? 'clients' : tab)) t.classList.add('active');
     });
-    ['clients', 'acquisition', 'maintenance'].forEach(function(id) {
+    ['clients', 'acquisition', 'maintenance', 'domains'].forEach(function(id) {
         document.getElementById(id + '-tab').style.display = tab === id ? 'block' : 'none';
     });
     if (tab === 'maintenance') renderMaintenance();
+    if (tab === 'domains') renderDomainsTab();
 }
 
 function statBox(val, label, cls) { return '<div class="stat-box"><div class="stat-value ' + (cls || '') + '">' + val + '</div><div class="stat-label">' + label + '</div></div>'; }
