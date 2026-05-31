@@ -360,7 +360,6 @@ def fetch_acq_campaign_stats():
 
     today = datetime.now().strftime("%Y-%m-%d")
     yest = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    alltime_start = "2025-01-01"
     stats = []
     for camp in active_acq:
         cid = camp["id"]
@@ -383,15 +382,16 @@ def fetch_acq_campaign_stats():
         yest_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics-by-date", {"api_key": SMARTLEAD_KEY, "start_date": yest, "end_date": yest}, timeout=15)
         yest_sent = int(yest_r.json().get("sent_count", 0)) if yest_r and yest_r.status_code == 200 else 0
 
-        all_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics-by-date", {"api_key": SMARTLEAD_KEY, "start_date": alltime_start, "end_date": today}, timeout=15)
+        all_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics", {"api_key": SMARTLEAD_KEY}, timeout=15)
         if all_r and all_r.status_code == 200:
             ad = all_r.json()
             total_sent = int(ad.get("sent_count", 0))
             total_opened = int(ad.get("unique_open_count", 0))
             total_replied = int(ad.get("reply_count", 0))
             total_bounced = int(ad.get("bounce_count", 0))
+            total_leads_count = int(ad.get("total_count", 0))
         else:
-            total_sent = total_opened = total_replied = total_bounced = 0
+            total_sent = total_opened = total_replied = total_bounced = total_leads_count = 0
 
         stats.append({
             "id": cid, "name": camp["name"], "status": camp.get("status", ""),
