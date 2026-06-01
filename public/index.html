@@ -490,6 +490,7 @@ function renderGeneric() {
         var camps = g.campaigns || [];
         var clientNames = {};
         for (var ci = 0; ci < camps.length; ci++) {
+            if (camps[ci].status && camps[ci].status !== 'ACTIVE') continue;
             var cn = camps[ci].name.replace(/\s*#\d.*/,'').replace(/\s*[-–]\s*.*/,'').replace(/\s*(campaign|cold|email|outreach|subsequence|list \d).*/i,'').trim();
             if (cn && !cn.match(/^(acquisition|acq)/i) && activeClientNames[cn.toLowerCase()]) clientNames[cn] = 1;
         }
@@ -1810,7 +1811,10 @@ function _assignGenericToClient() {
             statusEl.innerHTML = '<span style="color:#ef4444;">Error: ' + esc(res.error) + '</span>';
             return;
         }
-        statusEl.innerHTML = '<span style="color:#22c55e;">Done! Tagged ' + res.tagged + '/' + res.total + ' accounts as "' + esc(res.new_tag) + '"</span>';
+        var vColor = res.verified === res.total ? '#22c55e' : '#f59e0b';
+        var vMsg = 'Verified: ' + res.verified + '/' + res.total + ' accounts confirmed as "' + esc(res.new_tag) + '"';
+        if (res.missing > 0) vMsg += ' (' + res.missing + ' failed — retry or check SmartLead)';
+        statusEl.innerHTML = '<span style="color:' + vColor + ';">' + vMsg + '</span>';
         setTimeout(async function() {
             closeModal();
             await _reloadDashboardData();

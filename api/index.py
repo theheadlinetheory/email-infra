@@ -477,6 +477,7 @@ def assign_generic_to_client():
         import requests as _req
         import time
         tagged = 0
+        tag_errors = []
         for acc_id in account_ids:
             existing = acct_tags.get(acc_id, [])
             date_tag_id = None
@@ -496,6 +497,18 @@ def assign_generic_to_client():
                 time.sleep(5 * (attempt + 1))
             if r.status_code == 200:
                 tagged += 1
+            else:
+                tag_errors.append({"id": acc_id, "status": r.status_code, "body": r.text[:100]})
+
+        time.sleep(2)
+        verify_resp = _gql(
+            "query($tid: Int!) { email_account_tag_mappings(where: {tag_id: {_eq: $tid}}) { email_account_id } }",
+            {"tid": client_tag_id}
+        )
+        verified_ids = {m["email_account_id"] for m in
+                        (verify_resp.get("data") or {}).get("email_account_tag_mappings", [])}
+        verified = len(set(account_ids) & verified_ids)
+        missing = [aid for aid in account_ids if aid not in verified_ids]
 
         data_cache, _ = store.cache_get("overview_v2")
         if data_cache:
@@ -539,11 +552,13 @@ def assign_generic_to_client():
                 store.cache_patch("overview_v2", data_cache)
 
         return _cors(jsonify({
-            "ok": True,
+            "ok": verified == len(account_ids),
             "tagged": tagged,
+            "verified": verified,
             "total": len(account_ids),
             "new_tag": new_tag_name,
-            "tag_ids": tag_ids,
+            "missing": len(missing),
+            "errors": tag_errors[:5] if tag_errors else [],
         }))
     except Exception as e:
         import traceback
