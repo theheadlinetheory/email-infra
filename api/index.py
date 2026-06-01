@@ -377,22 +377,26 @@ def domain_renewals():
 def domains_inventory():
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
-    import db as store
-    all_domains = store.get_all_domains()
-    summary = {"total": 0, "available": 0, "in_use": 0, "cancelled": 0, "do_not_use": 0,
-               "by_provider": {}, "by_pool": {}}
-    for d in all_domains:
-        summary["total"] += 1
-        s = d.get("status", "")
-        if s in summary:
-            summary[s] += 1
-        p = d.get("provider", "")
-        if p:
-            summary["by_provider"][p] = summary["by_provider"].get(p, 0) + 1
-        pool = d.get("pool", "")
-        if pool:
-            summary["by_pool"][pool] = summary["by_pool"].get(pool, 0) + 1
-    return _cors(jsonify({"domains": all_domains, "summary": summary}))
+    try:
+        import db as store
+        all_domains = store.get_all_domains()
+        summary = {"total": 0, "available": 0, "in_use": 0, "cancelled": 0, "do_not_use": 0,
+                   "by_provider": {}, "by_pool": {}}
+        for d in all_domains:
+            summary["total"] += 1
+            s = d.get("status", "")
+            if s in summary:
+                summary[s] += 1
+            p = d.get("provider", "")
+            if p:
+                summary["by_provider"][p] = summary["by_provider"].get(p, 0) + 1
+            pool = d.get("pool", "")
+            if pool:
+                summary["by_pool"][pool] = summary["by_pool"].get(pool, 0) + 1
+        return _cors(jsonify({"domains": all_domains, "summary": summary}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
 @app.route("/api/replacements")
