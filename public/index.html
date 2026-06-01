@@ -1808,10 +1808,10 @@ function _assignGenericToClient() {
             return;
         }
         statusEl.innerHTML = '<span style="color:#22c55e;">Done! Tagged ' + res.tagged + '/' + res.total + ' accounts as "' + esc(res.new_tag) + '"</span>';
-        setTimeout(function() {
+        setTimeout(async function() {
             closeModal();
-            data = null;
-            loadData();
+            await _reloadDashboardData();
+            render();
         }, 1500);
     }).catch(function(e) {
         btn.disabled = false;
