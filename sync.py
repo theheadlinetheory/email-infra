@@ -383,39 +383,26 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
     }
 
 
-def fetch_acq_campaign_stats():
+def fetch_acq_campaign_stats(progress_cb=None):
     """Fetch live lead counts and recent daily sends for active acquisition campaigns."""
     r = _api_get(f"{SMARTLEAD_API}/campaigns", {"api_key": SMARTLEAD_KEY}, timeout=60)
     if not r or r.status_code != 200:
         return []
     campaigns = r.json() if r.text.strip() else []
-    active_acq = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED", "COMPLETED")
+    active_acq = [c for c in campaigns if c.get("status") == "ACTIVE"
+                  and "acquisition" in c.get("name", "").lower()
+                  and "subsequence" not in c.get("name", "").lower()]
+    paused_acq = [c for c in campaigns if c.get("status") in ("PAUSED", "COMPLETED")
                   and "acquisition" in c.get("name", "").lower()
                   and "subsequence" not in c.get("name", "").lower()]
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    yest = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     stats = []
-    for camp in active_acq:
+    all_acq = active_acq + paused_acq
+    for i, camp in enumerate(all_acq):
+        if progress_cb:
+            progress_cb(i, len(all_acq))
         cid = camp["id"]
-        acct_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/email-accounts", {"api_key": SMARTLEAD_KEY}, timeout=15)
-        acct_count = len(acct_r.json()) if acct_r and acct_r.status_code == 200 else 0
-
-        def _lead_count(status):
-            lr = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/leads", {"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": status}, timeout=15)
-            return int(lr.json().get("total_leads", 0)) if lr and lr.status_code == 200 else 0
-
-        completed = _lead_count("COMPLETED")
-        in_progress = _lead_count("INPROGRESS")
-        started = _lead_count("STARTED")
-        total_leads = completed + in_progress + started
-        remaining = in_progress + started
-
-        today_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics-by-date", {"api_key": SMARTLEAD_KEY, "start_date": today, "end_date": today}, timeout=15)
-        today_sent = int(today_r.json().get("sent_count", 0)) if today_r and today_r.status_code == 200 else 0
-
-        yest_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics-by-date", {"api_key": SMARTLEAD_KEY, "start_date": yest, "end_date": yest}, timeout=15)
-        yest_sent = int(yest_r.json().get("sent_count", 0)) if yest_r and yest_r.status_code == 200 else 0
+        is_active = camp.get("status") == "ACTIVE"
 
         all_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics", {"api_key": SMARTLEAD_KEY}, timeout=15)
         if all_r and all_r.status_code == 200:
@@ -428,11 +415,27 @@ def fetch_acq_campaign_stats():
         else:
             total_sent = total_opened = total_replied = total_bounced = total_leads_count = 0
 
+        total_leads = completed = remaining = 0
+        if is_active:
+            acct_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/email-accounts", {"api_key": SMARTLEAD_KEY}, timeout=15)
+            acct_count = len(acct_r.json()) if acct_r and acct_r.status_code == 200 else 0
+
+            for status_key in ("COMPLETED", "INPROGRESS", "STARTED"):
+                lr = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
+                              {"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": status_key}, timeout=15)
+                cnt = int(lr.json().get("total_leads", 0)) if lr and lr.status_code == 200 else 0
+                total_leads += cnt
+                if status_key == "COMPLETED":
+                    completed = cnt
+            remaining = total_leads - completed
+        else:
+            acct_count = 0
+
         stats.append({
             "id": cid, "name": camp["name"], "status": camp.get("status", ""),
             "accounts": acct_count,
             "total_leads": total_leads, "completed": completed, "remaining": remaining,
-            "today_sent": today_sent, "yesterday_sent": yest_sent,
+            "today_sent": 0, "yesterday_sent": 0,
             "total_sent": total_sent, "total_opened": total_opened,
             "total_replied": total_replied, "total_bounced": total_bounced,
         })
@@ -496,7 +499,10 @@ def sync(progress_cb=None):
         return False
 
     _report(89, "Fetching acquisition campaign stats...")
-    overview["acq_campaign_stats"] = fetch_acq_campaign_stats()
+    def _acq_progress(i, total):
+        pct = 89 + int((i / max(total, 1)) * 6)
+        _report(pct, f"Fetching acquisition campaign stats ({i + 1}/{total})...")
+    overview["acq_campaign_stats"] = fetch_acq_campaign_stats(progress_cb=_acq_progress)
     _report(95, f"Got stats for {len(overview['acq_campaign_stats'])} acquisition campaigns")
 
     _report(96, "Writing cache...")
