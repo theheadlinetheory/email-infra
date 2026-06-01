@@ -223,12 +223,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 <div id="acquisition-tab" style="display:none;">
     <div id="acq-util-bar"></div>
-    <div id="acq-campaign-table"></div>
-    <div id="kanban-board"></div>
-    <div id="acq-campaign-inactive"></div>
     <div class="stats-row" id="acq-stats"></div>
     <div class="section-title">Acquisition Groups</div>
     <div class="cards-grid" id="acq-grid"></div>
+    <div id="kanban-board"></div>
 </div>
 
 <div id="maintenance-tab" style="display:none;">
@@ -606,83 +604,12 @@ function renderUtilBar() {
         '</div>';
 }
 
-function toggleCampTable() {
-    var wrap = document.querySelector('.camp-table-wrap');
-    if (wrap) wrap.classList.toggle('open');
-}
-
-function renderCampaignTable() {
-    var campStats = data.acq_campaign_stats || [];
-    if (!campStats.length) { document.getElementById('acq-campaign-table').innerHTML = ''; return; }
-    var sorted = campStats.slice().sort(function(a, b) { return (b.today_sent || 0) - (a.today_sent || 0); });
-
-    function _campCard(c) {
-        var name = c.name.replace(/ acquisition/i, '').replace(/ retarget/i, ' RT').trim();
-        var statusBg = c.status === 'ACTIVE' ? '#064e3b' : c.status === 'PAUSED' ? '#78350f' : '#1e293b';
-        var statusColor = c.status === 'ACTIVE' ? '#6ee7b7' : c.status === 'PAUSED' ? '#fbbf24' : '#64748b';
-        var ts = c.total_sent || 0;
-        var openRate = ts > 0 ? Math.round((c.total_opened || 0) / ts * 100) : 0;
-        var replyRate = ts > 0 ? Math.round((c.total_replied || 0) / ts * 1000) / 10 : 0;
-        var bounceRate = ts > 0 ? Math.round((c.total_bounced || 0) / ts * 1000) / 10 : 0;
-        var openCls = openRate >= 50 ? 'color:#22c55e' : openRate >= 30 ? 'color:#f59e0b' : 'color:#ef4444';
-        var replyCls = replyRate >= 3 ? 'color:#22c55e' : replyRate >= 1 ? 'color:#e2e8f0' : 'color:#64748b';
-        var bounceCls = bounceRate >= 3 ? 'color:#ef4444;font-weight:600' : bounceRate >= 1 ? 'color:#f59e0b' : 'color:#22c55e';
-        var progress = c.total_leads > 0 ? Math.round((c.completed || 0) / c.total_leads * 100) : 0;
-        var progressColor = progress >= 80 ? '#ef4444' : progress >= 50 ? '#f59e0b' : '#22c55e';
-
-        var html = '<div style="background:#1a1d28;border-radius:10px;padding:16px 20px;border:1px solid #2a2d38;">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
-        html += '<div style="font-size:14px;font-weight:600;color:#f1f5f9;">' + esc(name) + '</div>';
-        html += '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + statusBg + ';color:' + statusColor + ';font-weight:600;">' + (c.status || '?') + '</span>';
-        html += '</div>';
-
-        html += '<div style="margin-bottom:12px;">';
-        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-bottom:4px;"><span>Progress</span><span>' + (c.completed || 0).toLocaleString() + ' / ' + (c.total_leads || 0).toLocaleString() + ' leads (' + progress + '%)</span></div>';
-        html += '<div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + progress + '%;background:' + progressColor + ';border-radius:3px;transition:width 0.3s;"></div></div>';
-        html += '</div>';
-
-        html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">';
-        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;color:#e2e8f0;">' + ts.toLocaleString() + '</div><div style="font-size:10px;color:#64748b;">SENT</div></div>';
-        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;' + openCls + ';">' + openRate + '%</div><div style="font-size:10px;color:#64748b;">OPENED</div></div>';
-        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;' + replyCls + ';">' + replyRate + '%</div><div style="font-size:10px;color:#64748b;">REPLIED</div></div>';
-        html += '<div style="text-align:center;"><div style="font-size:18px;font-weight:700;' + bounceCls + ';">' + bounceRate + '%</div><div style="font-size:10px;color:#64748b;">BOUNCED</div></div>';
-        html += '</div>';
-
-        html += '<div style="display:flex;gap:12px;font-size:11px;color:#94a3b8;border-top:1px solid #1e293b;padding-top:8px;">';
-        html += '<span>Today: <b style="color:#f59e0b">' + (c.today_sent || 0) + '</b></span>';
-        html += '<span>Yesterday: <b>' + (c.yesterday_sent || 0) + '</b></span>';
-        html += '<span>Remaining: <b>' + (c.remaining || 0).toLocaleString() + '</b></span>';
-        html += '<span>Accounts: <b>' + (c.accounts || 0) + '</b></span>';
-        html += '</div></div>';
-        return html;
-    }
-
-    var active = sorted.filter(function(c) { return c.status === 'ACTIVE'; });
-    var inactive = sorted.filter(function(c) { return c.status !== 'ACTIVE'; });
-
-    var el = document.getElementById('acq-campaign-table');
-    var html = '<div style="padding:12px 24px;"><div class="section-title" style="padding:0 0 8px;">Active Campaigns (' + active.length + ')</div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;">';
-    for (var i = 0; i < active.length; i++) html += _campCard(active[i]);
-    html += '</div></div>';
-    el.innerHTML = html;
-
-    var inEl = document.getElementById('acq-campaign-inactive');
-    if (!inactive.length) { inEl.innerHTML = ''; return; }
-    var ihtml = '<div style="padding:0 24px 12px;"><details>';
-    ihtml += '<summary style="cursor:pointer;font-size:12px;font-weight:600;color:#64748b;padding:8px 0;">Paused / Completed (' + inactive.length + ')</summary>';
-    ihtml += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-top:8px;">';
-    for (var i = 0; i < inactive.length; i++) ihtml += _campCard(inactive[i]);
-    ihtml += '</div></details></div>';
-    inEl.innerHTML = ihtml;
-}
 
 function renderAcquisition() {
     var groups = data.acquisition_groups || [];
     var total = groups.reduce(function(s, g) { return s + g.accounts; }, 0);
     var inCamp = groups.reduce(function(s, g) { return s + g.in_campaign; }, 0);
     renderUtilBar();
-    renderCampaignTable();
     renderKanban();
     document.getElementById('acq-stats').innerHTML =
         statBox(groups.length, 'Acquisition Groups') +
@@ -1319,10 +1246,12 @@ function renderKanban() {
     if (!groups.length) { board.innerHTML = ''; return; }
 
     var campMap = {};
+    var campStatsById = {};
     var campStats = data.acq_campaign_stats || [];
     for (var si = 0; si < campStats.length; si++) {
         var cs = campStats[si];
         campMap[cs.id] = { id: cs.id, name: cs.name, status: cs.status || 'ACTIVE', groups: [] };
+        campStatsById[cs.id] = cs;
     }
     var available = [];
     var groupCampCount = {};
@@ -1357,8 +1286,30 @@ function renderKanban() {
         var statusCls = col.status === 'ACTIVE' ? 'active' : 'paused';
         var statusLabel = col.status || 'UNKNOWN';
         var displayName = col.name.replace(/^acquisition\s*/i, '').trim() || col.name;
+        var st = campStatsById[col.id];
+        var progressHtml = '';
+        if (st) {
+            var ts = st.total_sent || 0;
+            var tl = st.total_leads || 0;
+            var comp = st.completed || 0;
+            var pct = tl > 0 ? Math.round(comp / tl * 100) : 0;
+            var pColor = pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#22c55e';
+            var replyRate = ts > 0 ? Math.round((st.total_replied || 0) / ts * 1000) / 10 : 0;
+            var bounceRate = ts > 0 ? Math.round((st.total_bounced || 0) / ts * 1000) / 10 : 0;
+            var replyCls = replyRate >= 3 ? '#22c55e' : replyRate >= 1 ? '#e2e8f0' : '#64748b';
+            var bounceCls = bounceRate >= 3 ? '#ef4444' : bounceRate >= 1 ? '#f59e0b' : '#22c55e';
+            progressHtml = '<div style="padding:6px 14px 8px;border-bottom:1px solid #1e293b;">' +
+                '<div style="display:flex;justify-content:space-between;font-size:10px;color:#64748b;margin-bottom:3px;"><span>' + ts.toLocaleString() + ' sent</span><span>' + pct + '%</span></div>' +
+                '<div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:4px;"><div style="height:100%;width:' + pct + '%;background:' + pColor + ';border-radius:2px;"></div></div>' +
+                '<div style="display:flex;gap:8px;font-size:10px;">' +
+                '<span style="color:' + replyCls + ';">' + replyRate + '% reply</span>' +
+                '<span style="color:' + bounceCls + ';">' + bounceRate + '% bounce</span>' +
+                '<span style="color:#64748b;">' + (st.remaining || 0).toLocaleString() + ' left</span>' +
+                '</div></div>';
+        }
         var h = '<div class="kanban-col" data-campaign-id="' + col.id + '">' +
             '<div class="kanban-col-header clickable" onclick="openCampaignModal(' + col.id + ')"><span class="kanban-col-name" title="' + esc(col.name) + '">' + esc(displayName) + '</span><span class="kanban-col-status ' + statusCls + '">' + statusLabel + '</span></div>' +
+            progressHtml +
             '<div class="kanban-col-body">';
         for (var gi = 0; gi < col.groups.length; gi++) {
             h += kanbanCard(col.groups[gi], col.id);
@@ -1378,9 +1329,10 @@ function renderKanban() {
         html += '</div>';
     }
     if (pausedCols.length) {
-        html += '<div class="kanban-section-label">Paused / Completed</div><div class="kanban-wrap">';
+        html += '<div style="padding:0 24px;"><details><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#64748b;padding:8px 0;">Paused / Completed (' + pausedCols.length + ')</summary>';
+        html += '<div class="kanban-wrap" style="margin-top:8px;">';
         for (var pi = 0; pi < pausedCols.length; pi++) html += renderCol(pausedCols[pi]);
-        html += '</div>';
+        html += '</div></details></div>';
     }
 
     board.innerHTML = html;
