@@ -404,13 +404,38 @@ def assign_generic_to_client():
         all_tags_resp = _gql("{ tags { id name color } }")
         all_tags = {t["name"]: t for t in all_tags_resp.get("data", {}).get("tags", [])}
 
-        new_tag_name = f"{client_name} {ab}"
+        import re as _re
+        def _norm_tag(n):
+            s = n.lower().strip()
+            prev = ''
+            while prev != s:
+                prev = s
+                s = _re.sub(r'\s+(group|llc|inc\.?|construction|landscaping|lawn\s*care|hvac|'
+                           r'land\s*care|scapes|landscape|heating\s*&?\s*air.*|'
+                           r'lawn\s*solutions|land\s*solutions|&\s*design|conditioning)\s*$',
+                           '', s, flags=_re.IGNORECASE)
+                s = _re.sub(r'[,.\s&]+$', '', s).strip()
+            return _re.sub(r'\s+', ' ', s)
 
-        def _find_or_create_tag(name):
-            name_lower = name.lower().strip()
+        def _find_existing_client_tag(client_name, ab):
+            """Find existing tag matching this client + A/B by normalized name."""
+            cn = _norm_tag(client_name)
+            suffix = f" {ab.upper()}"
             for tn, td in all_tags.items():
-                if tn.lower().strip() == name_lower:
-                    return td["id"]
+                if not tn.upper().endswith(suffix):
+                    continue
+                tag_base = tn[:-(len(suffix))].strip()
+                if _norm_tag(tag_base) == cn:
+                    return td["id"], tn
+            return None, None
+
+        existing_tag_id, existing_tag_name = _find_existing_client_tag(client_name, ab)
+
+        if existing_tag_id:
+            new_tag_name = existing_tag_name
+            client_tag_id = existing_tag_id
+        else:
+            new_tag_name = f"{client_name} Group {ab}"
             palette = ["#FF6B6B","#FF8E72","#FFA94D","#FFD43B","#A9E34B","#51CF66","#20C997",
                        "#22B8CF","#339AF0","#5C7CFA","#7950F2","#BE4BDB","#E64980","#F06595"]
             used = {t.get("color") for t in all_tags.values()}
@@ -418,14 +443,14 @@ def assign_generic_to_client():
             mutation = """mutation createTag($object: tags_insert_input!) {
               insert_tags_one(object: $object) { id name color }
             }"""
-            result = _gql(mutation, {"object": {"name": name, "color": color}})
+            result = _gql(mutation, {"object": {"name": new_tag_name, "color": color}})
             tag = result.get("data", {}).get("insert_tags_one", {})
-            if tag.get("id"):
-                all_tags[name] = tag
-            return tag.get("id")
+            client_tag_id = tag.get("id")
+            if client_tag_id:
+                all_tags[new_tag_name] = tag
 
-        ZAPMAIL_TAG_ID = 2
-        client_tag_id = _find_or_create_tag(new_tag_name)
+        ZAPMAIL_TAG_ID = 262254
+        client_tag_id = client_tag_id
         if not client_tag_id:
             return _cors(jsonify({"error": f"Failed to find/create tag '{new_tag_name}'"})), 500
 
