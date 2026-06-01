@@ -170,7 +170,7 @@ def fetch_crm_clients():
         return []
     try:
         r = requests.get(
-            f"{CRM_SUPABASE_URL}/rest/v1/clients?select=name",
+            f"{CRM_SUPABASE_URL}/rest/v1/clients?select=name,client_standing&client_standing=not.is.null",
             headers={"apikey": CRM_SUPABASE_KEY, "Authorization": f"Bearer {CRM_SUPABASE_KEY}"},
             timeout=10,
         )

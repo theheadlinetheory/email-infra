@@ -92,7 +92,7 @@ def crm_clients():
         crm_key = os.environ.get("CRM_SUPABASE_KEY", "").strip()
         if not crm_url or not crm_key:
             return _cors(jsonify({"clients": []}))
-        r = _req.get(f"{crm_url}/rest/v1/clients?select=name",
+        r = _req.get(f"{crm_url}/rest/v1/clients?select=name,client_standing&client_standing=not.is.null",
                       headers={"apikey": crm_key, "Authorization": f"Bearer {crm_key}"}, timeout=10)
         names = sorted(set(c["name"].strip() for c in r.json() if c.get("name"))) if r.status_code == 200 else []
         return _cors(jsonify({"clients": names}))
@@ -114,7 +114,7 @@ def overview():
             crm_url = os.environ.get("CRM_SUPABASE_URL", "").strip()
             crm_key = os.environ.get("CRM_SUPABASE_KEY", "").strip()
             if crm_url and crm_key:
-                r = _req.get(f"{crm_url}/rest/v1/clients?select=name",
+                r = _req.get(f"{crm_url}/rest/v1/clients?select=name,client_standing&client_standing=not.is.null",
                               headers={"apikey": crm_key, "Authorization": f"Bearer {crm_key}"}, timeout=5)
                 if r.status_code == 200:
                     crm_names = [c["name"].strip() for c in r.json() if c.get("name")]
