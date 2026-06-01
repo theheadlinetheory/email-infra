@@ -401,8 +401,8 @@ def domains_inventory():
 
 def _porkbun_list():
     import requests as _req
-    pk = os.environ.get("PORKBUN_API_KEY", "")
-    sk = os.environ.get("PORKBUN_SECRET_KEY", "")
+    pk = os.environ.get("PORKBUN_API_KEY", "").strip()
+    sk = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
     if not pk or not sk:
         return []
     r = _req.post("https://api.porkbun.com/api/json/v3/domain/listAll",
@@ -417,8 +417,8 @@ def _porkbun_list():
 
 def _spaceship_list():
     import requests as _req
-    ak = os.environ.get("SPACESHIP_API_KEY", "")
-    sk = os.environ.get("SPACESHIP_SECRET_KEY", "")
+    ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+    sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
     if not ak or not sk:
         return []
     headers = {"X-API-Key": ak, "X-API-Secret": sk, "Content-Type": "application/json"}
@@ -442,8 +442,8 @@ def _spaceship_list():
 
 def _porkbun_set_ar(domain, enabled):
     import requests as _req
-    pk = os.environ.get("PORKBUN_API_KEY", "")
-    sk = os.environ.get("PORKBUN_SECRET_KEY", "")
+    pk = os.environ.get("PORKBUN_API_KEY", "").strip()
+    sk = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
     r = _req.post(f"https://api.porkbun.com/api/json/v3/domain/updateAutoRenew/{domain}",
                    json={"apikey": pk, "secretapikey": sk, "status": "on" if enabled else "off"}, timeout=15)
     data = r.json()
@@ -452,8 +452,8 @@ def _porkbun_set_ar(domain, enabled):
 
 def _spaceship_set_ar(domain, enabled):
     import requests as _req
-    ak = os.environ.get("SPACESHIP_API_KEY", "")
-    sk = os.environ.get("SPACESHIP_SECRET_KEY", "")
+    ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+    sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
     r = _req.put(f"https://spaceship.dev/api/v1/domains/{domain}/autorenew",
                   headers={"X-API-Key": ak, "X-API-Secret": sk, "Content-Type": "application/json"},
                   json={"isEnabled": enabled}, timeout=15)
