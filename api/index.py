@@ -82,6 +82,24 @@ def auth_check():
     return jsonify({"error": "Unauthorized"}), 401
 
 
+@app.route("/api/crm-clients")
+def crm_clients():
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import requests as _req
+        crm_url = os.environ.get("CRM_SUPABASE_URL", "").strip()
+        crm_key = os.environ.get("CRM_SUPABASE_KEY", "").strip()
+        if not crm_url or not crm_key:
+            return _cors(jsonify({"clients": []}))
+        r = _req.get(f"{crm_url}/rest/v1/clients?select=name",
+                      headers={"apikey": crm_key, "Authorization": f"Bearer {crm_key}"}, timeout=10)
+        names = sorted(set(c["name"].strip() for c in r.json() if c.get("name"))) if r.status_code == 200 else []
+        return _cors(jsonify({"clients": names}))
+    except Exception:
+        return _cors(jsonify({"clients": []}))
+
+
 @app.route("/api/overview")
 def overview():
     if not _check_auth():
