@@ -354,7 +354,7 @@ def fetch_acq_campaign_stats():
     if not r or r.status_code != 200:
         return []
     campaigns = r.json() if r.text.strip() else []
-    active_acq = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED")
+    active_acq = [c for c in campaigns if c.get("status") in ("ACTIVE", "PAUSED", "COMPLETED")
                   and "acquisition" in c.get("name", "").lower()
                   and "subsequence" not in c.get("name", "").lower()]
 
