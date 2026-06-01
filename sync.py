@@ -199,16 +199,22 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
     generic_groups = {}
     untagged = []
 
-    # Build name alias map for fuzzy matching
-    _aliases = {
-        "gm landscaping": "gm landscaping & design",
-    }
-
     def _norm(name):
         import re
-        n = re.sub(r'\s+(llc|inc\.?|construction)\s*$', '', name.lower().strip(), flags=re.IGNORECASE)
-        n = re.sub(r'[,.]', '', n).strip()
-        return _aliases.get(n, n)
+        n = name.lower().strip()
+        prev = ''
+        while prev != n:
+            prev = n
+            n = re.sub(r'\s+(group|llc|inc\.?|construction|landscaping|lawn\s*care|hvac|'
+                       r'land\s*care|scapes|landscape|heating\s*&?\s*air.*|'
+                       r'lawn\s*solutions|land\s*solutions|&\s*design|conditioning)\s*$',
+                       '', n, flags=re.IGNORECASE)
+            n = re.sub(r'[,.\s&]+$', '', n).strip()
+        return re.sub(r'\s+', ' ', n)
+
+    _crm_norm_map = {}
+    for cn in crm_names:
+        _crm_norm_map[_norm(cn)] = cn
 
     for a in accounts:
         tag = get_group_tag_from_account(a)
@@ -306,10 +312,17 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
         }
 
     clients = []
+    matched_crm_norms = set()
     for key, group in sorted(client_groups.items(), key=lambda x: x[0]):
         all_accts = group["a"] + group["b"]
         combined = _group_stats(all_accts)
-        combined["name"] = group["display_name"]
+        display_name = group["display_name"]
+        normed = _norm(display_name)
+        if normed in _crm_norm_map:
+            display_name = _crm_norm_map[normed]
+            matched_crm_norms.add(normed)
+        combined["name"] = display_name
+        combined["tag_name"] = group["display_name"]
         combined["accounts"] = len(all_accts)
         combined["group_a_count"] = len(group["a"])
         combined["group_b_count"] = len(group["b"])
@@ -317,9 +330,8 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
         combined["group_b"] = _group_stats(group["b"]) if group["b"] else None
         clients.append(combined)
 
-    existing_norms = {_norm(c["name"]) for c in clients}
     for crm_name in crm_names:
-        if _norm(crm_name) not in existing_norms:
+        if _norm(crm_name) not in matched_crm_norms:
             clients.append({
                 "name": crm_name,
                 "accounts": 0,

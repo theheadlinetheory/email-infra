@@ -109,6 +109,7 @@ def overview():
         data["_cached"] = True
         data["_synced_at"] = ts
         try:
+            import re
             import requests as _req
             crm_url = os.environ.get("CRM_SUPABASE_URL", "").strip()
             crm_key = os.environ.get("CRM_SUPABASE_KEY", "").strip()
@@ -117,13 +118,26 @@ def overview():
                               headers={"apikey": crm_key, "Authorization": f"Bearer {crm_key}"}, timeout=5)
                 if r.status_code == 200:
                     crm_names = [c["name"].strip() for c in r.json() if c.get("name")]
-                    import re
                     def _norm(name):
-                        n = re.sub(r'\s+(llc|inc\.?|construction)\s*$', '', name.lower().strip(), flags=re.IGNORECASE)
-                        return re.sub(r'[,.]', '', n).strip()
-                    existing = {_norm(c["name"]) for c in data["clients"]}
+                        n = name.lower().strip()
+                        prev = ''
+                        while prev != n:
+                            prev = n
+                            n = re.sub(r'\s+(group|llc|inc\.?|construction|landscaping|lawn\s*care|hvac|'
+                                       r'land\s*care|scapes|landscape|heating\s*&?\s*air.*|'
+                                       r'lawn\s*solutions|land\s*solutions|&\s*design|conditioning)\s*$',
+                                       '', n, flags=re.IGNORECASE)
+                            n = re.sub(r'[,.\s&]+$', '', n).strip()
+                        return re.sub(r'\s+', ' ', n)
+                    crm_by_norm = {_norm(cn): cn for cn in crm_names}
+                    matched_norms = set()
+                    for c in data["clients"]:
+                        normed = _norm(c["name"])
+                        if normed in crm_by_norm:
+                            c["name"] = crm_by_norm[normed]
+                            matched_norms.add(normed)
                     for cn in crm_names:
-                        if _norm(cn) not in existing:
+                        if _norm(cn) not in matched_norms:
                             data["clients"].append({
                                 "name": cn, "accounts": 0, "group_a_count": 0, "group_b_count": 0,
                                 "group_a": None, "group_b": None, "in_campaign": 0, "smtp_failures": 0,
@@ -131,7 +145,6 @@ def overview():
                                 "daily_capacity": 0, "total_sent": 0, "daily_sent": 0,
                                 "campaigns": [], "account_details": [], "crm_only": True,
                             })
-                            existing.add(_norm(cn))
                     data["crm_clients"] = crm_names
         except Exception:
             pass
