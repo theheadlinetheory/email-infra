@@ -306,6 +306,145 @@ def unassign_group():
     return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
 
 
+@app.route("/api/assign-generic-to-client", methods=["POST", "OPTIONS"])
+def assign_generic_to_client():
+    """Convert a generic reserve group into a client group by re-tagging accounts."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import db as store
+        body = request.get_json(silent=True) or {}
+        group_name = body.get("group_name", "")
+        client_name = body.get("client_name", "").strip()
+        ab = body.get("ab", "A").upper()
+        if not group_name or not client_name:
+            return _cors(jsonify({"error": "group_name and client_name required"})), 400
+        if ab not in ("A", "B"):
+            return _cors(jsonify({"error": "ab must be A or B"})), 400
+
+        jwt = os.environ.get("SMARTLEAD_JWT", "").strip()
+        gql_url = os.environ.get("SMARTLEAD_GQL", "").strip()
+        sl_key = os.environ.get("SMARTLEAD_API_KEY", "").strip()
+        if not jwt or not gql_url:
+            return _cors(jsonify({"error": "SMARTLEAD_JWT and SMARTLEAD_GQL required"})), 500
+
+        sl_headers = {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
+        sl_internal = "https://server.smartlead.ai/api"
+
+        account_ids, err = _resolve_group_account_ids(group_name)
+        if err:
+            return _cors(jsonify({"error": err})), 404
+
+        def _gql(query, variables=None):
+            import requests as _req
+            r = _req.post(gql_url, headers=sl_headers,
+                          json={"query": query, "variables": variables or {}}, timeout=30)
+            return r.json()
+
+        all_tags_resp = _gql("{ tags { id name color } }")
+        all_tags = {t["name"]: t for t in all_tags_resp.get("data", {}).get("tags", [])}
+
+        new_tag_name = f"{client_name} {ab}"
+
+        def _find_or_create_tag(name):
+            name_lower = name.lower().strip()
+            for tn, td in all_tags.items():
+                if tn.lower().strip() == name_lower:
+                    return td["id"]
+            palette = ["#FF6B6B","#FF8E72","#FFA94D","#FFD43B","#A9E34B","#51CF66","#20C997",
+                       "#22B8CF","#339AF0","#5C7CFA","#7950F2","#BE4BDB","#E64980","#F06595"]
+            used = {t.get("color") for t in all_tags.values()}
+            color = next((c for c in palette if c not in used), "#D0FCB1")
+            mutation = """mutation createTag($object: tags_insert_input!) {
+              insert_tags_one(object: $object) { id name color }
+            }"""
+            result = _gql(mutation, {"object": {"name": name, "color": color}})
+            tag = result.get("data", {}).get("insert_tags_one", {})
+            if tag.get("id"):
+                all_tags[name] = tag
+            return tag.get("id")
+
+        ZAPMAIL_TAG_ID = 2
+        client_tag_id = _find_or_create_tag(new_tag_name)
+        if not client_tag_id:
+            return _cors(jsonify({"error": f"Failed to find/create tag '{new_tag_name}'"})), 500
+
+        from datetime import datetime
+        warmup_date = datetime.now().strftime("%-m/%-d/%y")
+        date_tag_id = _find_or_create_tag(warmup_date)
+        tag_ids = [ZAPMAIL_TAG_ID, client_tag_id]
+        if date_tag_id:
+            tag_ids.append(date_tag_id)
+
+        import requests as _req
+        import time
+        tagged = 0
+        for acc_id in account_ids:
+            for attempt in range(3):
+                r = _req.post(f"{sl_internal}/email-account/save-management-details",
+                              headers=sl_headers,
+                              json={"id": acc_id, "tags": tag_ids}, timeout=30)
+                if r.status_code != 429:
+                    break
+                time.sleep(5 * (attempt + 1))
+            if r.status_code == 200:
+                tagged += 1
+
+        data_cache, _ = store.cache_get("overview_v2")
+        if data_cache:
+            generic_groups = data_cache.get("generic_groups", [])
+            moved_group = None
+            for i, g in enumerate(generic_groups):
+                if g.get("name") == group_name:
+                    moved_group = generic_groups.pop(i)
+                    break
+            if moved_group:
+                moved_group["name"] = new_tag_name
+                clients = data_cache.get("clients", [])
+                existing_client = None
+                for c in clients:
+                    if c.get("name", "").lower() == client_name.lower():
+                        existing_client = c
+                        break
+                if existing_client:
+                    if ab == "A":
+                        existing_client["group_a"] = moved_group
+                        existing_client["group_a_count"] = moved_group.get("accounts", 0)
+                    else:
+                        existing_client["group_b"] = moved_group
+                        existing_client["group_b_count"] = moved_group.get("accounts", 0)
+                    existing_client["accounts"] = existing_client.get("group_a_count", 0) + existing_client.get("group_b_count", 0)
+                else:
+                    new_client = {
+                        "name": client_name,
+                        "accounts": moved_group.get("accounts", 0),
+                        "total_domains": moved_group.get("total_domains", 0),
+                        "daily_capacity": moved_group.get("daily_capacity", 0),
+                        "group_a_count": moved_group.get("accounts", 0) if ab == "A" else 0,
+                        "group_b_count": moved_group.get("accounts", 0) if ab == "B" else 0,
+                        "group_a": moved_group if ab == "A" else None,
+                        "group_b": moved_group if ab == "B" else None,
+                        "account_details": moved_group.get("account_details", []),
+                    }
+                    clients.append(new_client)
+                data_cache["generic_groups"] = generic_groups
+                data_cache["clients"] = clients
+                store.cache_patch("overview_v2", data_cache)
+
+        return _cors(jsonify({
+            "ok": True,
+            "tagged": tagged,
+            "total": len(account_ids),
+            "new_tag": new_tag_name,
+            "tag_ids": tag_ids,
+        }))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/subscriptions")
 def subscriptions():
     if not _check_auth():
