@@ -477,6 +477,10 @@ def sync(progress_cb=None):
     health = fetch_health_metrics()
     _report(30, f"Got {len(health)} health records")
 
+    if len(health) < 50:
+        _report(0, f"Aborted: only {len(health)} health records (rate limited?)")
+        return False
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     _report(31, "Fetching today's sent counts...")
     health_today = fetch_health_metrics(start_date=today_str, end_date=today_str)
