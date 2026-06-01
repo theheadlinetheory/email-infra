@@ -353,7 +353,7 @@ async function _pollSyncProgress() {
         var p = await resp.json();
         var pct = p.pct || 0;
         var elapsed = Date.now() - _syncStartTime;
-        var eta = pct > 3 ? _formatEta((elapsed / pct) * (100 - pct)) : 'Estimating...';
+        var eta = pct > 15 ? _formatEta((elapsed / pct) * (100 - pct)) : '';
         _updateSyncUI(pct, p.msg || '', eta);
 
         if (p.status === 'done') {
