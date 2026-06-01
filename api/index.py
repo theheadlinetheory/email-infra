@@ -371,17 +371,39 @@ def assign_generic_to_client():
         if not client_tag_id:
             return _cors(jsonify({"error": f"Failed to find/create tag '{new_tag_name}'"})), 500
 
-        from datetime import datetime
-        warmup_date = datetime.now().strftime("%-m/%-d/%y")
-        date_tag_id = _find_or_create_tag(warmup_date)
-        tag_ids = [ZAPMAIL_TAG_ID, client_tag_id]
-        if date_tag_id:
-            tag_ids.append(date_tag_id)
+        import re
+        date_pattern = re.compile(r'^\d{1,2}/\d{1,2}/\d{2,4}$')
+        id_set = set(account_ids)
+        acct_tags = {}
+        offset = 0
+        while True:
+            resp = _gql(
+                '{ email_account_tag_mappings(limit: 1000, offset: %d) '
+                '{ email_account_id tag { id name } } }' % offset
+            )
+            rows = (resp or {}).get("data", {}).get("email_account_tag_mappings", [])
+            for row in rows:
+                aid = row["email_account_id"]
+                if aid in id_set:
+                    tag = row.get("tag", {})
+                    acct_tags.setdefault(aid, []).append(tag)
+            if len(rows) < 1000:
+                break
+            offset += 1000
 
         import requests as _req
         import time
         tagged = 0
         for acc_id in account_ids:
+            existing = acct_tags.get(acc_id, [])
+            date_tag_id = None
+            for t in existing:
+                if date_pattern.match(t.get("name", "")):
+                    date_tag_id = t["id"]
+                    break
+            tag_ids = [ZAPMAIL_TAG_ID, client_tag_id]
+            if date_tag_id:
+                tag_ids.append(date_tag_id)
             for attempt in range(3):
                 r = _req.post(f"{sl_internal}/email-account/save-management-details",
                               headers=sl_headers,

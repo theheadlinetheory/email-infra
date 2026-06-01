@@ -1729,8 +1729,17 @@ function renderModal() {
     if (modalState.type === 'generic') {
         html += '<div id="assign-client-section" style="background:#1e293b;border-radius:8px;padding:16px;margin-bottom:16px;">';
         html += '<div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:10px;">Assign to Client</div>';
+        var clientNames = {};
+        (data.clients || []).forEach(function(c) { if (c.name) clientNames[c.name] = 1; });
+        (data.crm_clients || []).forEach(function(n) { if (n) clientNames[n] = 1; });
+        var sortedClients = Object.keys(clientNames).sort();
         html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
-        html += '<input id="assign-client-name" type="text" placeholder="Client name (e.g. Reuven)" style="padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid #334155;background:#0f1117;color:#e2e8f0;width:220px;">';
+        html += '<select id="assign-client-name" style="padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid #334155;background:#0f1117;color:#e2e8f0;width:240px;">';
+        html += '<option value="">Select client...</option>';
+        for (var ci = 0; ci < sortedClients.length; ci++) {
+            html += '<option value="' + esc(sortedClients[ci]) + '">' + esc(sortedClients[ci]) + '</option>';
+        }
+        html += '</select>';
         html += '<select id="assign-client-ab" style="padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid #334155;background:#0f1117;color:#e2e8f0;">';
         html += '<option value="A">Group A</option><option value="B">Group B</option></select>';
         html += '<button onclick="_assignGenericToClient()" id="assign-client-btn" style="padding:8px 16px;font-size:13px;border-radius:6px;border:none;background:#22c55e;color:#fff;font-weight:600;cursor:pointer;">Assign</button>';
