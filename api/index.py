@@ -399,6 +399,135 @@ def domains_inventory():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+def _porkbun_list():
+    import requests as _req
+    pk = os.environ.get("PORKBUN_API_KEY", "")
+    sk = os.environ.get("PORKBUN_SECRET_KEY", "")
+    if not pk or not sk:
+        return []
+    r = _req.post("https://api.porkbun.com/api/json/v3/domain/listAll",
+                   json={"apikey": pk, "secretapikey": sk}, timeout=30)
+    data = r.json()
+    if data.get("status") != "SUCCESS":
+        return []
+    return [{"domain": d.get("domain", ""), "expires": d.get("expireDate", "")[:10],
+             "auto_renew": d.get("autoRenew") == "1", "registrar": "porkbun"}
+            for d in data.get("domains", [])]
+
+
+def _spaceship_list():
+    import requests as _req
+    ak = os.environ.get("SPACESHIP_API_KEY", "")
+    sk = os.environ.get("SPACESHIP_SECRET_KEY", "")
+    if not ak or not sk:
+        return []
+    headers = {"X-API-Key": ak, "X-API-Secret": sk, "Content-Type": "application/json"}
+    result, skip = [], 0
+    while True:
+        r = _req.get("https://spaceship.dev/api/v1/domains", headers=headers,
+                      timeout=30, params={"take": 100, "skip": skip})
+        if r.status_code != 200:
+            break
+        items = r.json().get("items", []) if isinstance(r.json(), dict) else []
+        if not items:
+            break
+        for d in items:
+            result.append({"domain": d.get("name", ""), "expires": d.get("expirationDate", "")[:10],
+                           "auto_renew": d.get("autoRenew", False), "registrar": "spaceship"})
+        if len(items) < 100:
+            break
+        skip += 100
+    return result
+
+
+def _porkbun_set_ar(domain, enabled):
+    import requests as _req
+    pk = os.environ.get("PORKBUN_API_KEY", "")
+    sk = os.environ.get("PORKBUN_SECRET_KEY", "")
+    r = _req.post(f"https://api.porkbun.com/api/json/v3/domain/updateAutoRenew/{domain}",
+                   json={"apikey": pk, "secretapikey": sk, "status": "on" if enabled else "off"}, timeout=15)
+    data = r.json()
+    return {"success": data.get("status") == "SUCCESS", "message": data.get("message", "")}
+
+
+def _spaceship_set_ar(domain, enabled):
+    import requests as _req
+    ak = os.environ.get("SPACESHIP_API_KEY", "")
+    sk = os.environ.get("SPACESHIP_SECRET_KEY", "")
+    r = _req.put(f"https://spaceship.dev/api/v1/domains/{domain}/autorenew",
+                  headers={"X-API-Key": ak, "X-API-Secret": sk, "Content-Type": "application/json"},
+                  json={"isEnabled": enabled}, timeout=15)
+    if r.status_code in (200, 204):
+        return {"success": True, "message": f"Auto-renew {'enabled' if enabled else 'disabled'}"}
+    return {"success": False, "message": r.text[:200]}
+
+
+@app.route("/api/domains/sync-registrars", methods=["POST", "OPTIONS"])
+def domains_sync_registrars():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import db as store
+        pb = _porkbun_list()
+        ss = _spaceship_list()
+        updated = 0
+        for rd in pb + ss:
+            domain_name = rd.get("domain", "").strip().lower()
+            if not domain_name:
+                continue
+            fields = {}
+            if rd.get("expires"):
+                fields["expires_at"] = rd["expires"]
+            fields["auto_renew"] = rd.get("auto_renew", False)
+            store.update_domain(domain_name, **fields)
+            updated += 1
+        return _cors(jsonify({"updated": updated, "porkbun": len(pb), "spaceship": len(ss)}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/domains/auto-renew", methods=["POST", "OPTIONS"])
+def domains_set_auto_renew():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import db as store
+        body = request.get_json(silent=True) or {}
+        domains_list = body.get("domains", [])
+        enabled = body.get("enabled", False)
+        if not domains_list:
+            return _cors(jsonify({"error": "No domains specified"})), 400
+        all_db_domains = {d["domain"]: d for d in store.get_all_domains()}
+        results = []
+        for domain_name in domains_list:
+            domain_name = domain_name.strip().lower()
+            db_rec = all_db_domains.get(domain_name)
+            if not db_rec:
+                results.append({"domain": domain_name, "success": False, "message": "Not found in DB"})
+                continue
+            provider = db_rec.get("provider", "")
+            if provider == "porkbun":
+                res = _porkbun_set_ar(domain_name, enabled)
+            elif provider == "spaceship":
+                res = _spaceship_set_ar(domain_name, enabled)
+            else:
+                results.append({"domain": domain_name, "success": False, "message": f"Unknown provider: {provider}"})
+                continue
+            if res.get("success"):
+                store.update_domain(domain_name, auto_renew=enabled)
+            results.append({"domain": domain_name, **res})
+        succeeded = sum(1 for r in results if r.get("success"))
+        return _cors(jsonify({"results": results, "succeeded": succeeded, "total": len(results)}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/replacements")
 def get_replacements():
     if not _check_auth():
