@@ -317,6 +317,29 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
         combined["group_b"] = _group_stats(group["b"]) if group["b"] else None
         clients.append(combined)
 
+    existing_norms = {_norm(c["name"]) for c in clients}
+    for crm_name in crm_names:
+        if _norm(crm_name) not in existing_norms:
+            clients.append({
+                "name": crm_name,
+                "accounts": 0,
+                "group_a_count": 0,
+                "group_b_count": 0,
+                "group_a": None,
+                "group_b": None,
+                "in_campaign": 0,
+                "smtp_failures": 0,
+                "total_domains": 0,
+                "avg_bounce_rate": None,
+                "avg_reply_rate": None,
+                "daily_capacity": 0,
+                "total_sent": 0,
+                "daily_sent": 0,
+                "campaigns": [],
+                "account_details": [],
+                "crm_only": True,
+            })
+
     # Build acquisition groups
     acq_list = []
     for letter, accts in sorted(acq_groups.items()):

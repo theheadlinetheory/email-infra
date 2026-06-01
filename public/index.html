@@ -441,14 +441,23 @@ function renderClients() {
     var clients = data.clients || [];
     var totalAccounts = data.total_accounts || 0;
     var inCampaign = data.in_campaign || 0;
+    var withInfra = clients.filter(function(c) { return !c.crm_only && c.accounts > 0; }).length;
+    var needsInfra = clients.length - withInfra;
     document.getElementById('client-stats').innerHTML =
-        statBox(clients.length, 'Active Clients') +
+        statBox(withInfra, 'Active Clients') +
+        (needsInfra > 0 ? statBox(needsInfra, 'Needs Infra', 'warn') : '') +
         statBox(totalAccounts, 'Total Accounts') +
         statBox(inCampaign, 'In Campaigns', inCampaign === 0 ? 'warn' : '') +
         statBox(data.untagged_count || 0, 'Untagged', (data.untagged_count || 0) > 0 ? 'warn' : '');
     var grid = document.getElementById('clients-grid');
     if (!clients.length) { grid.innerHTML = '<div class="empty-state">No client groups found.</div>'; return; }
     grid.innerHTML = clients.map(function(c, i) {
+        if (c.crm_only || c.accounts === 0) {
+            return '<div class="client-card" id="card-' + i + '" style="border:1px dashed #334155;opacity:0.8;">' +
+                '<div class="card-header"><div class="card-name">' + esc(c.name) + '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#1e3a5f;color:#93c5fd;margin-left:6px">NEW</span></div><div class="card-count">0 accounts</div></div>' +
+                '<div style="padding:12px 16px;color:#64748b;font-size:12px;text-align:center;">No infra assigned yet — use a Generic group to assign</div>' +
+            '</div>';
+        }
         var hasB = c.group_b_count > 0;
         var s = c.group_a || c;
         var cBr = s.avg_bounce_rate;

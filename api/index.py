@@ -108,6 +108,33 @@ def overview():
     if data and data.get("clients"):
         data["_cached"] = True
         data["_synced_at"] = ts
+        try:
+            import requests as _req
+            crm_url = os.environ.get("CRM_SUPABASE_URL", "").strip()
+            crm_key = os.environ.get("CRM_SUPABASE_KEY", "").strip()
+            if crm_url and crm_key:
+                r = _req.get(f"{crm_url}/rest/v1/clients?select=name",
+                              headers={"apikey": crm_key, "Authorization": f"Bearer {crm_key}"}, timeout=5)
+                if r.status_code == 200:
+                    crm_names = [c["name"].strip() for c in r.json() if c.get("name")]
+                    import re
+                    def _norm(name):
+                        n = re.sub(r'\s+(llc|inc\.?|construction)\s*$', '', name.lower().strip(), flags=re.IGNORECASE)
+                        return re.sub(r'[,.]', '', n).strip()
+                    existing = {_norm(c["name"]) for c in data["clients"]}
+                    for cn in crm_names:
+                        if _norm(cn) not in existing:
+                            data["clients"].append({
+                                "name": cn, "accounts": 0, "group_a_count": 0, "group_b_count": 0,
+                                "group_a": None, "group_b": None, "in_campaign": 0, "smtp_failures": 0,
+                                "total_domains": 0, "avg_bounce_rate": None, "avg_reply_rate": None,
+                                "daily_capacity": 0, "total_sent": 0, "daily_sent": 0,
+                                "campaigns": [], "account_details": [], "crm_only": True,
+                            })
+                            existing.add(_norm(cn))
+                    data["crm_clients"] = crm_names
+        except Exception:
+            pass
         return _cors(jsonify(data))
     return _cors(jsonify({"loading": True, "clients": [], "total_accounts": 0}))
 
