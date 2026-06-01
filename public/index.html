@@ -2139,17 +2139,63 @@ function _bulkAutoRenew(enabled) {
 function _syncRegistrars() {
     if (_domainSyncing) return;
     _domainSyncing = true;
-    var btn = document.getElementById('sync-registrars-btn');
-    if (btn) btn.textContent = 'Syncing...';
-    fetch('/api/domains/sync-registrars' + _authQs(), {
-        method: 'POST', headers: _authHeaders()
-    }).then(function(r) { return r.json(); }).then(function(data) {
-        _domainSyncing = false;
-        if (data.error) { alert('Sync error: ' + data.error); if (btn) btn.textContent = 'Sync Registrars'; return; }
-        alert('Synced ' + data.updated + ' domains (Porkbun: ' + data.porkbun + ', Spaceship: ' + data.spaceship + ')');
-        _domainsData = null;
-        renderDomainsTab();
-    }).catch(function(e) { _domainSyncing = false; alert('Sync error: ' + e); if (btn) btn.textContent = 'Sync Registrars'; });
+    var wrap = document.getElementById('domains-actions');
+    var steps = [
+        { registrar: 'porkbun', label: 'Porkbun' },
+        { registrar: 'spaceship', label: 'Spaceship' }
+    ];
+    var results = [];
+
+    function renderProgress(stepIdx, status) {
+        var pct = Math.round(((stepIdx + (status === 'done' ? 1 : 0.5)) / steps.length) * 100);
+        var html = '<div style="padding:12px 16px;background:#1e293b;border-radius:8px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        html += '<span style="font-size:13px;font-weight:600;color:#e2e8f0;">Syncing Registrars</span>';
+        html += '<span style="font-size:12px;color:#94a3b8;">' + pct + '%</span></div>';
+        html += '<div style="height:6px;background:#0f1117;border-radius:3px;overflow:hidden;margin-bottom:10px;">';
+        html += '<div style="height:100%;width:' + pct + '%;background:#3b82f6;border-radius:3px;transition:width 0.3s ease;"></div></div>';
+        for (var i = 0; i < steps.length; i++) {
+            var icon, color;
+            if (i < stepIdx) { icon = '✓'; color = '#22c55e'; }
+            else if (i === stepIdx && status === 'running') { icon = '○'; color = '#3b82f6'; }
+            else if (i === stepIdx && status === 'done') { icon = '✓'; color = '#22c55e'; }
+            else { icon = '○'; color = '#475569'; }
+            var detail = results[i] ? ' — ' + results[i].fetched + ' domains, ' + results[i].updated + ' updated' : '';
+            html += '<div style="font-size:12px;color:' + color + ';margin-bottom:2px;">' + icon + ' ' + steps[i].label + detail + '</div>';
+        }
+        html += '</div>';
+        wrap.innerHTML = html;
+    }
+
+    function syncStep(idx) {
+        if (idx >= steps.length) {
+            _domainSyncing = false;
+            _domainsData = null;
+            renderDomainsTab();
+            setTimeout(function() { wrap.innerHTML = ''; }, 3000);
+            return;
+        }
+        renderProgress(idx, 'running');
+        fetch('/api/domains/sync-registrar' + _authQs(), {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+            body: JSON.stringify({ registrar: steps[idx].registrar })
+        }).then(function(r) { return r.json(); }).then(function(data) {
+            if (data.error) {
+                results[idx] = { fetched: 0, updated: 0, error: data.error };
+            } else {
+                results[idx] = { fetched: data.fetched, updated: data.updated };
+            }
+            renderProgress(idx, 'done');
+            setTimeout(function() { syncStep(idx + 1); }, 300);
+        }).catch(function(e) {
+            results[idx] = { fetched: 0, updated: 0, error: String(e) };
+            renderProgress(idx, 'done');
+            setTimeout(function() { syncStep(idx + 1); }, 300);
+        });
+    }
+
+    syncStep(0);
 }
 
 function renderDomainsTab() {

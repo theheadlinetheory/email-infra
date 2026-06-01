@@ -462,18 +462,24 @@ def _spaceship_set_ar(domain, enabled):
     return {"success": False, "message": r.text[:200]}
 
 
-@app.route("/api/domains/sync-registrars", methods=["POST", "OPTIONS"])
-def domains_sync_registrars():
+@app.route("/api/domains/sync-registrar", methods=["POST", "OPTIONS"])
+def domains_sync_one_registrar():
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import db as store
-        pb = _porkbun_list()
-        ss = _spaceship_list()
+        body = request.get_json(silent=True) or {}
+        registrar = body.get("registrar", "")
+        if registrar == "porkbun":
+            domains = _porkbun_list()
+        elif registrar == "spaceship":
+            domains = _spaceship_list()
+        else:
+            return _cors(jsonify({"error": f"Unknown registrar: {registrar}"})), 400
         updated = 0
-        for rd in pb + ss:
+        for rd in domains:
             domain_name = rd.get("domain", "").strip().lower()
             if not domain_name:
                 continue
@@ -483,7 +489,7 @@ def domains_sync_registrars():
             fields["auto_renew"] = rd.get("auto_renew", False)
             store.update_domain(domain_name, **fields)
             updated += 1
-        return _cors(jsonify({"updated": updated, "porkbun": len(pb), "spaceship": len(ss)}))
+        return _cors(jsonify({"registrar": registrar, "fetched": len(domains), "updated": updated}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
