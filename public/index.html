@@ -898,7 +898,7 @@ function renderCreateGroupWizard() {
         html += '</tbody></table></div>';
         html += '<div style="display:flex;gap:10px;align-items:center;">';
         if (res.length < 14) {
-            html += '<button onclick="_wizFindReplacements()" style="' + _wizBtn + 'background:#f59e0b;color:#fff;">Find ' + (14 - res.length) + ' Replacement(s)</button>';
+            html += '<button onclick="_wizFindReplacements()" style="' + _wizBtn + 'background:#f59e0b;color:#fff;">Find ' + (14 - res.length) + ' More</button>';
         }
         if (res.length > 0) {
             var totalCost = res.reduce(function(sum, r) { return sum + parseFloat(r.price || 0); }, 0).toFixed(2);
@@ -982,7 +982,8 @@ function _wizFindDomains() {
     renderCreateGroupWizard();
     _wizFindBatch(14);
 }
-function _wizFindBatch(total) {
+function _wizFindBatch(total, emptyRuns) {
+    emptyRuns = emptyRuns || 0;
     var have = (_wizardState.checkResults || []).length;
     var need = total - have;
     if (need <= 0) {
@@ -990,7 +991,7 @@ function _wizFindBatch(total) {
         renderCreateGroupWizard();
         return;
     }
-    var batchSize = Math.min(need, 4);
+    var batchSize = Math.min(need, 5);
     var exclude = (_wizardState.checkResults || []).map(function(r) { return r.domain; });
     fetch('/api/domains/find-available' + _authQs(), {
         method: 'POST',
@@ -998,10 +999,12 @@ function _wizFindBatch(total) {
         body: JSON.stringify({ niche: _wizardState.niche, registrar: _wizardState.registrar, tld: _wizardState.tld, count: batchSize, exclude: exclude })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) return _wizErr(d.error);
+        var got = (d.results || []).length;
         _wizardState.checkResults = (_wizardState.checkResults || []).concat(d.results || []);
         renderCreateGroupWizard();
-        if (_wizardState.checkResults.length < total && (d.results || []).length > 0) {
-            _wizFindBatch(total);
+        var newEmpty = got === 0 ? emptyRuns + 1 : 0;
+        if (_wizardState.checkResults.length < total && newEmpty < 3) {
+            _wizFindBatch(total, newEmpty);
         } else {
             _wizardState.phase = 'found';
             renderCreateGroupWizard();

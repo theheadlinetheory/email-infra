@@ -991,7 +991,7 @@ def find_available_domains():
 
         found = []
         tried = set(exclude)
-        max_checks = target * 8
+        max_checks = target * 20
 
         while len(found) < target and len(tried) < max_checks:
             name = _gen_domain_name(niche)
