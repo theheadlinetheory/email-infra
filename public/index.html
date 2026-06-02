@@ -239,6 +239,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div id="maint-filters"></div>
     <div id="replacement-tracker"></div>
     <div id="available-pool"></div>
+    <div id="create-group-wizard"></div>
     <div id="maint-domain-health"></div>
     <div class="section-title" style="margin-top:24px;">Zapmail Subscriptions</div>
     <div id="subs-section"></div>
@@ -772,8 +773,167 @@ function renderMaintenance() {
     renderMaintFilters();
     renderReplacementTracker();
     renderAvailablePool();
+    renderCreateGroupWizard();
     renderDomainHealth();
     renderSubscriptions();
+}
+
+/* ─── Create Generic Group Wizard ─── */
+var _wizardState = { domains: null, selected: {}, letter: '', phase: 'idle', log: [] };
+function renderCreateGroupWizard() {
+    var el = document.getElementById('create-group-wizard');
+    if (!el) return;
+    var box = 'margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:20px 24px;';
+    var html = '<div style="' + box + '">';
+    html += '<div style="font-size:15px;font-weight:600;color:#f1f5f9;margin-bottom:16px;">Create Generic Group</div>';
+
+    if (_wizardState.phase === 'idle' || _wizardState.phase === 'picking') {
+        html += '<button onclick="_wizardLoadDomains()" style="padding:8px 20px;font-size:13px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;">' +
+            (_wizardState.domains ? 'Refresh Domains' : 'Load Available Domains') + '</button>';
+        if (_wizardState.domains && _wizardState.domains.length) {
+            var d = _wizardState.domains;
+            var selCount = Object.keys(_wizardState.selected).length;
+            html += '<div style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">';
+            html += '<label style="font-size:12px;color:#94a3b8;">Group Letter:</label>';
+            html += '<select id="wizard-letter" onchange="_wizardState.letter=this.value" style="padding:4px 8px;font-size:13px;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:4px;">';
+            var fl = _wizardState.free_letters || [];
+            for (var i = 0; i < fl.length; i++) {
+                html += '<option value="' + fl[i] + '"' + (fl[i] === _wizardState.letter ? ' selected' : '') + '>' + fl[i] + '</option>';
+            }
+            html += '</select>';
+            html += '<span style="font-size:12px;color:#64748b;">Selected: <b style="color:' + (selCount === 14 ? '#22c55e' : '#f59e0b') + '">' + selCount + '/14</b></span>';
+            html += '<button onclick="_wizardSelectAll()" style="padding:4px 12px;font-size:11px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Select first 14</button>';
+            if (selCount > 0 && _wizardState.letter) {
+                html += '<button onclick="_wizardCreateGroup()" style="padding:6px 16px;font-size:12px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Group ' + esc(_wizardState.letter) + ' (' + selCount + ' domains)</button>';
+            }
+            html += '</div>';
+            html += '<div style="margin-top:12px;max-height:300px;overflow-y:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:4px 8px;text-align:left;width:30px;"></th><th style="padding:4px 8px;text-align:left;">Domain</th><th style="padding:4px 8px;">TLD</th><th style="padding:4px 8px;">Status</th></tr></thead><tbody>';
+            for (var i = 0; i < d.length; i++) {
+                var checked = _wizardState.selected[d[i].domain] ? ' checked' : '';
+                var tld = d[i].domain.split('.').pop();
+                html += '<tr style="border-bottom:1px solid #0f1219;">' +
+                    '<td style="padding:4px 8px;"><input type="checkbox" onchange="_wizardToggle(\'' + esc(d[i].domain) + '\')"' + checked + '></td>' +
+                    '<td style="padding:4px 8px;color:#e2e8f0;">' + esc(d[i].domain) + '</td>' +
+                    '<td style="padding:4px 8px;color:#64748b;">' + tld + '</td>' +
+                    '<td style="padding:4px 8px;color:#22c55e;">Ready</td></tr>';
+            }
+            html += '</tbody></table></div>';
+        } else if (_wizardState.domains) {
+            html += '<div style="margin-top:8px;color:#f59e0b;font-size:12px;">No available domains in the ready pool.</div>';
+        }
+    } else if (_wizardState.phase === 'creating' || _wizardState.phase === 'finalizing') {
+        var label = _wizardState.phase === 'creating' ? 'Creating mailboxes...' : 'Exporting & configuring...';
+        html += '<div style="color:#3b82f6;font-size:13px;">' + label + ' <span class="spinner" style="display:inline-block;width:14px;height:14px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;"></span></div>';
+    } else if (_wizardState.phase === 'mailboxes_done') {
+        html += '<div style="color:#22c55e;font-size:13px;margin-bottom:8px;">Mailboxes created for Generic ' + esc(_wizardState.letter) + '!</div>';
+        html += '<div style="color:#94a3b8;font-size:12px;margin-bottom:12px;">Wait a minute for mailboxes to activate, then finalize:</div>';
+        html += '<button onclick="_wizardFinalize()" style="padding:8px 20px;font-size:13px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Export to SmartLead + Tag + Warmup</button>';
+    } else if (_wizardState.phase === 'complete') {
+        html += '<div style="color:#22c55e;font-size:14px;font-weight:600;margin-bottom:8px;">Generic ' + esc(_wizardState.letter) + ' created!</div>';
+        html += '<button onclick="_wizardState={domains:null,selected:{},letter:\'\',phase:\'idle\',log:[]};renderCreateGroupWizard();" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Create Another Group</button>';
+    } else if (_wizardState.phase === 'error') {
+        html += '<div style="color:#ef4444;font-size:13px;margin-bottom:8px;">Error: ' + esc(_wizardState.error || 'Unknown') + '</div>';
+        html += '<button onclick="_wizardState.phase=\'idle\';renderCreateGroupWizard();" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Try Again</button>';
+    }
+
+    // Log output
+    if (_wizardState.log.length) {
+        html += '<div style="margin-top:12px;background:#0f1219;border-radius:6px;padding:10px 12px;max-height:150px;overflow-y:auto;font-family:monospace;font-size:11px;color:#94a3b8;">';
+        for (var i = 0; i < _wizardState.log.length; i++) {
+            html += esc(_wizardState.log[i]) + '<br>';
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+function _wizardLoadDomains() {
+    _wizardState.phase = 'picking';
+    _wizardState.domains = null;
+    renderCreateGroupWizard();
+    fetch('/api/available-domains' + _authQs(), { headers: _authHeaders() })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            _wizardState.domains = d.domains || [];
+            _wizardState.free_letters = d.free_letters || [];
+            if (!_wizardState.letter && d.free_letters && d.free_letters.length) {
+                _wizardState.letter = d.free_letters[0];
+            }
+            renderCreateGroupWizard();
+        });
+}
+function _wizardToggle(domain) {
+    if (_wizardState.selected[domain]) delete _wizardState.selected[domain];
+    else _wizardState.selected[domain] = true;
+}
+function _wizardSelectAll() {
+    _wizardState.selected = {};
+    var d = _wizardState.domains || [];
+    var info = d.filter(function(x) { return x.domain.endsWith('.info'); });
+    var rest = d.filter(function(x) { return !x.domain.endsWith('.info'); });
+    var ordered = info.concat(rest);
+    for (var i = 0; i < Math.min(14, ordered.length); i++) {
+        _wizardState.selected[ordered[i].domain] = true;
+    }
+    renderCreateGroupWizard();
+}
+function _wizardCreateGroup() {
+    var domains = Object.keys(_wizardState.selected);
+    if (!domains.length || !_wizardState.letter) return;
+    _wizardState.phase = 'creating';
+    _wizardState.log = ['Starting Phase 1: Create mailboxes for Generic ' + _wizardState.letter + '...'];
+    renderCreateGroupWizard();
+    fetch('/api/create-generic-group' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ letter: _wizardState.letter, domains: domains })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) {
+            _wizardState.phase = 'mailboxes_done';
+            _wizardState.log = _wizardState.log.concat(d.log || []);
+            _wizardState.log.push('Phase 1 complete: ' + (d.mailboxes_count || 0) + ' mailboxes created.');
+        } else {
+            _wizardState.phase = 'error';
+            _wizardState.error = d.error || 'Unknown error';
+            _wizardState.log = _wizardState.log.concat(d.log || []);
+        }
+        renderCreateGroupWizard();
+    }).catch(function(e) {
+        _wizardState.phase = 'error';
+        _wizardState.error = e.message;
+        renderCreateGroupWizard();
+    });
+}
+function _wizardFinalize() {
+    _wizardState.phase = 'finalizing';
+    _wizardState.log.push('Starting Phase 2: Export + Tag + Warmup...');
+    renderCreateGroupWizard();
+    fetch('/api/finalize-generic-group' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ letter: _wizardState.letter })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok) {
+            _wizardState.phase = 'complete';
+            _wizardState.log = _wizardState.log.concat(d.log || []);
+            _wizardState.log.push('Done! ' + (d.accounts_found || 0) + ' accounts tagged + warmup enabled.');
+        } else if (d.retry) {
+            _wizardState.phase = 'mailboxes_done';
+            _wizardState.log = _wizardState.log.concat(d.log || []);
+            _wizardState.log.push('Export not ready yet — wait a bit and try again.');
+        } else {
+            _wizardState.phase = 'error';
+            _wizardState.error = d.error || 'Unknown error';
+            _wizardState.log = _wizardState.log.concat(d.log || []);
+        }
+        renderCreateGroupWizard();
+    }).catch(function(e) {
+        _wizardState.phase = 'error';
+        _wizardState.error = e.message;
+        renderCreateGroupWizard();
+    });
 }
 function renderMaintFilters() {
     var el = document.getElementById('maint-filters');

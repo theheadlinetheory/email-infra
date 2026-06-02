@@ -204,13 +204,24 @@ def refresh_stats():
     store._CACHE_WRITE_ENABLED = True
     try:
         import sync
-        sync.store._CACHE_WRITE_ENABLED = True
-        stats = sync.fetch_acq_campaign_stats()
+        from datetime import date
+        today_str = date.today().isoformat()
+        health_today = sync.fetch_health_metrics(start_date=today_str, end_date=today_str)
         data, _ = store.cache_get("overview_v2")
-        if data:
-            data["acq_campaign_stats"] = stats
+        if data and health_today:
+            for group_list_key in ("clients", "acquisition_groups", "generic_groups", "aging_groups"):
+                for g in data.get(group_list_key, []):
+                    emails = [a["email"] for a in g.get("account_details", []) if a.get("email")]
+                    ds = sum(health_today.get(e, {}).get("sent", 0) for e in emails)
+                    g["daily_sent"] = ds
+                    if g.get("group_a") and g["group_a"].get("account_details"):
+                        ea = [a["email"] for a in g["group_a"]["account_details"] if a.get("email")]
+                        g["group_a"]["daily_sent"] = sum(health_today.get(e, {}).get("sent", 0) for e in ea)
+                    if g.get("group_b") and g["group_b"].get("account_details"):
+                        eb = [a["email"] for a in g["group_b"]["account_details"] if a.get("email")]
+                        g["group_b"]["daily_sent"] = sum(health_today.get(e, {}).get("sent", 0) for e in eb)
             store.cache_patch("overview_v2", data)
-        return _cors(jsonify({"ok": True, "campaigns": len(stats)}))
+        return _cors(jsonify({"ok": True, "accounts": len(health_today)}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
 
@@ -916,6 +927,341 @@ def delete_replacement():
         return _cors(jsonify({"error": "Job not found"})), 404
     store.set_state("domain_replacements", state)
     return _cors(jsonify({"ok": True}))
+
+
+# ─── Generic Group Creation Wizard ───
+
+@app.route("/api/available-domains")
+def available_domains():
+    """Return .info domains from the ready pool that have zapmail_id but no SmartLead accounts."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import db as store
+        pool_raw = store.get_state("domain_ready_pool") or {}
+        pool_domains = pool_raw.get("domains", [])
+        overview, _ = store.cache_get("overview_v2")
+        sl_domains = set()
+        if overview:
+            for section in ["clients", "acquisition_groups", "generic_groups", "aging_groups"]:
+                for g in overview.get(section, []):
+                    for a in g.get("account_details", []):
+                        email = a.get("email", "") or ""
+                        if "@" in email:
+                            sl_domains.add(email.split("@")[1])
+        available = [d for d in pool_domains
+                     if d.get("zapmail_id") and d["domain"] not in sl_domains]
+        existing_letters = set()
+        if overview:
+            for g in overview.get("generic_groups", []):
+                name = g.get("name", "")
+                if name.startswith("Generic "):
+                    existing_letters.add(name[8:].strip())
+        all_letters = [chr(i) for i in range(65, 91)]
+        free_letters = [l for l in all_letters if l not in existing_letters]
+        return _cors(jsonify({"domains": available, "existing_letters": sorted(existing_letters),
+                              "free_letters": free_letters}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/create-generic-group", methods=["POST", "OPTIONS"])
+def create_generic_group():
+    """Phase 1: Buy mailbox slots, create inboxes, set profile photos."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        letter = body.get("letter", "").strip().upper()
+        domains = body.get("domains", [])
+        if not letter or len(letter) > 2:
+            return _cors(jsonify({"error": "Invalid group letter"})), 400
+        if not domains or len(domains) > 20:
+            return _cors(jsonify({"error": "Select 1-20 domains"})), 400
+
+        ZAPMAIL_API = "https://api.zapmail.ai/api"
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
+        SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
+        PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
+
+        def zm_h():
+            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+
+        # Resolve zapmail_id for each domain from the ready pool
+        import db as store
+        pool_raw = store.get_state("domain_ready_pool") or {}
+        pool_map = {d["domain"]: d for d in pool_raw.get("domains", [])}
+        domain_info = []
+        for dn in domains:
+            pd = pool_map.get(dn)
+            if not pd or not pd.get("zapmail_id"):
+                return _cors(jsonify({"error": f"Domain {dn} not in ready pool or missing zapmail_id"})), 400
+            domain_info.append({"domain": dn, "zapmail_id": pd["zapmail_id"]})
+
+        log_lines = []
+        def _log(msg):
+            log_lines.append(msg)
+
+        # Buy mailbox slots if needed
+        inboxes_needed = len(domain_info) * 3
+        ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
+        ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
+        purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
+        assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
+        free_slots = purchased - assigned
+
+        if free_slots < inboxes_needed:
+            to_buy = inboxes_needed - free_slots
+            _log(f"Buying {to_buy} mailbox slots...")
+            buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
+                             headers=zm_h(), json={}, timeout=30)
+            buy_data = buy_r.json()
+            if buy_r.status_code != 200 or "Insufficient" in str(buy_data.get("message", "")):
+                return _cors(jsonify({"error": f"Failed to buy slots: {buy_data.get('message', buy_r.text[:200])}"})), 400
+            _log(f"Bought {to_buy} slots")
+            _time.sleep(3)
+        else:
+            _log(f"Have {free_slots} free slots (need {inboxes_needed})")
+
+        SPECS = [
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.reynolds"},
+        ]
+
+        all_mb_ids = []
+        created_domains = []
+        for di in domain_info:
+            mailboxes = [{**s, "domainName": di["domain"]} for s in SPECS]
+            payload = {di["zapmail_id"]: mailboxes}
+            r = req.post(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json=payload, timeout=30)
+            result = r.json()
+            mb_ids = result.get("data", [])
+            if isinstance(mb_ids, list):
+                all_mb_ids.extend(mb_ids)
+            emails = [f"{s['mailboxUsername']}@{di['domain']}" for s in SPECS]
+            created_domains.append({"domain": di["domain"], "emails": emails, "mb_ids": mb_ids if isinstance(mb_ids, list) else []})
+            _log(f"Created: {', '.join(emails)}")
+            _time.sleep(1)
+
+        # Set profile photos
+        if all_mb_ids:
+            _log(f"Setting profile photos on {len(all_mb_ids)} mailboxes...")
+            for i in range(0, len(all_mb_ids), 20):
+                batch = all_mb_ids[i:i + 20]
+                mb_data = [{"mailboxId": mid, "profilePicture": PHOTO_URL} for mid in batch]
+                req.put(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json={"mailboxData": mb_data}, timeout=30)
+                _time.sleep(1)
+            _log("Photos set")
+
+        # Save state for Phase 2
+        state = store.get_state(f"generic_group_wizard_{letter}") or {}
+        state.update({
+            "letter": letter,
+            "domains": created_domains,
+            "all_mb_ids": all_mb_ids,
+            "phase": "mailboxes_created",
+            "created_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+        store.set_state(f"generic_group_wizard_{letter}", state)
+
+        return _cors(jsonify({"ok": True, "letter": letter,
+                              "domains_count": len(created_domains),
+                              "mailboxes_count": len(all_mb_ids),
+                              "log": log_lines,
+                              "next_step": "finalize"}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/finalize-generic-group", methods=["POST", "OPTIONS"])
+def finalize_generic_group():
+    """Phase 2: Export to SmartLead, tag with Zapmail + Generic letter + date, enable warmup."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        letter = body.get("letter", "").strip().upper()
+        if not letter:
+            return _cors(jsonify({"error": "letter required"})), 400
+
+        import db as store
+        state = store.get_state(f"generic_group_wizard_{letter}")
+        if not state or state.get("phase") != "mailboxes_created":
+            return _cors(jsonify({"error": f"No pending group {letter} — run Phase 1 first"})), 400
+
+        ZAPMAIL_API = "https://api.zapmail.ai/api"
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
+        SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
+        SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
+        SMARTLEAD_INTERNAL = "https://server.smartlead.ai/api"
+        SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+        SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+
+        def zm_h():
+            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+        def sl_h():
+            return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
+
+        log_lines = []
+        def _log(msg):
+            log_lines.append(msg)
+
+        # Export to SmartLead
+        mb_ids = state.get("all_mb_ids", [])
+        if mb_ids:
+            _log(f"Exporting {len(mb_ids)} mailboxes to SmartLead...")
+            r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                         json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
+            _log(f"Export: {r.json().get('message', r.text[:200])}")
+        else:
+            _log("No mailbox IDs — exporting by domain name...")
+            for dd in state.get("domains", []):
+                r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                             json={"apps": ["SMARTLEAD"], "contains": dd["domain"]}, timeout=30)
+                _time.sleep(2)
+
+        _log("Waiting 90s for SmartLead to process...")
+        _time.sleep(90)
+
+        # Find new accounts in SmartLead
+        our_domains = {dd["domain"] for dd in state.get("domains", [])}
+        found_ids = []
+        offset = 0
+        for _ in range(20):
+            url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
+            r = req.get(url, timeout=30)
+            accts = r.json() if r.status_code == 200 else []
+            if not isinstance(accts, list) or not accts:
+                break
+            for a in accts:
+                email = a.get("from_email", a.get("email", ""))
+                domain = email.split("@")[-1] if "@" in email else ""
+                if domain in our_domains:
+                    found_ids.append(a.get("id"))
+            offset += 100
+            _time.sleep(0.5)
+
+        _log(f"Found {len(found_ids)} accounts in SmartLead")
+
+        if not found_ids:
+            state["phase"] = "export_failed"
+            store.set_state(f"generic_group_wizard_{letter}", state)
+            return _cors(jsonify({"ok": False, "error": "No accounts found in SmartLead after export. Try again in a few minutes.",
+                                  "log": log_lines, "retry": True}))
+
+        # Get/create tags via GQL
+        def _gql(query, variables=None):
+            body = {"query": query}
+            if variables:
+                body["variables"] = variables
+            r = req.post(SMARTLEAD_GQL, headers=sl_h(), json=body, timeout=30)
+            return r.json()
+
+        tags_result = _gql("{ tags { id name color } }")
+        all_tags = {t["name"]: t for t in tags_result.get("data", {}).get("tags", [])}
+
+        ZAPMAIL_TAG_ID = 262254
+        tag_name = f"Generic {letter}"
+        today_str = _time.strftime("%-m/%-d/%y")
+
+        # Find or create group tag
+        group_tag_id = None
+        if tag_name in all_tags:
+            group_tag_id = all_tags[tag_name]["id"]
+        else:
+            used_colors = {t.get("color", "").upper() for t in all_tags.values()}
+            palette = ["#FF6B6B", "#FF8E72", "#FFA94D", "#FFD43B", "#A9E34B",
+                       "#51CF66", "#20C997", "#22B8CF", "#339AF0", "#5C7CFA",
+                       "#7950F2", "#BE4BDB", "#E64980", "#F06595", "#CC5DE8"]
+            color = next((c for c in palette if c.upper() not in used_colors), "#7950F2")
+            mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
+            result = _gql(mut, {"o": {"name": tag_name, "color": color}})
+            group_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
+            _log(f"Created tag: {tag_name} (ID: {group_tag_id})")
+
+        # Find or create date tag
+        date_tag_id = None
+        if today_str in all_tags:
+            date_tag_id = all_tags[today_str]["id"]
+        else:
+            mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
+            result = _gql(mut, {"o": {"name": today_str, "color": "#94a3b8"}})
+            date_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
+            _log(f"Created date tag: {today_str} (ID: {date_tag_id})")
+
+        if not group_tag_id or not date_tag_id:
+            return _cors(jsonify({"error": "Failed to create tags", "log": log_lines})), 500
+
+        # Tag all accounts
+        tag_ids = [ZAPMAIL_TAG_ID, group_tag_id, date_tag_id]
+        tagged = 0
+        for acc_id in found_ids:
+            tag_body = {"id": acc_id, "tags": tag_ids, "clientId": None}
+            r = req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-management-details",
+                         headers=sl_h(), json=tag_body, timeout=30)
+            if r.status_code == 200:
+                tagged += 1
+            _time.sleep(0.3)
+        _log(f"Tagged {tagged}/{len(found_ids)} accounts")
+
+        # Enable warmup
+        warmed = 0
+        warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
+                       "daily_rampup": 5, "reply_rate_percentage": 40}
+        for acc_id in found_ids:
+            r = req.post(f"{SMARTLEAD_API}/email-accounts/{acc_id}/warmup?api_key={SMARTLEAD_KEY}",
+                         json=warmup_body, timeout=30)
+            if r.status_code == 200:
+                warmed += 1
+            _time.sleep(0.3)
+
+            # Full warmup config via internal API
+            wd = req.get(f"{SMARTLEAD_INTERNAL}/email-account/fetch-warmup-details-by-email-account-id/{acc_id}",
+                         headers=sl_h(), timeout=30)
+            warmup_key = ""
+            if wd.status_code == 200:
+                warmup_key = wd.json().get("message", {}).get("warmup_key_id", "")
+            if warmup_key:
+                full_body = {
+                    "emailAccountId": str(acc_id), "maxEmailPerDay": 15,
+                    "isRampupEnabled": True, "rampupValue": 5,
+                    "warmupMinCount": 10, "warmupMaxCount": 15,
+                    "replyRate": 40, "dailyReplyLimit": 15,
+                    "autoAdjustWarmup": False, "sendWarmupsOnlyOnWeekdays": False,
+                    "useCustomDomain": False, "status": "ACTIVE", "warmupKeyId": warmup_key
+                }
+                req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-warmup",
+                         headers=sl_h(), json=full_body, timeout=30)
+            _time.sleep(0.3)
+
+        _log(f"Warmup enabled on {warmed}/{len(found_ids)} accounts")
+
+        # Update state
+        state["phase"] = "complete"
+        state["accounts_found"] = len(found_ids)
+        state["accounts_tagged"] = tagged
+        state["accounts_warmed"] = warmed
+        store.set_state(f"generic_group_wizard_{letter}", state)
+
+        return _cors(jsonify({"ok": True, "letter": letter,
+                              "accounts_found": len(found_ids),
+                              "accounts_tagged": tagged,
+                              "accounts_warmed": warmed,
+                              "log": log_lines}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])
