@@ -866,8 +866,20 @@ function renderCreateGroupWizard() {
         html += '<button onclick="_wizardSkipPurchase()" style="' + _wizBtn + 'background:transparent;color:#94a3b8;border:1px solid #334155;">Skip — Use Existing Domains</button>';
         html += '</div>';
     } else if (s.phase === 'searching') {
-        html += '<div style="color:#3b82f6;font-size:13px;">Generating names & checking availability...' + _wizSpinner + '</div>';
-        html += '<div style="color:#64748b;font-size:11px;margin-top:4px;">This may take 20-30 seconds — cycling through names until 14 are available.</div>';
+        var progress = (s.checkResults || []).length;
+        var pct = Math.round((progress / 14) * 100);
+        html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">Finding available domains... ' + progress + ' / 14' + _wizSpinner + '</div>';
+        html += '<div style="background:#1e293b;border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px;">';
+        html += '<div style="background:#3b82f6;height:100%;width:' + pct + '%;border-radius:4px;transition:width 0.3s;"></div></div>';
+        if (progress > 0) {
+            html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;">Found so far:</div>';
+            html += '<div style="font-size:11px;color:#22c55e;font-family:monospace;">';
+            for (var pi = 0; pi < (s.checkResults || []).length; pi++) {
+                html += esc(s.checkResults[pi].domain);
+                if (pi < s.checkResults.length - 1) html += ', ';
+            }
+            html += '</div>';
+        }
     } else if (s.phase === 'found' || s.phase === 'replacing') {
         var res = s.checkResults || [];
         if (s.phase === 'replacing') {
@@ -966,19 +978,34 @@ function _wizRenderPicking() {
 /* ─── Wizard: Phase 0 — Find & Purchase ─── */
 function _wizFindDomains() {
     _wizardState.phase = 'searching';
-    _wizardState.checkResults = null;
+    _wizardState.checkResults = [];
     renderCreateGroupWizard();
+    _wizFindBatch(14);
+}
+function _wizFindBatch(total) {
+    var have = (_wizardState.checkResults || []).length;
+    var need = total - have;
+    if (need <= 0) {
+        _wizardState.phase = 'found';
+        renderCreateGroupWizard();
+        return;
+    }
+    var batchSize = Math.min(need, 4);
+    var exclude = (_wizardState.checkResults || []).map(function(r) { return r.domain; });
     fetch('/api/domains/find-available' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ niche: _wizardState.niche, registrar: _wizardState.registrar, tld: _wizardState.tld, count: 14 })
+        body: JSON.stringify({ niche: _wizardState.niche, registrar: _wizardState.registrar, tld: _wizardState.tld, count: batchSize, exclude: exclude })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) return _wizErr(d.error);
-        _wizardState.checkResults = d.results || [];
-        _wizardState.selected = {};
-        (d.results || []).forEach(function(r) { _wizardState.selected[r.domain] = true; });
-        _wizardState.phase = 'found';
+        _wizardState.checkResults = (_wizardState.checkResults || []).concat(d.results || []);
         renderCreateGroupWizard();
+        if (_wizardState.checkResults.length < total && (d.results || []).length > 0) {
+            _wizFindBatch(total);
+        } else {
+            _wizardState.phase = 'found';
+            renderCreateGroupWizard();
+        }
     }).catch(function(e) { _wizErr(e.message); });
 }
 
@@ -989,19 +1016,9 @@ function _wizRemoveDomain(idx) {
 function _wizFindReplacements() {
     var needed = 14 - (_wizardState.checkResults || []).length;
     if (needed <= 0) return;
-    var existing = (_wizardState.checkResults || []).map(function(r) { return r.domain; });
-    _wizardState.phase = 'replacing';
+    _wizardState.phase = 'searching';
     renderCreateGroupWizard();
-    fetch('/api/domains/find-available' + _authQs(), {
-        method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ niche: _wizardState.niche, registrar: _wizardState.registrar, tld: _wizardState.tld, count: needed, exclude: existing })
-    }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.error) return _wizErr(d.error);
-        _wizardState.checkResults = (_wizardState.checkResults || []).concat(d.results || []);
-        _wizardState.phase = 'found';
-        renderCreateGroupWizard();
-    }).catch(function(e) { _wizErr(e.message); });
+    _wizFindBatch(14);
 }
 
 function _wizardPurchase() {
