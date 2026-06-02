@@ -933,6 +933,96 @@ def delete_replacement():
 
 _TLD_PRICES = {".com": "9.98", ".info": "3.98", ".co": "11.98", ".net": "10.98", ".org": "9.98", ".biz": "8.98"}
 
+_NICHE_WORDS = {
+    "generic": {
+        "pre": ["service","work","trade","field","crew","job","site","project","task","pro","contract","build",
+                "maintain","install","repair","open","direct","steady","reliable","trusted","skilled","onsite",
+                "rapid","ready","prime","next","first","all","apex","core"],
+        "mid": ["service","work","care","solutions","side","zone","point","line","craft","force","ops","tech","aid","link","way","path","flow"],
+        "suf": ["pros","biz","co","hq","group","crew","team","contractors","services","solutions","experts",
+                "works","side","hub","base","zone","point","force","now","go"],
+    },
+    "landscaping": {
+        "pre": ["landscape","landscaping","grounds","groundskeeping","lawn","lawncare","yard","property","turf","exterior"],
+        "mid": ["maintenance","care","management","work","services","service","keeping","upkeep"],
+        "suf": ["pros","experts","specialists","solutions","group","crew","contractors","company","team","partners"],
+    },
+    "hvac": {
+        "pre": ["hvac","heating","cooling","airflow","climate","comfort","duct","ventilation","thermal","air"],
+        "mid": ["service","repair","install","maintenance","care","work","solutions","systems"],
+        "suf": ["pros","experts","crew","team","contractors","services","solutions","co","group","specialists"],
+    },
+}
+
+def _gen_domain_name(niche_key):
+    import random
+    w = _NICHE_WORDS.get(niche_key, _NICHE_WORDS["generic"])
+    roll = random.random()
+    if roll < 0.4:
+        return random.choice(w["pre"]) + random.choice(w["suf"])
+    elif roll < 0.75:
+        return random.choice(w["pre"]) + random.choice(w["mid"]) + random.choice(w["suf"])
+    else:
+        return random.choice(w["pre"]) + random.choice(w["mid"])
+
+
+@app.route("/api/domains/find-available", methods=["POST", "OPTIONS"])
+def find_available_domains():
+    """Generate random domain names and check until we find the target count available."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        niche = body.get("niche", "generic")
+        registrar = body.get("registrar", "spaceship")
+        tld = body.get("tld", ".info")
+        target = min(int(body.get("count", 14)), 30)
+
+        ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+        sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
+        pk = os.environ.get("PORKBUN_API_KEY", "").strip()
+        ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
+
+        found = []
+        tried = set()
+        max_checks = target * 8
+
+        while len(found) < target and len(tried) < max_checks:
+            name = _gen_domain_name(niche)
+            dn = name + tld
+            if dn in tried:
+                continue
+            tried.add(dn)
+            try:
+                if registrar == "spaceship":
+                    r = req.get(f"https://spaceship.dev/api/v1/domains/{dn}/available",
+                                headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=15)
+                    data = r.json() if r.status_code == 200 else {}
+                    if data.get("result") == "available":
+                        price = _TLD_PRICES.get(tld, "~10")
+                        found.append({"domain": dn, "available": True, "price": price})
+                    _time.sleep(0.3)
+                else:
+                    r = req.post(f"https://api.porkbun.com/api/json/v3/domain/checkDomain/{dn}",
+                                 json={"apikey": pk, "secretapikey": ps}, timeout=10)
+                    data = r.json()
+                    resp = data.get("response", {})
+                    if data.get("status") == "SUCCESS" and resp.get("avail") == "yes":
+                        found.append({"domain": dn, "available": True, "price": resp.get("price", "?")})
+                    _time.sleep(0.3)
+            except Exception:
+                continue
+
+        return _cors(jsonify({"results": found, "checked": len(tried), "target": target}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/domains/check", methods=["POST", "OPTIONS"])
 def check_domains():
     """Check availability of domains on Spaceship and/or Porkbun."""

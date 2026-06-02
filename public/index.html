@@ -805,49 +805,10 @@ function _wizLog(msg) { _wizardState.log.push(msg); }
 function _wizErr(msg) { _wizardState.phase = 'error'; _wizardState.error = msg; renderCreateGroupWizard(); }
 
 var _wizNiches = {
-    generic: {
-        label: 'Generic Service',
-        pre: ['service','work','trade','field','crew','job','site','project','task','pro','contract','build','maintain','install','repair','open','direct','steady','reliable','trusted','skilled','onsite','rapid','ready','prime','next','first','all','apex','core'],
-        mid: ['service','work','care','solutions','side','zone','point','line','craft','force','ops','tech','aid','link','way','path','flow'],
-        suf: ['pros','biz','co','hq','group','crew','team','contractors','services','solutions','experts','works','side','hub','base','zone','point','force','now','go']
-    },
-    landscaping: {
-        label: 'Landscaping',
-        pre: ['landscape','landscaping','grounds','groundskeeping','lawn','lawncare','yard','property','turf','exterior'],
-        mid: ['maintenance','care','management','work','services','service','keeping','upkeep'],
-        suf: ['pros','experts','specialists','solutions','group','crew','contractors','company','team','partners']
-    },
-    hvac: {
-        label: 'HVAC',
-        pre: ['hvac','heating','cooling','airflow','climate','comfort','duct','ventilation','thermal','air'],
-        mid: ['service','repair','install','maintenance','care','work','solutions','systems'],
-        suf: ['pros','experts','crew','team','contractors','services','solutions','co','group','specialists']
-    }
+    generic: { label: 'Generic Service' },
+    landscaping: { label: 'Landscaping' },
+    hvac: { label: 'HVAC' }
 };
-function _wizGenNames() {
-    var count = _wizardState.genCount || 20;
-    var niche = _wizNiches[_wizardState.niche || 'generic'];
-    var names = [], used = {};
-    var maxAttempts = count * 10;
-    var attempts = 0;
-    while (names.length < count && attempts < maxAttempts) {
-        attempts++;
-        var n;
-        var roll = Math.random();
-        if (roll < 0.4) {
-            n = _wizPick(niche.pre) + _wizPick(niche.suf);
-        } else if (roll < 0.75) {
-            n = _wizPick(niche.pre) + _wizPick(niche.mid) + _wizPick(niche.suf);
-        } else {
-            n = _wizPick(niche.pre) + _wizPick(niche.mid);
-        }
-        if (!used[n] && n.length >= 8 && n.length <= 24) { used[n] = true; names.push(n); }
-    }
-    _wizardState.baseNames = names.join('\n');
-    _wizardState.phase = 'purchase_input';
-    renderCreateGroupWizard();
-}
-function _wizPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 function renderCreateGroupWizard() {
     var el = document.getElementById('create-group-wizard');
@@ -867,7 +828,7 @@ function renderCreateGroupWizard() {
         { id: 'pick', label: '2. Select & Create Mailboxes' },
         { id: 'finalize', label: '3. Export & Warmup' }
     ];
-    var phaseStep = { idle: 0, purchase_input: 0, checking: 0, checked: 0, purchasing: 0, purchased: 0,
+    var phaseStep = { idle: 0, searching: 0, found: 0, purchasing: 0, purchased: 0,
                       picking: 1, creating: 1, mailboxes_done: 1,
                       finalizing: 2, complete: 2, error: -1 };
     var curStep = phaseStep[s.phase] != null ? phaseStep[s.phase] : 0;
@@ -880,8 +841,8 @@ function renderCreateGroupWizard() {
     }
     html += '</div>';
 
-    if (s.phase === 'idle' || s.phase === 'purchase_input') {
-        html += '<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">';
+    if (s.phase === 'idle') {
+        html += '<div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">';
         html += '<select id="wiz-niche" onchange="_wizardState.niche=this.value" style="' + _wizSt + '">';
         var nicheKeys = Object.keys(_wizNiches);
         for (var ni = 0; ni < nicheKeys.length; ni++) {
@@ -899,46 +860,31 @@ function renderCreateGroupWizard() {
             html += '<option value="' + tlds[ti] + '"' + (s.tld === tlds[ti] ? ' selected' : '') + '>' + tlds[ti] + '</option>';
         }
         html += '</select>';
-        html += '<select id="wiz-count" onchange="_wizardState.genCount=parseInt(this.value)" style="' + _wizSt + '">';
-        var counts = [14, 20, 28, 40];
-        for (var ci = 0; ci < counts.length; ci++) {
-            html += '<option value="' + counts[ci] + '"' + ((s.genCount || 20) === counts[ci] ? ' selected' : '') + '>' + counts[ci] + ' names</option>';
-        }
-        html += '</select>';
-        html += '<button onclick="_wizGenNames()" style="' + _wizBtn + 'background:#7c3aed;color:#fff;">Generate Names</button>';
         html += '</div>';
-        html += '<textarea id="wiz-base-names" placeholder="Enter base names (one per line) or click Generate Names" style="width:100%;height:120px;font-size:12px;font-family:monospace;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:10px;resize:vertical;">' + esc(s.baseNames) + '</textarea>';
-        html += '<div style="margin-top:12px;display:flex;gap:10px;">';
-        html += '<button onclick="_wizardCheckDomains()" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Check Availability</button>';
+        html += '<div style="display:flex;gap:10px;">';
+        html += '<button onclick="_wizFindDomains()" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Find 14 Available Domains</button>';
         html += '<button onclick="_wizardSkipPurchase()" style="' + _wizBtn + 'background:transparent;color:#94a3b8;border:1px solid #334155;">Skip — Use Existing Domains</button>';
         html += '</div>';
-    } else if (s.phase === 'checking') {
-        html += '<div style="color:#3b82f6;font-size:13px;">Checking availability...' + _wizSpinner + '</div>';
-    } else if (s.phase === 'checked') {
+    } else if (s.phase === 'searching') {
+        html += '<div style="color:#3b82f6;font-size:13px;">Generating names & checking availability...' + _wizSpinner + '</div>';
+        html += '<div style="color:#64748b;font-size:11px;margin-top:4px;">This may take 20-30 seconds — cycling through names until 14 are available.</div>';
+    } else if (s.phase === 'found') {
         var res = s.checkResults || [];
-        var avail = res.filter(function(r) { return r.available; });
-        var unavail = res.filter(function(r) { return !r.available; });
-        html += '<div style="color:#94a3b8;font-size:12px;margin-bottom:8px;">' + avail.length + ' available, ' + unavail.length + ' unavailable on ' + esc(s.registrar) + '</div>';
-        if (avail.length) {
-            html += '<div style="max-height:200px;overflow-y:auto;margin-bottom:12px;">';
-            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-            html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:4px 8px;text-align:left;width:30px;"></th><th style="padding:4px 8px;text-align:left;">Domain</th><th style="padding:4px 8px;text-align:right;">Price</th></tr></thead><tbody>';
-            for (var i = 0; i < avail.length; i++) {
-                var chk = s.selected[avail[i].domain] !== false;
-                html += '<tr style="border-bottom:1px solid #0f1219;">' +
-                    '<td style="padding:4px 8px;"><input type="checkbox"' + (chk ? ' checked' : '') + ' onchange="_wizToggleBuy(\'' + esc(avail[i].domain) + '\')"></td>' +
-                    '<td style="padding:4px 8px;color:#22c55e;">' + esc(avail[i].domain) + '</td>' +
-                    '<td style="padding:4px 8px;color:#94a3b8;text-align:right;">$' + esc(String(avail[i].price || '?')) + '</td></tr>';
-            }
-            html += '</tbody></table></div>';
-            var buyCount = avail.filter(function(r) { return s.selected[r.domain] !== false; }).length;
-            html += '<button onclick="_wizardPurchase()" style="' + _wizBtn + 'background:#22c55e;color:#fff;">Purchase ' + buyCount + ' Domains</button>';
+        html += '<div style="color:#22c55e;font-size:12px;margin-bottom:8px;">Found ' + res.length + ' available ' + esc(s.tld) + ' domains on ' + esc(s.registrar) + '</div>';
+        html += '<div style="max-height:340px;overflow-y:auto;margin-bottom:12px;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:6px 8px;text-align:left;width:30px;"></th><th style="padding:6px 8px;text-align:left;">Domain</th><th style="padding:6px 8px;text-align:right;">Price</th></tr></thead><tbody>';
+        for (var i = 0; i < res.length; i++) {
+            var chk = s.selected[res[i].domain] !== false;
+            html += '<tr style="border-bottom:1px solid #0f1219;">' +
+                '<td style="padding:6px 8px;"><input type="checkbox"' + (chk ? ' checked' : '') + ' onchange="_wizToggleBuy(\'' + esc(res[i].domain) + '\')"></td>' +
+                '<td style="padding:6px 8px;color:#22c55e;">' + esc(res[i].domain) + '</td>' +
+                '<td style="padding:6px 8px;color:#94a3b8;text-align:right;">$' + esc(String(res[i].price || '?')) + '</td></tr>';
         }
-        if (unavail.length) {
-            html += '<div style="margin-top:8px;font-size:11px;color:#64748b;">';
-            html += 'Unavailable: ' + unavail.map(function(r) { return esc(r.domain); }).join(', ');
-            html += '</div>';
-        }
+        html += '</tbody></table></div>';
+        var buyCount = res.filter(function(r) { return s.selected[r.domain] !== false; }).length;
+        var totalCost = res.filter(function(r) { return s.selected[r.domain] !== false; }).reduce(function(sum, r) { return sum + parseFloat(r.price || 0); }, 0).toFixed(2);
+        html += '<button onclick="_wizardPurchase()" style="' + _wizBtn + 'background:#22c55e;color:#fff;">Purchase ' + buyCount + ' Domains ($' + totalCost + ')</button>';
     } else if (s.phase === 'purchasing') {
         html += '<div style="color:#3b82f6;font-size:13px;">Purchasing domains + setting nameservers...' + _wizSpinner + '</div>';
     } else if (s.phase === 'purchased') {
@@ -1009,27 +955,21 @@ function _wizRenderPicking() {
     return html;
 }
 
-/* ─── Wizard: Phase 0 — Purchase ─── */
-function _wizardCheckDomains() {
-    var ta = document.getElementById('wiz-base-names');
-    if (ta) _wizardState.baseNames = ta.value;
-    var lines = _wizardState.baseNames.split('\n').map(function(l) { return l.trim().toLowerCase(); }).filter(Boolean);
-    if (!lines.length) return;
-    var tld = _wizardState.tld;
-    var fullDomains = lines.map(function(n) { return n.indexOf('.') > -1 ? n : n + tld; });
-    _wizardState.phase = 'checking';
+/* ─── Wizard: Phase 0 — Find & Purchase ─── */
+function _wizFindDomains() {
+    _wizardState.phase = 'searching';
     _wizardState.checkResults = null;
     renderCreateGroupWizard();
-    fetch('/api/domains/check' + _authQs(), {
+    fetch('/api/domains/find-available' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ domains: fullDomains, registrar: _wizardState.registrar })
+        body: JSON.stringify({ niche: _wizardState.niche, registrar: _wizardState.registrar, tld: _wizardState.tld, count: 14 })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) return _wizErr(d.error);
         _wizardState.checkResults = d.results || [];
         _wizardState.selected = {};
-        (d.results || []).forEach(function(r) { if (r.available) _wizardState.selected[r.domain] = true; });
-        _wizardState.phase = 'checked';
+        (d.results || []).forEach(function(r) { _wizardState.selected[r.domain] = true; });
+        _wizardState.phase = 'found';
         renderCreateGroupWizard();
     }).catch(function(e) { _wizErr(e.message); });
 }
