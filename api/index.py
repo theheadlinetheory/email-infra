@@ -968,13 +968,13 @@ def _gen_domain_name(niche_key):
 
 @app.route("/api/domains/find-available", methods=["POST", "OPTIONS"])
 def find_available_domains():
-    """Generate random domain names and check until we find the target count available."""
+    """Generate random domain names and check availability in parallel."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
-        import time as _time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         import requests as req
         body = request.get_json(silent=True) or {}
         niche = body.get("niche", "generic")
@@ -988,36 +988,55 @@ def find_available_domains():
         ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
 
         exclude = set(body.get("exclude", []))
-
-        found = []
         tried = set(exclude)
-        max_checks = target * 20
 
-        while len(found) < target and len(tried) < max_checks:
-            name = _gen_domain_name(niche)
-            dn = name + tld
-            if dn in tried:
-                continue
-            tried.add(dn)
+        def _check_spaceship(dn):
             try:
-                if registrar == "spaceship":
-                    r = req.get(f"https://spaceship.dev/api/v1/domains/{dn}/available",
-                                headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=15)
-                    data = r.json() if r.status_code == 200 else {}
-                    if data.get("result") == "available":
-                        price = _TLD_PRICES.get(tld, "~10")
-                        found.append({"domain": dn, "available": True, "price": price})
-                    _time.sleep(0.3)
-                else:
-                    r = req.post(f"https://api.porkbun.com/api/json/v3/domain/checkDomain/{dn}",
-                                 json={"apikey": pk, "secretapikey": ps}, timeout=10)
-                    data = r.json()
-                    resp = data.get("response", {})
-                    if data.get("status") == "SUCCESS" and resp.get("avail") == "yes":
-                        found.append({"domain": dn, "available": True, "price": resp.get("price", "?")})
-                    _time.sleep(0.3)
+                r = req.get(f"https://spaceship.dev/api/v1/domains/{dn}/available",
+                            headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=15)
+                data = r.json() if r.status_code == 200 else {}
+                if data.get("result") == "available":
+                    return {"domain": dn, "available": True, "price": _TLD_PRICES.get(tld, "~10")}
             except Exception:
-                continue
+                pass
+            return None
+
+        def _check_porkbun(dn):
+            try:
+                r = req.post(f"https://api.porkbun.com/api/json/v3/domain/checkDomain/{dn}",
+                             json={"apikey": pk, "secretapikey": ps}, timeout=10)
+                data = r.json()
+                resp = data.get("response", {})
+                if data.get("status") == "SUCCESS" and resp.get("avail") == "yes":
+                    return {"domain": dn, "available": True, "price": resp.get("price", "?")}
+            except Exception:
+                pass
+            return None
+
+        checker = _check_spaceship if registrar == "spaceship" else _check_porkbun
+        found = []
+        max_rounds = 20
+
+        for rnd in range(max_rounds):
+            if len(found) >= target:
+                break
+            batch = []
+            while len(batch) < 10 and len(tried) < 500:
+                dn = _gen_domain_name(niche) + tld
+                if dn not in tried:
+                    tried.add(dn)
+                    batch.append(dn)
+            if not batch:
+                break
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {pool.submit(checker, dn): dn for dn in batch}
+                for f in as_completed(futures):
+                    result = f.result()
+                    if result and len(found) < target:
+                        found.append(result)
+            if rnd < max_rounds - 1 and len(found) < target:
+                import time as _t
+                _t.sleep(0.5)
 
         return _cors(jsonify({"results": found, "checked": len(tried), "target": target}))
     except Exception as e:
