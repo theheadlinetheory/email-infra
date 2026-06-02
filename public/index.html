@@ -782,6 +782,7 @@ function renderMaintenance() {
 var _wizardState = {
     phase: 'idle', log: [], niche: 'generic',
     registrar: 'spaceship', tld: '.info', baseNames: '',
+    targetCount: 14,
     checkResults: null,
     purchasedDomains: [],
     domains: null, selected: {}, letter: '', free_letters: [],
@@ -795,6 +796,7 @@ function _wizReset() {
     _wizardState = {
         phase: 'idle', log: [], niche: 'generic',
         registrar: 'spaceship', tld: '.info', baseNames: '',
+        targetCount: 14,
         checkResults: null, purchasedDomains: [],
         domains: null, selected: {}, letter: '', free_letters: [],
         error: ''
@@ -860,15 +862,17 @@ function renderCreateGroupWizard() {
             html += '<option value="' + tlds[ti] + '"' + (s.tld === tlds[ti] ? ' selected' : '') + '>' + tlds[ti] + '</option>';
         }
         html += '</select>';
+        html += '<input id="wiz-count" type="number" min="1" max="30" value="' + s.targetCount + '" onchange="_wizardState.targetCount=Math.max(1,Math.min(30,parseInt(this.value)||14))" style="width:52px;text-align:center;' + _wizSt + '" title="Number of domains">';
+        html += '<span style="color:#64748b;font-size:12px;">domains</span>';
         html += '</div>';
         html += '<div style="display:flex;gap:10px;">';
-        html += '<button onclick="_wizFindDomains()" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Find 14 Available Domains</button>';
+        html += '<button onclick="_wizFindDomains()" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Find ' + s.targetCount + ' Available Domains</button>';
         html += '<button onclick="_wizardSkipPurchase()" style="' + _wizBtn + 'background:transparent;color:#94a3b8;border:1px solid #334155;">Skip — Use Existing Domains</button>';
         html += '</div>';
     } else if (s.phase === 'searching') {
         var progress = (s.checkResults || []).length;
-        var pct = Math.round((progress / 14) * 100);
-        html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">Finding available domains... ' + progress + ' / 14' + _wizSpinner + '</div>';
+        var pct = Math.round((progress / s.targetCount) * 100);
+        html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">Finding available domains... ' + progress + ' / ' + s.targetCount + _wizSpinner + '</div>';
         html += '<div style="background:#1e293b;border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px;">';
         html += '<div style="background:#3b82f6;height:100%;width:' + pct + '%;border-radius:4px;transition:width 0.3s;"></div></div>';
         if (progress > 0) {
@@ -883,9 +887,9 @@ function renderCreateGroupWizard() {
     } else if (s.phase === 'found' || s.phase === 'replacing') {
         var res = s.checkResults || [];
         if (s.phase === 'replacing') {
-            html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">Finding ' + (14 - res.length) + ' replacement(s)...' + _wizSpinner + '</div>';
+            html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">Finding ' + (s.targetCount - res.length) + ' replacement(s)...' + _wizSpinner + '</div>';
         }
-        html += '<div style="color:#22c55e;font-size:12px;margin-bottom:8px;">' + res.length + ' available ' + esc(s.tld) + ' domains on ' + esc(s.registrar) + (res.length < 14 ? ' <span style="color:#f59e0b;">(' + (14 - res.length) + ' needed)</span>' : '') + '</div>';
+        html += '<div style="color:#22c55e;font-size:12px;margin-bottom:8px;">' + res.length + ' available ' + esc(s.tld) + ' domains on ' + esc(s.registrar) + (res.length < s.targetCount ? ' <span style="color:#f59e0b;">(' + (s.targetCount - res.length) + ' needed)</span>' : '') + '</div>';
         html += '<div style="max-height:340px;overflow-y:auto;margin-bottom:12px;">';
         html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
         html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:6px 8px;text-align:left;">Domain</th><th style="padding:6px 8px;text-align:right;">Price</th><th style="padding:6px 8px;width:30px;"></th></tr></thead><tbody>';
@@ -897,8 +901,8 @@ function renderCreateGroupWizard() {
         }
         html += '</tbody></table></div>';
         html += '<div style="display:flex;gap:10px;align-items:center;">';
-        if (res.length < 14) {
-            html += '<button onclick="_wizFindReplacements()" style="' + _wizBtn + 'background:#f59e0b;color:#fff;">Find ' + (14 - res.length) + ' More</button>';
+        if (res.length < s.targetCount) {
+            html += '<button onclick="_wizFindReplacements()" style="' + _wizBtn + 'background:#f59e0b;color:#fff;">Find ' + (s.targetCount - res.length) + ' More</button>';
         }
         if (res.length > 0) {
             var totalCost = res.reduce(function(sum, r) { return sum + parseFloat(r.price || 0); }, 0).toFixed(2);
@@ -980,7 +984,7 @@ function _wizFindDomains() {
     _wizardState.phase = 'searching';
     _wizardState.checkResults = [];
     renderCreateGroupWizard();
-    _wizFindBatch(14);
+    _wizFindBatch(_wizardState.targetCount);
 }
 function _wizFindBatch(total, emptyRuns) {
     emptyRuns = emptyRuns || 0;
@@ -991,7 +995,7 @@ function _wizFindBatch(total, emptyRuns) {
         renderCreateGroupWizard();
         return;
     }
-    var batchSize = Math.min(need, 5);
+    var batchSize = Math.min(need, 7);
     var exclude = (_wizardState.checkResults || []).map(function(r) { return r.domain; });
     fetch('/api/domains/find-available' + _authQs(), {
         method: 'POST',
@@ -1017,11 +1021,11 @@ function _wizRemoveDomain(idx) {
     renderCreateGroupWizard();
 }
 function _wizFindReplacements() {
-    var needed = 14 - (_wizardState.checkResults || []).length;
+    var needed = _wizardState.targetCount - (_wizardState.checkResults || []).length;
     if (needed <= 0) return;
     _wizardState.phase = 'searching';
     renderCreateGroupWizard();
-    _wizFindBatch(14);
+    _wizFindBatch(_wizardState.targetCount);
 }
 
 function _wizardPurchase() {
