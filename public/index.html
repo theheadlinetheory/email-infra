@@ -238,8 +238,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 <div id="maintenance-tab" style="display:none;">
     <div id="maint-filters"></div>
     <div id="replacement-tracker"></div>
-    <div id="available-pool"></div>
     <div id="create-group-wizard"></div>
+    <div id="available-pool"></div>
     <div id="maint-domain-health"></div>
     <div class="section-title" style="margin-top:24px;">Zapmail Subscriptions</div>
     <div id="subs-section"></div>
@@ -772,8 +772,8 @@ function toggleSwapCheck(jobId, key, val) {
 function renderMaintenance() {
     renderMaintFilters();
     renderReplacementTracker();
-    renderAvailablePool();
     renderCreateGroupWizard();
+    renderAvailablePool();
     renderDomainHealth();
     renderSubscriptions();
 }
@@ -803,6 +803,25 @@ function _wizReset() {
 }
 function _wizLog(msg) { _wizardState.log.push(msg); }
 function _wizErr(msg) { _wizardState.phase = 'error'; _wizardState.error = msg; renderCreateGroupWizard(); }
+
+var _wizWords = {
+    pre: ['bright','swift','clear','prime','bold','true','core','peak','iron','blue','silver','amber','stone','ridge','north','west','forge','arc','sage','elm','oak','pine','cedar','maple','flint','crest','haven','vale','shore','bay','fox','hawk','wolf','bear','steel','flame','frost','dawn','dusk','solar','nova','apex','pulse','zen','vibe','drift','echo','reef','glade','mesa'],
+    suf: ['path','reach','field','point','line','mark','view','way','gate','bridge','works','craft','ware','edge','link','base','hub','run','lane','bend','creek','grove','well','ford','port','ridge','rock','cove','spring','brook','dale','glen','stead','wood','keep','ward','land','light','trail','shore']
+};
+function _wizGenNames() {
+    var count = _wizardState.genCount || 20;
+    var names = [], used = {};
+    var pre = _wizWords.pre, suf = _wizWords.suf;
+    while (names.length < count && names.length < pre.length * suf.length) {
+        var p = pre[Math.floor(Math.random() * pre.length)];
+        var s = suf[Math.floor(Math.random() * suf.length)];
+        var n = p + s;
+        if (!used[n] && n.length >= 6 && n.length <= 14) { used[n] = true; names.push(n); }
+    }
+    _wizardState.baseNames = names.join('\n');
+    _wizardState.phase = 'purchase_input';
+    renderCreateGroupWizard();
+}
 
 function renderCreateGroupWizard() {
     var el = document.getElementById('create-group-wizard');
@@ -836,7 +855,6 @@ function renderCreateGroupWizard() {
     html += '</div>';
 
     if (s.phase === 'idle' || s.phase === 'purchase_input') {
-        html += '<div style="color:#94a3b8;font-size:12px;margin-bottom:12px;">Enter domain base names (one per line) or skip to use already-purchased domains.</div>';
         html += '<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">';
         html += '<select id="wiz-registrar" onchange="_wizardState.registrar=this.value" style="' + _wizSt + '">';
         html += '<option value="spaceship"' + (s.registrar === 'spaceship' ? ' selected' : '') + '>Spaceship</option>';
@@ -848,8 +866,16 @@ function renderCreateGroupWizard() {
             html += '<option value="' + tlds[ti] + '"' + (s.tld === tlds[ti] ? ' selected' : '') + '>' + tlds[ti] + '</option>';
         }
         html += '</select>';
+        html += '<label style="font-size:12px;color:#94a3b8;">Count:</label>';
+        html += '<select id="wiz-count" onchange="_wizardState.genCount=parseInt(this.value)" style="' + _wizSt + '">';
+        var counts = [14, 20, 28, 40];
+        for (var ci = 0; ci < counts.length; ci++) {
+            html += '<option value="' + counts[ci] + '"' + ((s.genCount || 20) === counts[ci] ? ' selected' : '') + '>' + counts[ci] + '</option>';
+        }
+        html += '</select>';
+        html += '<button onclick="_wizGenNames()" style="' + _wizBtn + 'background:#7c3aed;color:#fff;">Generate Names</button>';
         html += '</div>';
-        html += '<textarea id="wiz-base-names" placeholder="coolsite&#10;myproject&#10;bestdomain" style="width:100%;height:120px;font-size:12px;font-family:monospace;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:10px;resize:vertical;">' + esc(s.baseNames) + '</textarea>';
+        html += '<textarea id="wiz-base-names" placeholder="Enter base names (one per line) or click Generate Names" style="width:100%;height:120px;font-size:12px;font-family:monospace;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:10px;resize:vertical;">' + esc(s.baseNames) + '</textarea>';
         html += '<div style="margin-top:12px;display:flex;gap:10px;">';
         html += '<button onclick="_wizardCheckDomains()" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Check Availability</button>';
         html += '<button onclick="_wizardSkipPurchase()" style="' + _wizBtn + 'background:transparent;color:#94a3b8;border:1px solid #334155;">Skip — Use Existing Domains</button>';

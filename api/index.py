@@ -1085,14 +1085,13 @@ def purchase_domains():
 
 @app.route("/api/available-domains")
 def available_domains():
-    """Return fresh Spaceship domains (CloudNS set, not in Zapmail or SmartLead)."""
+    """Return Spaceship domains with CloudNS that are not yet in SmartLead."""
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import requests as req
         import db as store
 
-        # Get domains already in SmartLead
         overview, _ = store.cache_get("overview_v2")
         sl_domains = set()
         if overview:
@@ -1103,21 +1102,6 @@ def available_domains():
                         if "@" in email:
                             sl_domains.add(email.split("@")[1])
 
-        # Get domains already in Zapmail
-        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
-        zap_domains = set()
-        page = 1
-        while True:
-            zr = req.get(f"https://api.zapmail.ai/api/v2/domains?page={page}",
-                         headers={"x-auth-zapmail": ZAPMAIL_KEY}, timeout=30)
-            zd = zr.json().get("data", {})
-            for d in zd.get("domains", []):
-                zap_domains.add(d.get("name", ""))
-            if page >= zd.get("totalPages", 1):
-                break
-            page += 1
-
-        # Fetch from Spaceship — only recent .info with CloudNS
         ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
         sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
         headers = {"X-API-Key": ak, "X-API-Secret": sk}
@@ -1138,7 +1122,7 @@ def available_domains():
         available = []
         for d in all_sp:
             name = d.get("name", "")
-            if name in sl_domains or name in zap_domains:
+            if name in sl_domains:
                 continue
             ns_hosts = d.get("nameservers", {}).get("hosts", [])
             if not any("cloudns" in h.lower() for h in ns_hosts):
@@ -1146,17 +1130,16 @@ def available_domains():
             if not name.endswith(".info"):
                 continue
             reg = d.get("registrationDate", "")[:10]
-            exp = d.get("expirationDate", "")[:10]
-            available.append({"domain": name, "registered": reg, "expires": exp})
+            available.append({"domain": name, "registered": reg})
 
         available.sort(key=lambda x: x["domain"])
 
         existing_letters = set()
         if overview:
             for g in overview.get("generic_groups", []):
-                name = g.get("name", "")
-                if name.startswith("Generic "):
-                    existing_letters.add(name[8:].strip())
+                gname = g.get("name", "")
+                if gname.startswith("Generic "):
+                    existing_letters.add(gname[8:].strip())
         all_letters = [chr(i) for i in range(65, 91)]
         free_letters = [l for l in all_letters if l not in existing_letters]
         return _cors(jsonify({"domains": available, "existing_letters": sorted(existing_letters),
