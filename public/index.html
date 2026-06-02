@@ -910,9 +910,36 @@ function renderCreateGroupWizard() {
         }
         html += '</div>';
     } else if (s.phase === 'purchasing') {
-        html += '<div style="color:#3b82f6;font-size:13px;">Purchasing domains + setting nameservers...' + _wizSpinner + '</div>';
+        var pd = s.purchaseProgress || [];
+        var done = pd.filter(function(p) { return p.status !== 'pending' && p.status !== 'buying'; }).length;
+        var total = pd.length;
+        var pct = total ? Math.round((done / total) * 100) : 0;
+        html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">Purchasing domains... ' + done + ' / ' + total + _wizSpinner + '</div>';
+        html += '<div style="background:#1e293b;border-radius:4px;height:8px;overflow:hidden;margin-bottom:12px;">';
+        html += '<div style="background:#3b82f6;height:100%;width:' + pct + '%;border-radius:4px;transition:width 0.3s;"></div></div>';
+        html += '<div style="max-height:340px;overflow-y:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:5px 8px;text-align:left;">Domain</th><th style="padding:5px 8px;text-align:center;">Purchase</th><th style="padding:5px 8px;text-align:center;">NS</th><th style="padding:5px 8px;text-align:center;">Auto-Renew</th></tr></thead><tbody>';
+        for (var pi = 0; pi < pd.length; pi++) {
+            var p = pd[pi];
+            var stPurch = p.status === 'pending' ? '⏳' : p.status === 'buying' ? '🔄' : p.purchased ? '✅' : '❌';
+            var stNs = p.ns_set === true ? '✅' : p.ns_set === false && p.purchased ? '❌' : p.purchased && p.status === 'done' ? '—' : '';
+            var stAr = p.autorenew_off === true ? '✅' : p.purchased && p.status === 'done' && !p.autorenew_off ? '—' : '';
+            var rowColor = p.error ? '#ef444440' : p.status === 'buying' ? '#3b82f620' : 'transparent';
+            html += '<tr style="border-bottom:1px solid #0f1219;background:' + rowColor + ';">';
+            html += '<td style="padding:5px 8px;color:' + (p.error ? '#ef4444' : '#e2e8f0') + ';">' + esc(p.domain) + (p.error ? ' <span style="color:#ef4444;font-size:10px;">(' + esc(p.error) + ')</span>' : '') + '</td>';
+            html += '<td style="padding:5px 8px;text-align:center;">' + stPurch + '</td>';
+            html += '<td style="padding:5px 8px;text-align:center;">' + stNs + '</td>';
+            html += '<td style="padding:5px 8px;text-align:center;">' + stAr + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
     } else if (s.phase === 'purchased') {
-        html += '<div style="color:#22c55e;font-size:13px;margin-bottom:8px;">Purchased ' + s.purchasedDomains.length + ' domains! NS set to CloudNS, auto-renew OFF.</div>';
+        var pd2 = s.purchaseProgress || [];
+        var okCount = pd2.filter(function(p) { return p.purchased; }).length;
+        var nsCount = pd2.filter(function(p) { return p.ns_set; }).length;
+        html += '<div style="color:#22c55e;font-size:13px;margin-bottom:4px;">✅ Purchased ' + okCount + ' domains</div>';
+        html += '<div style="color:#94a3b8;font-size:12px;margin-bottom:12px;">NS set on ' + nsCount + '/' + okCount + ' · auto-renew OFF</div>';
         html += '<button onclick="_wizardState.phase=\'picking\';_wizardLoadDomains();" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Continue to Mailbox Setup</button>';
     } else if (s.phase === 'picking') {
         html += _wizRenderPicking();
@@ -1032,23 +1059,45 @@ function _wizardPurchase() {
     var toBuy = (_wizardState.checkResults || []).map(function(r) { return r.domain; });
     if (!toBuy.length) return;
     _wizardState.phase = 'purchasing';
-    _wizardState.log = ['Purchasing ' + toBuy.length + ' domains on ' + _wizardState.registrar + '...'];
+    _wizardState.purchaseProgress = toBuy.map(function(d) {
+        return { domain: d, status: 'pending', purchased: false, ns_set: null, autorenew_off: null, error: null };
+    });
+    _wizardState.log = [];
     renderCreateGroupWizard();
-    fetch('/api/domains/purchase' + _authQs(), {
-        method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ domains: toBuy, registrar: _wizardState.registrar })
-    }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.error) return _wizErr(d.error);
-        _wizardState.purchasedDomains = d.purchased || [];
-        _wizardState.log = _wizardState.log.concat(d.log || []);
-        if (d.purchased && d.purchased.length) {
+    _wizPurchaseNext(0);
+}
+function _wizPurchaseNext(idx) {
+    var pp = _wizardState.purchaseProgress;
+    if (idx >= pp.length) {
+        _wizardState.purchasedDomains = pp.filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
+        if (_wizardState.purchasedDomains.length) {
             _wizardState.phase = 'purchased';
         } else {
-            _wizErr('No domains were purchased. Check logs.');
+            _wizErr('No domains were purchased.');
         }
         renderCreateGroupWizard();
-    }).catch(function(e) { _wizErr(e.message); });
+        return;
+    }
+    pp[idx].status = 'buying';
+    renderCreateGroupWizard();
+    fetch('/api/domains/purchase-one' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ domain: pp[idx].domain, registrar: _wizardState.registrar })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        pp[idx].purchased = !!d.purchased;
+        pp[idx].ns_set = !!d.ns_set;
+        pp[idx].autorenew_off = !!d.autorenew_off;
+        pp[idx].error = d.error || null;
+        pp[idx].status = 'done';
+        renderCreateGroupWizard();
+        _wizPurchaseNext(idx + 1);
+    }).catch(function(e) {
+        pp[idx].error = e.message;
+        pp[idx].status = 'done';
+        renderCreateGroupWizard();
+        _wizPurchaseNext(idx + 1);
+    });
 }
 
 function _wizardSkipPurchase() {

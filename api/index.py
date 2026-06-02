@@ -1213,6 +1213,88 @@ def purchase_domains():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/domains/purchase-one", methods=["POST", "OPTIONS"])
+def purchase_one_domain():
+    """Purchase a single domain, set CloudNS nameservers, disable auto-renew."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        dn = (body.get("domain") or "").strip().lower()
+        registrar = body.get("registrar", "spaceship")
+        if not dn:
+            return _cors(jsonify({"error": "No domain provided"})), 400
+
+        ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+        sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
+        pk = os.environ.get("PORKBUN_API_KEY", "").strip()
+        ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
+        CLOUDNS = ["pns61.cloudns.net", "pns62.cloudns.com", "pns63.cloudns.net", "pns64.cloudns.uk"]
+        SP_CONTACT = os.environ.get("SPACESHIP_CONTACT_ID", "1nEUYUnGBWO9ba7Z0lMrOM2UCgY9S")
+
+        result = {"domain": dn, "purchased": False, "ns_set": False, "autorenew_off": False, "error": None}
+
+        if registrar == "spaceship":
+            sp_body = {
+                "autoRenew": False, "years": 1,
+                "privacyProtection": {"level": "high", "userConsent": True},
+                "contacts": {"registrant": SP_CONTACT, "admin": SP_CONTACT,
+                             "tech": SP_CONTACT, "billing": SP_CONTACT},
+            }
+            r = req.post(f"https://spaceship.dev/api/v1/domains/{dn}",
+                         headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
+                         json=sp_body, timeout=30)
+            if r.status_code in (200, 201, 202):
+                result["purchased"] = True
+            else:
+                err = r.json().get("detail", r.text[:200]) if r.text else "Unknown"
+                result["error"] = f"Purchase failed: {err}"
+                return _cors(jsonify(result))
+        else:
+            r = req.post(f"https://api.porkbun.com/api/json/v3/domain/create/{dn}",
+                         json={"apikey": pk, "secretapikey": ps, "acknowledgement": "yes"}, timeout=30)
+            data = r.json()
+            if data.get("status") == "SUCCESS":
+                result["purchased"] = True
+            else:
+                result["error"] = f"Purchase failed: {data.get('message', '')}"
+                return _cors(jsonify(result))
+
+        if registrar == "spaceship":
+            r = req.put(f"https://spaceship.dev/api/v1/domains/{dn}/nameservers",
+                        headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
+                        json={"provider": "custom", "hosts": CLOUDNS}, timeout=15)
+            result["ns_set"] = r.status_code in (200, 204)
+        else:
+            r = req.post(f"https://api.porkbun.com/api/json/v3/domain/updateNs/{dn}",
+                         json={"apikey": pk, "secretapikey": ps, "ns": CLOUDNS}, timeout=15)
+            result["ns_set"] = r.json().get("status") == "SUCCESS"
+
+        if registrar == "spaceship":
+            try:
+                req.put(f"https://spaceship.dev/api/v1/domains/{dn}/autorenew",
+                        headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
+                        json={"isEnabled": False}, timeout=10)
+                result["autorenew_off"] = True
+            except Exception:
+                pass
+        else:
+            try:
+                req.post(f"https://api.porkbun.com/api/json/v3/domain/updateAutoRenew/{dn}",
+                         json={"apikey": pk, "secretapikey": ps, "status": "off"}, timeout=10)
+                result["autorenew_off"] = True
+            except Exception:
+                pass
+
+        return _cors(jsonify(result))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/available-domains")
 def available_domains():
     """Return Spaceship domains with CloudNS that are not yet in SmartLead."""
