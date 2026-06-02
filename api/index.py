@@ -931,6 +931,8 @@ def delete_replacement():
 
 # ─── Domain Purchase + Generic Group Creation Wizard ───
 
+_TLD_PRICES = {".com": "9.98", ".info": "3.98", ".co": "11.98", ".net": "10.98", ".org": "9.98", ".biz": "8.98"}
+
 @app.route("/api/domains/check", methods=["POST", "OPTIONS"])
 def check_domains():
     """Check availability of domains on Spaceship and/or Porkbun."""
@@ -939,6 +941,7 @@ def check_domains():
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
+        import time as _time
         import requests as req
         body = request.get_json(silent=True) or {}
         domain_names = body.get("domains", [])
@@ -959,21 +962,26 @@ def check_domains():
             try:
                 if registrar == "spaceship":
                     r = req.get(f"https://spaceship.dev/api/v1/domains/{dn}/available",
-                                headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=10)
-                    if r.status_code == 200:
-                        data = r.json()
-                        results.append({"domain": dn, "available": True, "price": data.get("price", "?")})
+                                headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=15)
+                    data = r.json() if r.status_code == 200 else {}
+                    if data.get("result") == "available":
+                        tld = "." + dn.rsplit(".", 1)[-1] if "." in dn else ""
+                        price = _TLD_PRICES.get(tld, "~10")
+                        results.append({"domain": dn, "available": True, "price": price})
                     else:
                         results.append({"domain": dn, "available": False})
+                    _time.sleep(0.3)
                 else:
                     r = req.post(f"https://api.porkbun.com/api/json/v3/domain/checkDomain/{dn}",
                                  json={"apikey": pk, "secretapikey": ps}, timeout=10)
                     data = r.json()
-                    if data.get("status") == "SUCCESS" and data.get("avail") == "yes":
-                        pricing = data.get("pricing", {})
-                        results.append({"domain": dn, "available": True, "price": pricing.get("registration", "?")})
+                    resp = data.get("response", {})
+                    if data.get("status") == "SUCCESS" and resp.get("avail") == "yes":
+                        price = resp.get("price", "?")
+                        results.append({"domain": dn, "available": True, "price": price})
                     else:
                         results.append({"domain": dn, "available": False})
+                    _time.sleep(0.3)
             except Exception:
                 results.append({"domain": dn, "available": False, "error": "timeout"})
 
@@ -1004,6 +1012,7 @@ def purchase_domains():
         pk = os.environ.get("PORKBUN_API_KEY", "").strip()
         ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
         CLOUDNS = ["pns61.cloudns.net", "pns62.cloudns.com", "pns63.cloudns.net", "pns64.cloudns.uk"]
+        SP_CONTACT = os.environ.get("SPACESHIP_CONTACT_ID", "1nEUYUnGBWO9ba7Z0lMrOM2UCgY9S")
 
         log_lines = []
         purchased = []
@@ -1013,14 +1022,22 @@ def purchase_domains():
             dn = dn.strip().lower()
             try:
                 if registrar == "spaceship":
+                    sp_body = {
+                        "autoRenew": False,
+                        "years": 1,
+                        "privacyProtection": {"level": "high", "userConsent": True},
+                        "contacts": {"registrant": SP_CONTACT, "admin": SP_CONTACT,
+                                     "tech": SP_CONTACT, "billing": SP_CONTACT},
+                    }
                     r = req.post(f"https://spaceship.dev/api/v1/domains/{dn}",
                                  headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
-                                 json={}, timeout=30)
+                                 json=sp_body, timeout=30)
                     if r.status_code in (200, 201, 202):
                         log_lines.append(f"Purchased: {dn}")
                         purchased.append(dn)
                     else:
-                        log_lines.append(f"Failed: {dn} — {r.text[:100]}")
+                        err = r.json().get("detail", r.text[:150]) if r.text else "Unknown"
+                        log_lines.append(f"Failed: {dn} — {err}")
                         failed.append(dn)
                 else:
                     r = req.post(f"https://api.porkbun.com/api/json/v3/domain/create/{dn}",

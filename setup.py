@@ -242,15 +242,23 @@ class Spaceship:
     def check_domain(domain):
         r = requests.get(f"{SPACESHIP_API}/domains/{domain}/available",
                          headers=Spaceship._headers(), timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            return {"available": True, "price": data.get("price", "?")}
+        data = r.json() if r.status_code == 200 else {}
+        if data.get("result") == "available":
+            return {"available": True}
         return {"available": False}
 
     @staticmethod
     def purchase_domain(domain):
+        contact_id = os.environ.get("SPACESHIP_CONTACT_ID", "1nEUYUnGBWO9ba7Z0lMrOM2UCgY9S")
+        body = {
+            "autoRenew": False,
+            "years": 1,
+            "privacyProtection": {"level": "high", "userConsent": True},
+            "contacts": {"registrant": contact_id, "admin": contact_id,
+                         "tech": contact_id, "billing": contact_id},
+        }
         r = requests.post(f"{SPACESHIP_API}/domains/{domain}",
-                          headers=Spaceship._headers(), json={}, timeout=30)
+                          headers=Spaceship._headers(), json=body, timeout=30)
         if r.status_code in (200, 201, 202):
             data = r.json() if r.text else {}
             op_id = r.headers.get("spaceship-async-operationid")
