@@ -1015,13 +1015,15 @@ def find_available_domains():
 
         checker = _check_spaceship if registrar == "spaceship" else _check_porkbun
         found = []
-        max_rounds = 20
+        hard_tld = tld in (".co", ".com", ".net")
+        max_rounds = 60 if hard_tld else 20
+        batch_sz = 16 if hard_tld else 10
 
         for rnd in range(max_rounds):
             if len(found) >= target:
                 break
             batch = []
-            while len(batch) < 10 and len(tried) < 500:
+            while len(batch) < batch_sz and len(tried) < 2000:
                 dn = _gen_domain_name(niche) + tld
                 if dn not in tried:
                     tried.add(dn)
