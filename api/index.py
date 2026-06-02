@@ -929,7 +929,159 @@ def delete_replacement():
     return _cors(jsonify({"ok": True}))
 
 
-# ─── Generic Group Creation Wizard ───
+# ─── Domain Purchase + Generic Group Creation Wizard ───
+
+@app.route("/api/domains/check", methods=["POST", "OPTIONS"])
+def check_domains():
+    """Check availability of domains on Spaceship and/or Porkbun."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        domain_names = body.get("domains", [])
+        registrar = body.get("registrar", "spaceship")
+        if not domain_names:
+            return _cors(jsonify({"error": "No domains provided"})), 400
+
+        ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+        sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
+        pk = os.environ.get("PORKBUN_API_KEY", "").strip()
+        ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
+
+        results = []
+        for dn in domain_names[:50]:
+            dn = dn.strip().lower()
+            if not dn:
+                continue
+            try:
+                if registrar == "spaceship":
+                    r = req.get(f"https://spaceship.dev/api/v1/domains/{dn}/available",
+                                headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=10)
+                    if r.status_code == 200:
+                        data = r.json()
+                        results.append({"domain": dn, "available": True, "price": data.get("price", "?")})
+                    else:
+                        results.append({"domain": dn, "available": False})
+                else:
+                    r = req.post(f"https://api.porkbun.com/api/json/v3/domain/checkDomain/{dn}",
+                                 json={"apikey": pk, "secretapikey": ps}, timeout=10)
+                    data = r.json()
+                    if data.get("status") == "SUCCESS" and data.get("avail") == "yes":
+                        pricing = data.get("pricing", {})
+                        results.append({"domain": dn, "available": True, "price": pricing.get("registration", "?")})
+                    else:
+                        results.append({"domain": dn, "available": False})
+            except Exception:
+                results.append({"domain": dn, "available": False, "error": "timeout"})
+
+        return _cors(jsonify({"results": results}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/domains/purchase", methods=["POST", "OPTIONS"])
+def purchase_domains():
+    """Purchase domains and set CloudNS nameservers."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        domain_names = body.get("domains", [])
+        registrar = body.get("registrar", "spaceship")
+        if not domain_names:
+            return _cors(jsonify({"error": "No domains provided"})), 400
+
+        ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+        sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
+        pk = os.environ.get("PORKBUN_API_KEY", "").strip()
+        ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
+        CLOUDNS = ["pns61.cloudns.net", "pns62.cloudns.com", "pns63.cloudns.net", "pns64.cloudns.uk"]
+
+        log_lines = []
+        purchased = []
+        failed = []
+
+        for dn in domain_names[:20]:
+            dn = dn.strip().lower()
+            try:
+                if registrar == "spaceship":
+                    r = req.post(f"https://spaceship.dev/api/v1/domains/{dn}",
+                                 headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
+                                 json={}, timeout=30)
+                    if r.status_code in (200, 201, 202):
+                        log_lines.append(f"Purchased: {dn}")
+                        purchased.append(dn)
+                    else:
+                        log_lines.append(f"Failed: {dn} — {r.text[:100]}")
+                        failed.append(dn)
+                else:
+                    r = req.post(f"https://api.porkbun.com/api/json/v3/domain/create/{dn}",
+                                 json={"apikey": pk, "secretapikey": ps, "acknowledgement": "yes"}, timeout=30)
+                    data = r.json()
+                    if data.get("status") == "SUCCESS":
+                        log_lines.append(f"Purchased: {dn}")
+                        purchased.append(dn)
+                    else:
+                        log_lines.append(f"Failed: {dn} — {data.get('message', '')}")
+                        failed.append(dn)
+            except Exception as e:
+                log_lines.append(f"Error: {dn} — {str(e)}")
+                failed.append(dn)
+            _time.sleep(1)
+
+        # Set nameservers on purchased domains
+        ns_ok = 0
+        for dn in purchased:
+            try:
+                if registrar == "spaceship":
+                    r = req.put(f"https://spaceship.dev/api/v1/domains/{dn}/nameservers",
+                                headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
+                                json={"provider": "custom", "hosts": CLOUDNS}, timeout=15)
+                    if r.status_code in (200, 204):
+                        ns_ok += 1
+                    else:
+                        log_lines.append(f"NS failed for {dn}: {r.text[:100]}")
+                else:
+                    r = req.post(f"https://api.porkbun.com/api/json/v3/domain/updateNs/{dn}",
+                                 json={"apikey": pk, "secretapikey": ps, "ns": CLOUDNS}, timeout=15)
+                    if r.json().get("status") == "SUCCESS":
+                        ns_ok += 1
+                    else:
+                        log_lines.append(f"NS failed for {dn}: {r.json().get('message', '')}")
+            except Exception as e:
+                log_lines.append(f"NS error for {dn}: {str(e)}")
+            _time.sleep(0.5)
+
+        # Disable auto-renew on purchased domains
+        for dn in purchased:
+            try:
+                if registrar == "spaceship":
+                    req.put(f"https://spaceship.dev/api/v1/domains/{dn}/autorenew",
+                            headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
+                            json={"isEnabled": False}, timeout=10)
+                else:
+                    req.post(f"https://api.porkbun.com/api/json/v3/domain/updateAutoRenew/{dn}",
+                             json={"apikey": pk, "secretapikey": ps, "status": "off"}, timeout=10)
+            except Exception:
+                pass
+
+        log_lines.append(f"Nameservers set on {ns_ok}/{len(purchased)} domains")
+        log_lines.append(f"Auto-renew disabled on all purchased domains")
+
+        return _cors(jsonify({"ok": True, "purchased": purchased, "failed": failed,
+                              "ns_set": ns_ok, "log": log_lines}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
 
 @app.route("/api/available-domains")
 def available_domains():

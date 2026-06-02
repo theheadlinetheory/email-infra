@@ -435,7 +435,6 @@ def fetch_acq_campaign_stats(progress_cb=None):
             "id": cid, "name": camp["name"], "status": camp.get("status", ""),
             "accounts": acct_count,
             "total_leads": total_leads, "completed": completed, "remaining": remaining,
-            "today_sent": 0, "yesterday_sent": 0,
             "total_sent": total_sent, "total_opened": total_opened,
             "total_replied": total_replied, "total_bounced": total_bounced,
         })
