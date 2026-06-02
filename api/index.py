@@ -1380,7 +1380,7 @@ def create_generic_group():
             return _cors(jsonify({"error": "Select 1-20 domains"})), 400
 
         ZAPMAIL_API = "https://api.zapmail.ai/api"
-        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
         SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
         PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
         NS_STR = "pns61.cloudns.net,pns62.cloudns.com,pns63.cloudns.net,pns64.cloudns.uk"
@@ -1526,7 +1526,7 @@ def finalize_generic_group():
             return _cors(jsonify({"error": f"No pending group {letter} — run Phase 1 first"})), 400
 
         ZAPMAIL_API = "https://api.zapmail.ai/api"
-        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
         SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
         SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
         SMARTLEAD_INTERNAL = "https://server.smartlead.ai/api"

@@ -980,11 +980,13 @@ function _wizRenderPicking() {
         html += '<select id="wizard-letter" onchange="_wizardState.letter=this.value" style="' + _wizSt + '">';
         var fl = s.free_letters || [];
         for (var i = 0; i < fl.length; i++) {
-            html += '<option value="' + fl[i] + '"' + (fl[i] === s.letter ? ' selected' : '') + '>' + fl[i] + '</option>';
+            var rec = i === 0 ? ' (next)' : '';
+            html += '<option value="' + fl[i] + '"' + (fl[i] === s.letter ? ' selected' : '') + '>' + fl[i] + rec + '</option>';
         }
         html += '</select>';
-        html += '<span style="font-size:12px;color:#64748b;">Selected: <b style="color:' + (selCount === 14 ? '#22c55e' : '#f59e0b') + '">' + selCount + '/14</b></span>';
-        html += '<button onclick="_wizardSelectAll()" style="padding:4px 12px;font-size:11px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Select first 14</button>';
+        html += '<span style="font-size:12px;color:#64748b;">Selected: <b style="color:' + (selCount === s.targetCount ? '#22c55e' : '#f59e0b') + '">' + selCount + '/' + s.targetCount + '</b></span>';
+        var allSelected = selCount === d.length;
+        html += '<button onclick="_wizardSelectAll()" style="padding:4px 12px;font-size:11px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">' + (allSelected ? 'Deselect All' : 'Select All') + '</button>';
         if (selCount > 0 && s.letter) {
             html += '<button onclick="_wizardCreateGroup()" style="padding:6px 16px;font-size:12px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Group ' + esc(s.letter) + ' (' + selCount + ' domains)</button>';
         }
@@ -1119,6 +1121,14 @@ function _wizardLoadDomains() {
             if (!_wizardState.letter && d.free_letters && d.free_letters.length) {
                 _wizardState.letter = d.free_letters[0];
             }
+            var justPurchased = _wizardState.purchasedDomains || [];
+            if (justPurchased.length) {
+                var domSet = {};
+                for (var i = 0; i < (d.domains || []).length; i++) domSet[d.domains[i].domain] = true;
+                for (var j = 0; j < justPurchased.length; j++) {
+                    if (domSet[justPurchased[j]]) _wizardState.selected[justPurchased[j]] = true;
+                }
+            }
             renderCreateGroupWizard();
         });
 }
@@ -1127,13 +1137,13 @@ function _wizardToggle(domain) {
     else _wizardState.selected[domain] = true;
 }
 function _wizardSelectAll() {
-    _wizardState.selected = {};
     var d = _wizardState.domains || [];
-    var info = d.filter(function(x) { return x.domain.endsWith('.info'); });
-    var rest = d.filter(function(x) { return !x.domain.endsWith('.info'); });
-    var ordered = info.concat(rest);
-    for (var i = 0; i < Math.min(14, ordered.length); i++) {
-        _wizardState.selected[ordered[i].domain] = true;
+    var allSelected = Object.keys(_wizardState.selected).length === d.length;
+    _wizardState.selected = {};
+    if (!allSelected) {
+        for (var i = 0; i < d.length; i++) {
+            _wizardState.selected[d[i].domain] = true;
+        }
     }
     renderCreateGroupWizard();
 }
