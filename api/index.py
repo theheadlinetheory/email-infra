@@ -987,8 +987,10 @@ def find_available_domains():
         pk = os.environ.get("PORKBUN_API_KEY", "").strip()
         ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
 
+        exclude = set(body.get("exclude", []))
+
         found = []
-        tried = set()
+        tried = set(exclude)
         max_checks = target * 8
 
         while len(found) < target and len(tried) < max_checks:
