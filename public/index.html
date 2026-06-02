@@ -862,7 +862,7 @@ function renderCreateGroupWizard() {
             html += '<option value="' + tlds[ti] + '"' + (s.tld === tlds[ti] ? ' selected' : '') + '>' + tlds[ti] + '</option>';
         }
         html += '</select>';
-        html += '<input id="wiz-count" type="number" min="1" max="30" value="' + s.targetCount + '" onchange="_wizardState.targetCount=Math.max(1,Math.min(30,parseInt(this.value)||14))" style="width:52px;text-align:center;' + _wizSt + '" title="Number of domains">';
+        html += '<input id="wiz-count" type="number" min="1" max="30" value="' + s.targetCount + '" onchange="_wizardState.targetCount=Math.max(1,Math.min(30,parseInt(this.value)||14));renderCreateGroupWizard();" style="width:52px;text-align:center;' + _wizSt + '" title="Number of domains">';
         html += '<span style="color:#64748b;font-size:12px;">domains</span>';
         html += '</div>';
         html += '<div style="display:flex;gap:10px;">';
