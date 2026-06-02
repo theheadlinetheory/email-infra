@@ -809,15 +809,13 @@ function renderCreateGroupWizard() {
             html += '</div>';
             html += '<div style="margin-top:12px;max-height:300px;overflow-y:auto;">';
             html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-            html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:4px 8px;text-align:left;width:30px;"></th><th style="padding:4px 8px;text-align:left;">Domain</th><th style="padding:4px 8px;">TLD</th><th style="padding:4px 8px;">Status</th></tr></thead><tbody>';
+            html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:4px 8px;text-align:left;width:30px;"></th><th style="padding:4px 8px;text-align:left;">Domain</th><th style="padding:4px 8px;">Purchased</th></tr></thead><tbody>';
             for (var i = 0; i < d.length; i++) {
                 var checked = _wizardState.selected[d[i].domain] ? ' checked' : '';
-                var tld = d[i].domain.split('.').pop();
                 html += '<tr style="border-bottom:1px solid #0f1219;">' +
                     '<td style="padding:4px 8px;"><input type="checkbox" onchange="_wizardToggle(\'' + esc(d[i].domain) + '\')"' + checked + '></td>' +
                     '<td style="padding:4px 8px;color:#e2e8f0;">' + esc(d[i].domain) + '</td>' +
-                    '<td style="padding:4px 8px;color:#64748b;">' + tld + '</td>' +
-                    '<td style="padding:4px 8px;color:#22c55e;">Ready</td></tr>';
+                    '<td style="padding:4px 8px;color:#64748b;">' + (d[i].registered || '') + '</td></tr>';
             }
             html += '</tbody></table></div>';
         } else if (_wizardState.domains) {

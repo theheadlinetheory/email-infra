@@ -933,13 +933,14 @@ def delete_replacement():
 
 @app.route("/api/available-domains")
 def available_domains():
-    """Return .info domains from the ready pool that have zapmail_id but no SmartLead accounts."""
+    """Return fresh Spaceship domains (CloudNS set, not in Zapmail or SmartLead)."""
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
+        import requests as req
         import db as store
-        pool_raw = store.get_state("domain_ready_pool") or {}
-        pool_domains = pool_raw.get("domains", [])
+
+        # Get domains already in SmartLead
         overview, _ = store.cache_get("overview_v2")
         sl_domains = set()
         if overview:
@@ -949,8 +950,55 @@ def available_domains():
                         email = a.get("email", "") or ""
                         if "@" in email:
                             sl_domains.add(email.split("@")[1])
-        available = [d for d in pool_domains
-                     if d.get("zapmail_id") and d["domain"] not in sl_domains]
+
+        # Get domains already in Zapmail
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
+        zap_domains = set()
+        page = 1
+        while True:
+            zr = req.get(f"https://api.zapmail.ai/api/v2/domains?page={page}",
+                         headers={"x-auth-zapmail": ZAPMAIL_KEY}, timeout=30)
+            zd = zr.json().get("data", {})
+            for d in zd.get("domains", []):
+                zap_domains.add(d.get("name", ""))
+            if page >= zd.get("totalPages", 1):
+                break
+            page += 1
+
+        # Fetch from Spaceship — only recent .info with CloudNS
+        ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
+        sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
+        headers = {"X-API-Key": ak, "X-API-Secret": sk}
+        all_sp = []
+        skip = 0
+        while True:
+            r = req.get("https://spaceship.dev/api/v1/domains",
+                         headers=headers, timeout=30, params={"take": 100, "skip": skip})
+            items = r.json().get("items", []) if r.status_code == 200 else []
+            if not items:
+                break
+            all_sp.extend(items)
+            total = r.json().get("total", 0)
+            skip += 100
+            if skip >= total:
+                break
+
+        available = []
+        for d in all_sp:
+            name = d.get("name", "")
+            if name in sl_domains or name in zap_domains:
+                continue
+            ns_hosts = d.get("nameservers", {}).get("hosts", [])
+            if not any("cloudns" in h.lower() for h in ns_hosts):
+                continue
+            if not name.endswith(".info"):
+                continue
+            reg = d.get("registrationDate", "")[:10]
+            exp = d.get("expirationDate", "")[:10]
+            available.append({"domain": name, "registered": reg, "expires": exp})
+
+        available.sort(key=lambda x: x["domain"])
+
         existing_letters = set()
         if overview:
             for g in overview.get("generic_groups", []):
@@ -968,7 +1016,7 @@ def available_domains():
 
 @app.route("/api/create-generic-group", methods=["POST", "OPTIONS"])
 def create_generic_group():
-    """Phase 1: Buy mailbox slots, create inboxes, set profile photos."""
+    """Phase 1: Connect domains to Zapmail, buy slots, create inboxes, set photos."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
@@ -988,26 +1036,54 @@ def create_generic_group():
         ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "")
         SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
         PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
+        NS_STR = "pns61.cloudns.net,pns62.cloudns.com,pns63.cloudns.net,pns64.cloudns.uk"
 
         def zm_h():
             return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
 
-        # Resolve zapmail_id for each domain from the ready pool
         import db as store
-        pool_raw = store.get_state("domain_ready_pool") or {}
-        pool_map = {d["domain"]: d for d in pool_raw.get("domains", [])}
-        domain_info = []
-        for dn in domains:
-            pd = pool_map.get(dn)
-            if not pd or not pd.get("zapmail_id"):
-                return _cors(jsonify({"error": f"Domain {dn} not in ready pool or missing zapmail_id"})), 400
-            domain_info.append({"domain": dn, "zapmail_id": pd["zapmail_id"]})
-
         log_lines = []
         def _log(msg):
             log_lines.append(msg)
 
-        # Buy mailbox slots if needed
+        # Step 1: Connect each domain to Zapmail
+        _log(f"Connecting {len(domains)} domains to Zapmail...")
+        for dn in domains:
+            r = req.post(f"{ZAPMAIL_API}/v2/domains/connect", headers=zm_h(),
+                         json={"domainName": dn, "nameServers": NS_STR}, timeout=30)
+            _log(f"  {dn}: {r.json().get('message', r.text[:100])}")
+            _time.sleep(0.5)
+
+        # Step 2: Wait for domains to appear and get their IDs
+        _log("Waiting 30s for Zapmail to process...")
+        _time.sleep(30)
+
+        domain_info = []
+        page = 1
+        zm_map = {}
+        while True:
+            zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
+            zd = zr.json().get("data", {})
+            for d in zd.get("domains", []):
+                zm_map[d.get("name", "")] = d.get("id", "")
+            if page >= zd.get("totalPages", 1):
+                break
+            page += 1
+
+        missing = []
+        for dn in domains:
+            zid = zm_map.get(dn)
+            if zid:
+                domain_info.append({"domain": dn, "zapmail_id": zid})
+            else:
+                missing.append(dn)
+
+        if missing:
+            _log(f"WARNING: {len(missing)} domains not found in Zapmail yet: {', '.join(missing[:5])}")
+
+        _log(f"{len(domain_info)} domains connected")
+
+        # Step 3: Buy mailbox slots if needed
         inboxes_needed = len(domain_info) * 3
         ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
         ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
@@ -1022,12 +1098,14 @@ def create_generic_group():
                              headers=zm_h(), json={}, timeout=30)
             buy_data = buy_r.json()
             if buy_r.status_code != 200 or "Insufficient" in str(buy_data.get("message", "")):
-                return _cors(jsonify({"error": f"Failed to buy slots: {buy_data.get('message', buy_r.text[:200])}"})), 400
+                return _cors(jsonify({"error": f"Failed to buy slots: {buy_data.get('message', buy_r.text[:200])}",
+                                      "log": log_lines})), 400
             _log(f"Bought {to_buy} slots")
             _time.sleep(3)
         else:
             _log(f"Have {free_slots} free slots (need {inboxes_needed})")
 
+        # Step 4: Create mailboxes
         SPECS = [
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
@@ -1049,7 +1127,7 @@ def create_generic_group():
             _log(f"Created: {', '.join(emails)}")
             _time.sleep(1)
 
-        # Set profile photos
+        # Step 5: Set profile photos
         if all_mb_ids:
             _log(f"Setting profile photos on {len(all_mb_ids)} mailboxes...")
             for i in range(0, len(all_mb_ids), 20):
