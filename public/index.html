@@ -769,9 +769,11 @@ function toggleSwapCheck(jobId, key, val) {
         } else alert(d.error || 'Error');
     });
 }
+var _wizRestored = false;
 function renderMaintenance() {
     renderMaintFilters();
     renderReplacementTracker();
+    if (!_wizRestored) { _wizRestore(); _wizRestored = true; }
     renderCreateGroupWizard();
     renderAvailablePool();
     renderDomainHealth();
@@ -792,15 +794,40 @@ var _wizSt = 'padding:4px 8px;font-size:13px;background:#0f1219;color:#e2e8f0;bo
 var _wizBtn = 'padding:8px 20px;font-size:13px;border:none;border-radius:6px;cursor:pointer;font-weight:600;';
 var _wizSpinner = '<span style="display:inline-block;width:14px;height:14px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:8px;"></span>';
 
+function _wizSave() {
+    try { localStorage.setItem('_wizState', JSON.stringify(_wizardState)); } catch(e) {}
+}
+function _wizRestore() {
+    try {
+        var saved = localStorage.getItem('_wizState');
+        if (saved) {
+            var s = JSON.parse(saved);
+            if (s && s.phase && s.phase !== 'idle') {
+                if (s.phase === 'searching' || s.phase === 'replacing' || s.phase === 'purchasing') {
+                    if (s.phase === 'purchasing' && s.purchaseProgress) {
+                        s.phase = 'purchased';
+                        s.purchasedDomains = (s.purchaseProgress || []).filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
+                    } else if (s.checkResults && s.checkResults.length) {
+                        s.phase = 'found';
+                    } else {
+                        s.phase = 'idle';
+                    }
+                }
+                _wizardState = s;
+            }
+        }
+    } catch(e) {}
+}
 function _wizReset() {
     _wizardState = {
         phase: 'idle', log: [], niche: 'generic',
         registrar: 'spaceship', tld: '.info', baseNames: '',
         targetCount: 14,
-        checkResults: null, purchasedDomains: [],
+        checkResults: null, purchasedDomains: [], purchaseProgress: null,
         domains: null, selected: {}, letter: '', free_letters: [],
         error: ''
     };
+    _wizSave();
     renderCreateGroupWizard();
 }
 function _wizLog(msg) { _wizardState.log.push(msg); }
@@ -965,6 +992,7 @@ function renderCreateGroupWizard() {
     }
     html += '</div>';
     el.innerHTML = html;
+    _wizSave();
 }
 
 function _wizRenderPicking() {
