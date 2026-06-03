@@ -821,8 +821,8 @@ function _pipeUpsert(letter, phase, extra) {
     }
     if (!run.stepDetails) run.stepDetails = {};
     if (!run.activityLog) run.activityLog = [];
-    var si = _PHASE_TO_STEP[phase] || 0;
-    run.stepIdx = si;
+    var si = _PHASE_TO_STEP[phase];
+    if (si == null || si < 0) si = run.stepIdx || 0;
     run.updated = new Date().toISOString();
     if (extra) {
         if (extra.domains) run.domains = extra.domains;
@@ -838,11 +838,13 @@ function _pipeUpsert(letter, phase, extra) {
     if (phase === 'error') {
         run.status = 'error';
         run.error = extra && extra.error ? extra.error : _wizardState.error || 'Unknown';
-        run.stepStatuses[run.stepIdx] = 'error';
+        run.stepStatuses[si] = 'error';
     } else if (phase === 'complete') {
         run.status = 'completed';
+        run.stepIdx = 3;
         for (var j = 0; j < 4; j++) run.stepStatuses[j] = 'done';
-    } else {
+    } else if (phase !== 'error') {
+        run.stepIdx = si;
         for (var k = 0; k < si; k++) { if (run.stepStatuses[k] !== 'error') run.stepStatuses[k] = 'done'; }
         run.stepStatuses[si] = 'active';
     }
@@ -1213,6 +1215,28 @@ function renderCreateGroupWizard() {
     if (!el) return;
     var s = _wizardState;
     var box = 'margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:20px 24px;';
+
+    // If there's an active/errored pipeline run, defer to pipeline tracker
+    if (s.phase !== 'idle' && s.letter) {
+        var runs = _pipeGet();
+        var hasRun = false;
+        for (var ri = 0; ri < runs.length; ri++) {
+            if (runs[ri].letter === s.letter && (runs[ri].status === 'active' || runs[ri].status === 'error')) { hasRun = true; break; }
+        }
+        if (hasRun && (s.phase === 'error' || s.phase === 'creating' || s.phase === 'finalizing' || s.phase === 'purchasing')) {
+            var html = '<div style="' + box + '">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+            html += '<div style="font-size:15px;font-weight:600;color:#f1f5f9;">Create Generic Group</div>';
+            html += '<button onclick="_wizReset()" style="padding:4px 12px;font-size:11px;background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;cursor:pointer;">Start New Group</button>';
+            html += '</div>';
+            html += '<div style="color:#94a3b8;font-size:12px;margin-top:8px;">Generic ' + esc(s.letter) + ' setup is tracked in the pipeline above.</div>';
+            html += '</div>';
+            el.innerHTML = html;
+            _wizSave();
+            return;
+        }
+    }
+
     var html = '<div style="' + box + '">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">';
     html += '<div style="font-size:15px;font-weight:600;color:#f1f5f9;">Create Generic Group</div>';
