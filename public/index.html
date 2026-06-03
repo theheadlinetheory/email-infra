@@ -3617,7 +3617,9 @@ function renderModal() {
         html += '<div class="group-toggle">' +
             '<button class="group-btn' + (modalState.group === 'a' ? ' active' : '') + '" onclick="modalToggle(\'a\')">Group A · ' + info.aCount + '</button>' +
             '<button class="group-btn' + (modalState.group === 'b' ? ' active' : '') + '" onclick="modalToggle(\'b\')">Group B · ' + info.bCount + '</button>' +
+            '<button id="swap-group-btn" onclick="_swapClientGroup(\'' + esc(info.name).replace(/'/g, "\\'") + '\')" style="margin-left:auto;padding:5px 12px;font-size:11px;border-radius:5px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;font-weight:600;">Swap A↔B</button>' +
         '</div>';
+        html += '<div id="swap-group-status" style="font-size:12px;padding:0 4px;margin-bottom:8px;min-height:18px;"></div>';
     }
 
     if (modalState.type === 'generic') {
@@ -3667,6 +3669,30 @@ function _loadClientDropdown() {
 function modalToggle(group) {
     modalState.group = group;
     renderModal();
+}
+
+function _swapClientGroup(clientName) {
+    if (!confirm('Swap ' + clientName + ' from Group ' + (modalState.group === 'a' ? 'A → B' : 'B → A') + ' in all campaigns?\n\nThis removes current group accounts and adds the other group.')) return;
+    var btn = document.getElementById('swap-group-btn');
+    var status = document.getElementById('swap-group-status');
+    btn.disabled = true; btn.textContent = 'Swapping...';
+    status.innerHTML = '<span style="color:#3b82f6;">Swapping groups in campaigns — this may take a minute...</span>';
+    fetch('/api/swap-group' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ client_name: clientName })
+    }).then(function(r) { return r.json(); }).then(function(res) {
+        btn.disabled = false; btn.textContent = 'Swap A↔B';
+        if (res.error) {
+            status.innerHTML = '<span style="color:#ef4444;">' + esc(res.error) + '</span>';
+            return;
+        }
+        status.innerHTML = '<span style="color:#22c55e;">Swapped to Group ' + esc(res.new_group) + ' in ' + res.campaigns_updated + ' campaign' + (res.campaigns_updated !== 1 ? 's' : '') + '</span>';
+        setTimeout(function() { _reloadDashboardData(); }, 2000);
+    }).catch(function(e) {
+        btn.disabled = false; btn.textContent = 'Swap A↔B';
+        status.innerHTML = '<span style="color:#ef4444;">Network error: ' + e.message + '</span>';
+    });
 }
 
 function _assignGenericToClient() {

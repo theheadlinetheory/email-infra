@@ -444,6 +444,24 @@ def _resolve_group_account_ids(group_name, campaign_id=None):
     return account_ids, None
 
 
+@app.route("/api/swap-group", methods=["POST", "OPTIONS"])
+def swap_group():
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    client_name = body.get("client_name", "").strip()
+    if not client_name:
+        return _cors(jsonify({"error": "client_name required"})), 400
+    try:
+        import dashboard
+        result = dashboard.swap_client_group(client_name)
+        return _cors(jsonify(result)), 200 if result.get("ok") else 400
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/assign-group", methods=["POST", "OPTIONS"])
 def assign_group():
     if request.method == "OPTIONS":
