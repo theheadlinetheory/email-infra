@@ -360,19 +360,71 @@ def unassign_group():
     sl_key = os.environ.get("SMARTLEAD_API_KEY", "")
     if not sl_key:
         return _cors(jsonify({"error": "SMARTLEAD_API_KEY not configured"})), 500
-    account_ids, err = _resolve_group_account_ids(group_name)
-    if err:
-        return _cors(jsonify({"error": err})), 404 if "No account" in err else 500
+
+    import requests as req
+    import time as _time
     sl = "https://server.smartlead.ai/api/v1"
+
+    cache_ids, _ = _resolve_group_account_ids(group_name)
+    cache_ids = set(cache_ids or [])
+
+    live_ids = set()
+    jwt = os.environ.get("SMARTLEAD_JWT", "").strip()
+    gql_url = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql").strip()
+    if jwt:
+        try:
+            sl_h = {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
+            tags_r = req.post(gql_url, headers=sl_h,
+                              json={"query": "{ tags { id name } }"}, timeout=15)
+            tag_id = None
+            for t in tags_r.json().get("data", {}).get("tags", []):
+                if t.get("name", "").lower() == group_name.lower():
+                    tag_id = t["id"]
+                    break
+            if tag_id:
+                mappings_r = req.post(gql_url, headers=sl_h,
+                    json={"query": "query($tid: Int!) { email_account_tag_mappings(where: {tag_id: {_eq: $tid}}) { email_account_id } }",
+                          "variables": {"tid": tag_id}}, timeout=15)
+                for m in mappings_r.json().get("data", {}).get("email_account_tag_mappings", []):
+                    live_ids.add(m["email_account_id"])
+        except Exception:
+            pass
+
+    account_ids = list(cache_ids | live_ids)
+    if not account_ids:
+        return _cors(jsonify({"error": f"No account IDs found for '{group_name}'"})), 404
+
     r = _sl_request("delete", f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
                     headers={"Content-Type": "application/json"},
                     data=json.dumps({"email_account_ids": account_ids}), timeout=30)
-    if r.status_code == 200:
-        camp_name = _get_campaign_name(campaign_id)
-        _update_cache_campaigns(group_name, campaign_id, camp_name, "remove")
-        return _cors(jsonify({"ok": True, "removed": len(account_ids),
-                              "message": f"Removed {len(account_ids)} accounts. REMINDER: Reallocate inboxes in SmartLead."}))
-    return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
+    if r.status_code != 200:
+        return _cors(jsonify({"error": f"SmartLead returned {r.status_code}"})), 502
+
+    stragglers = []
+    try:
+        _time.sleep(2)
+        camp_r = _sl_request("get", f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}", timeout=15)
+        if camp_r.status_code == 200:
+            camp_accts = camp_r.json()
+            if isinstance(camp_accts, list):
+                id_set = set(account_ids)
+                stragglers = [a.get("id") for a in camp_accts if a.get("id") in id_set]
+                if stragglers:
+                    _sl_request("delete", f"{sl}/campaigns/{campaign_id}/email-accounts?api_key={sl_key}",
+                                headers={"Content-Type": "application/json"},
+                                data=json.dumps({"email_account_ids": stragglers}), timeout=30)
+    except Exception:
+        pass
+
+    camp_name = _get_campaign_name(campaign_id)
+    _update_cache_campaigns(group_name, campaign_id, camp_name, "remove")
+    msg = f"Removed {len(account_ids)} accounts"
+    if stragglers:
+        msg += f" ({len(stragglers)} required retry)"
+    msg += ". REMINDER: Reallocate inboxes in SmartLead."
+    return _cors(jsonify({"ok": True, "removed": len(account_ids),
+                          "source": f"cache={len(cache_ids)}, live_tag={len(live_ids)}",
+                          "stragglers_retried": len(stragglers), "message": msg}))
 
 
 @app.route("/api/assign-generic-to-client", methods=["POST", "OPTIONS"])
