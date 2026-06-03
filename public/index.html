@@ -922,93 +922,155 @@ function renderPipelineRuns() {
     el.innerHTML = html;
 }
 
+function _pipeLiveStatus(run) {
+    var ws = _wizardState;
+    var isLive = run.status === 'active' && ws.letter === run.letter;
+    if (!isLive) return null;
+
+    var phase = ws.phase;
+    var cp = ws.createProgress;
+    var pp = ws.purchaseProgress;
+    var fp = ws.finalizeProgress;
+
+    if (phase === 'searching') {
+        var found = (ws.checkResults || []).length;
+        return { text: 'Finding available domains...', sub: found + '/' + ws.targetCount + ' found so far' };
+    }
+    if (phase === 'found') {
+        return { text: (ws.checkResults || []).length + ' domains found', sub: 'Ready to purchase' };
+    }
+    if (phase === 'purchasing' && pp) {
+        var bought = pp.filter(function(p) { return p.purchased; }).length;
+        var current = pp.filter(function(p) { return p.status === 'buying'; })[0];
+        return { text: 'Purchasing domains (' + bought + '/' + pp.length + ')', sub: current ? 'Buying ' + current.domain + '...' : null };
+    }
+    if (phase === 'purchased') {
+        return { text: (ws.purchasedDomains || []).length + ' domains purchased', sub: 'Nameservers set — select domains for mailboxes' };
+    }
+    if (phase === 'picking') {
+        return { text: 'Selecting domains for group', sub: null };
+    }
+    if (phase === 'creating' && cp) {
+        var done = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
+        var active = cp.filter(function(p) { return p.status === 'active'; })[0];
+        var totalMb = 0;
+        for (var i = 0; i < cp.length; i++) totalMb += (cp[i].mailboxes || 0);
+        var sub = active ? active.domain + ' — creating mailboxes + setting photos' : null;
+        return { text: 'Creating mailboxes (' + done + '/' + cp.length + ' domains, ' + totalMb + ' mailboxes)', sub: sub, progress: cp };
+    }
+    if (phase === 'mailboxes_done') {
+        return { text: 'Mailboxes created', sub: 'Ready to export to SmartLead' };
+    }
+    if (phase === 'finalizing' && fp) {
+        if (fp.accounts === 'active') return { text: 'Tagging + warmup (' + (fp.accountsDone || 0) + '/' + (fp.accountsTotal || '?') + ' accounts)', sub: null };
+        if (fp.tags === 'active') return { text: 'Setting up SmartLead tags', sub: null };
+        if (fp.find === 'active') return { text: 'Searching for accounts in SmartLead', sub: fp.foundCount != null ? fp.foundCount + ' found' : null };
+        if (fp.wait === 'active') return { text: 'Waiting for SmartLead to process', sub: fp.waitSec != null ? fp.waitSec + 's remaining' : null };
+        if (fp.export === 'active') return { text: 'Exporting mailboxes to SmartLead', sub: null };
+        return { text: 'Finalizing...', sub: null };
+    }
+    if (phase === 'complete') {
+        return { text: 'Complete', sub: null };
+    }
+    return null;
+}
+
 function _pipeRenderRow(run) {
     var borderCol = run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#3b82f6';
     var detail = run.stepDetails || {};
     var domCount = (run.domains && run.domains.length) || 0;
-    var activeDetail = detail[run.stepIdx];
-    var spinner = run.status === 'active' ? '<span style="display:inline-block;width:10px;height:10px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:6px;"></span>' : '';
+    var live = _pipeLiveStatus(run);
+    var spin = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px;"></span>';
 
-    var html = '<details' + (run.status === 'active' ? ' open' : '') + ' style="background:#0f1219;border-radius:8px;margin-bottom:8px;border-left:3px solid ' + borderCol + ';">';
-    html += '<summary style="padding:12px 16px;cursor:pointer;list-style:none;">';
+    var html = '<div style="background:#0f1219;border-radius:8px;margin-bottom:8px;border-left:3px solid ' + borderCol + ';padding:12px 16px;">';
 
-    // Header row
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
-    html += '<div style="display:flex;gap:10px;align-items:center;">';
+    // Header: name + status badge + timestamp
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    html += '<div style="display:flex;gap:8px;align-items:center;">';
     html += '<span style="font-size:14px;font-weight:600;color:#f1f5f9;">Generic ' + esc(run.letter) + '</span>';
-    if (domCount > 0) {
-        html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' domains · ' + esc(run.tld || '.info') + '</span>';
-    } else {
-        html += '<span style="font-size:11px;color:#64748b;">' + esc(run.tld || '.info') + '</span>';
-    }
-    if (activeDetail && run.status === 'active') {
-        html += spinner + ' <span style="font-size:11px;color:#3b82f6;font-weight:500;">' + esc(activeDetail) + '</span>';
-    }
+    var badge = run.status === 'completed' ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#22c55e20;color:#22c55e;">Complete</span>' :
+                run.status === 'error' ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ef444420;color:#ef4444;">Error</span>' :
+                '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#3b82f620;color:#3b82f6;">Running</span>';
+    html += badge;
+    if (domCount > 0) html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' ' + esc(run.tld || '') + ' domains</span>';
     html += '</div>';
     html += '<div style="display:flex;gap:6px;align-items:center;">';
     if (run.status === 'error') {
-        html += '<button onclick="event.stopPropagation();_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
+        html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
     }
-    var ts = run.updated ? new Date(run.updated) : null;
-    if (ts) html += '<span style="font-size:10px;color:#475569;">' + ts.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '</span>';
+    html += '<button onclick="if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 8px;font-size:10px;background:transparent;color:#475569;border:1px solid #334155;border-radius:4px;cursor:pointer;">&times;</button>';
     html += '</div></div>';
 
     // Step progress bar
-    html += '<div style="display:flex;gap:4px;align-items:center;margin-top:8px;">';
+    html += '<div style="display:flex;gap:4px;align-items:center;margin-bottom:10px;">';
     for (var i = 0; i < 4; i++) {
         var st = run.stepStatuses[i];
         var col = st === 'done' ? '#22c55e' : st === 'active' ? '#3b82f6' : st === 'error' ? '#ef4444' : '#475569';
         var icon = st === 'done' ? '✓' : st === 'active' ? '▸' : st === 'error' ? '✕' : '·';
         html += '<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:' + col + ';' + (st === 'active' ? 'font-weight:600;' : '') + '">';
         html += '<span style="font-size:9px;">' + icon + '</span>' + _PIPE_STEPS[i];
-        var sd = detail[i];
-        if (sd) html += ' <span style="color:#64748b;font-size:10px;">(' + esc(sd) + ')</span>';
         html += '</div>';
         if (i < 3) html += '<span style="color:#334155;font-size:10px;margin:0 2px;">→</span>';
     }
     html += '</div>';
 
-    if (run.error) {
-        html += '<div style="margin-top:6px;font-size:11px;color:#ef4444;background:#ef444415;padding:4px 8px;border-radius:4px;">' + esc(run.error) + '</div>';
+    // Live status: the main "what's happening now" section
+    if (live) {
+        html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+        html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">';
+        if (run.status === 'active') html += spin;
+        html += esc(live.text) + '</div>';
+        if (live.sub) html += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;padding-left:22px;">' + esc(live.sub) + '</div>';
+
+        // Per-domain progress table for creating phase
+        if (live.progress) {
+            html += '<div style="margin-top:8px;max-height:120px;overflow-y:auto;">';
+            for (var pi = 0; pi < live.progress.length; pi++) {
+                var p = live.progress[pi];
+                var pIcon = p.status === 'done' ? '<span style="color:#22c55e;">✓</span>' :
+                            p.status === 'active' ? spin :
+                            p.status === 'error' ? '<span style="color:#ef4444;">✕</span>' :
+                            '<span style="color:#475569;">·</span>';
+                var pCol = p.status === 'done' ? '#94a3b8' : p.status === 'active' ? '#e2e8f0' : p.status === 'error' ? '#ef4444' : '#475569';
+                var pDetail = '';
+                if (p.status === 'done' && p.mailboxes > 0) pDetail = p.mailboxes + ' mailboxes' + (p.photos ? ' + photos' : '');
+                else if (p.status === 'active') pDetail = p.zapmail ? 'creating mailboxes...' : 'connecting to Zapmail...';
+                else if (p.error) pDetail = p.error;
+                html += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:10px;color:' + pCol + ';">';
+                html += pIcon + ' <span style="font-family:monospace;">' + esc(p.domain) + '</span>';
+                if (pDetail) html += ' <span style="color:#64748b;">— ' + esc(pDetail) + '</span>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+    } else if (run.status === 'active') {
+        // Fallback: show stored detail
+        var activeDetail = detail[run.stepIdx];
+        if (activeDetail) {
+            html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+            html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;">' + spin + esc(activeDetail) + '</div>';
+            html += '</div>';
+        }
     }
-    html += '</summary>';
 
-    // Expanded detail section
-    html += '<div style="padding:0 16px 12px 16px;border-top:1px solid #1e293b;margin-top:4px;">';
+    // Error detail
+    if (run.error) {
+        html += '<div style="font-size:11px;color:#ef4444;background:#ef444415;padding:6px 10px;border-radius:4px;margin-bottom:8px;">' + esc(run.error) + '</div>';
+    }
 
-    // Activity log
+    // Activity log (collapsible)
     var log = run.activityLog || [];
     if (log.length > 0) {
-        html += '<div style="margin-top:10px;margin-bottom:8px;">';
-        html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Activity Log</div>';
-        html += '<div id="pipelog-' + run.id + '" style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:120px;overflow-y:auto;background:#0a0d14;border-radius:4px;padding:6px 8px;">';
+        html += '<details style="margin-bottom:4px;"><summary style="font-size:10px;color:#475569;cursor:pointer;list-style:none;">Activity log (' + log.length + ' entries)</summary>';
+        html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:100px;overflow-y:auto;background:#0a0d14;border-radius:4px;padding:6px 8px;margin-top:4px;">';
         for (var li = log.length - 1; li >= 0; li--) {
             html += '<div style="padding:1px 0;' + (li === log.length - 1 ? 'color:#e2e8f0;' : '') + '">' + esc(log[li]) + '</div>';
         }
-        html += '</div></div>';
-    } else if (run.status === 'active') {
-        html += '<div style="margin-top:10px;font-size:11px;color:#475569;">Starting...</div>';
+        html += '</div></details>';
     }
 
-    // Domains list (if known)
-    if (domCount > 0) {
-        html += '<div style="margin-top:8px;">';
-        html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Domains (' + domCount + ')</div>';
-        html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:80px;overflow-y:auto;">';
-        for (var di = 0; di < run.domains.length; di++) {
-            html += esc(run.domains[di]);
-            if (di < run.domains.length - 1) html += ', ';
-        }
-        html += '</div></div>';
-    }
-
-    // Footer: timestamps + remove
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid #1e293b;">';
-    html += '<span style="font-size:10px;color:#475569;">Started ' + (run.started ? new Date(run.started).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—') + '</span>';
-    html += '<button onclick="event.stopPropagation();if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:transparent;color:#ef4444;border:1px solid #ef444440;border-radius:4px;cursor:pointer;">Remove Run</button>';
     html += '</div>';
-
-    html += '</div></details>';
     return html;
 }
 
