@@ -799,7 +799,7 @@ var _wizRestored = false;
 function renderMaintenance() {
     renderMaintFilters();
     renderReplacementTracker();
-    if (!_wizRestored) { _wizRestore(); _wizRestored = true; }
+    if (!_wizRestored) { _wizRestore(); _wizRestored = true; _pipeAutoCheckActive(); }
     renderPipelineRuns();
     renderCreateGroupWizard();
     renderAvailablePool();
@@ -817,7 +817,27 @@ var _PHASE_TO_STEP = {
 };
 
 function _pipeGet() {
-    try { return JSON.parse(localStorage.getItem('_pipeRuns') || '[]'); } catch(e) { return []; }
+    try {
+        var runs = JSON.parse(localStorage.getItem('_pipeRuns') || '[]');
+        var seen = {}, clean = [];
+        for (var i = 0; i < runs.length; i++) {
+            var lt = runs[i].letter;
+            if (seen[lt]) {
+                var prev = seen[lt];
+                if (runs[i].status === 'active' && prev.entry.status !== 'active') {
+                    clean.splice(prev.idx, 1);
+                    for (var k in seen) { if (seen[k].idx > prev.idx) seen[k].idx--; }
+                    seen[lt] = { entry: runs[i], idx: clean.length };
+                    clean.push(runs[i]);
+                }
+            } else {
+                seen[lt] = { entry: runs[i], idx: clean.length };
+                clean.push(runs[i]);
+            }
+        }
+        if (clean.length !== runs.length) _pipeSave(clean);
+        return clean;
+    } catch(e) { return []; }
 }
 function _pipeSave(runs) {
     try { localStorage.setItem('_pipeRuns', JSON.stringify(runs)); } catch(e) {}
@@ -930,6 +950,31 @@ function _pipeRemove(id) {
     var runs = _pipeGet().filter(function(r) { return r.id !== id; });
     _pipeSave(runs);
     renderPipelineRuns();
+}
+function _pipeAutoCheckActive() {
+    var runs = _pipeGet();
+    for (var i = 0; i < runs.length; i++) {
+        if (runs[i].status === 'active' && runs[i].stepIdx >= 3 && _wizardState.letter !== runs[i].letter) {
+            _pipeCheckServer(runs[i].letter, runs[i].id);
+        }
+    }
+}
+function _pipeCheckServer(letter, runId) {
+    fetch('/api/group/wizard-state' + _authQs() + '&letter=' + letter, { headers: _authHeaders() })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.state) { _pipeUpsert(letter, 'finalizing', { logMsg: 'No server state found — may need to retry' }); return; }
+            var st = d.state;
+            if (st.phase === 'complete') {
+                _pipeUpsert(letter, 'complete', { detail: (st.accounts_found || 0) + ' accounts configured', logMsg: 'Complete: ' + (st.accounts_found || 0) + ' accounts' });
+            } else if (st.finalize_step) {
+                _pipeUpsert(letter, 'finalizing', { detail: st.finalize_detail || st.finalize_step, logMsg: 'Server: ' + (st.finalize_detail || st.finalize_step) });
+            } else {
+                _pipeUpsert(letter, 'finalizing', { logMsg: 'Server state: ' + (st.phase || 'unknown') });
+            }
+        }).catch(function() {
+            _pipeUpsert(letter, 'finalizing', { logMsg: 'Could not reach server — try again' });
+        });
 }
 function _pipeRefinalize(letter, runId) {
     var runs = _pipeGet();
@@ -1139,9 +1184,16 @@ function _pipeRenderRow(run) {
     if (domCount > 0) html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' ' + esc(run.tld || '') + ' domains</span>';
     html += '</div>';
     html += '<div style="display:flex;gap:6px;align-items:center;">';
-    var isStalled = run.status === 'active' && _wizardState.letter !== run.letter;
-    if (run.status === 'error' || isStalled) {
-        html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
+    if (run.status === 'error') {
+        var realStepForBtn = 0;
+        for (var rb = 0; rb < 4; rb++) { if (run.stepStatuses[rb] === 'error') { realStepForBtn = rb; break; } }
+        if (realStepForBtn >= 3) {
+            html += '<button onclick="_pipeRefinalize(\'' + run.letter + '\',' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#7c3aed;color:#fff;border:none;border-radius:4px;cursor:pointer;">Retry</button>';
+        } else {
+            html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
+        }
+    } else if (run.status === 'active' && run.stepIdx >= 3 && _wizardState.letter !== run.letter) {
+        html += '<button onclick="_pipeCheckServer(\'' + run.letter + '\',' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Check Status</button>';
     }
     html += '<button onclick="if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 8px;font-size:10px;background:transparent;color:#475569;border:1px solid #334155;border-radius:4px;cursor:pointer;">&times;</button>';
     html += '</div></div>';
@@ -1201,35 +1253,20 @@ function _pipeRenderRow(run) {
         }
         html += '</div>';
     } else if (run.status === 'active' || run.status === 'error') {
-        // Fallback: build real status from stored run data
         var activeDetail = detail[run.stepIdx];
-        var lastLog = (run.activityLog && run.activityLog.length) ? run.activityLog[run.activityLog.length - 1] : null;
-        var stepDescriptions = [
-            'Step 1: Finding available domains',
-            'Step 2: Purchasing domains + setting CloudNS nameservers',
-            'Step 3: Connecting to Zapmail + creating mailboxes + setting profile photos',
-            'Step 4: Exporting to SmartLead + tagging + enabling warmup'
-        ];
-        // Determine the real active step from stepStatuses
         var realStep = run.stepIdx;
         for (var rs = 0; rs < 4; rs++) {
             if (run.stepStatuses[rs] === 'active' || run.stepStatuses[rs] === 'error') { realStep = rs; break; }
         }
-        var fallbackText = activeDetail || stepDescriptions[realStep] || 'Processing...';
-
-        // If active but wizard is not running this letter, show stalled warning
-        var wizardRunning = _wizardState.letter === run.letter && _wizardState.phase !== 'idle' && _wizardState.phase !== 'error';
         html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
-        if (run.status === 'active' && !wizardRunning) {
-            html += '<div style="display:flex;align-items:center;font-size:12px;color:#f59e0b;font-weight:500;margin-bottom:6px;">';
-            html += '<span style="margin-right:6px;">⚠</span> Process stalled — wizard lost state on refresh. Resume to continue.</div>';
-        }
-        html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">';
-        if (run.status === 'active' && wizardRunning) html += spin;
-        html += esc(fallbackText) + '</div>';
-        if (lastLog) html += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;font-family:monospace;">Last: ' + esc(lastLog) + '</div>';
-        if (domCount > 0) {
-            html += '<div style="font-size:10px;color:#64748b;margin-top:6px;">Domains: ' + run.domains.map(function(d) { return esc(d); }).join(', ') + '</div>';
+        if (run.status === 'active' && realStep >= 3) {
+            html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">' + spin + 'Running on server</div>';
+            html += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;padding-left:22px;">Safe to close browser</div>';
+        } else {
+            var fallbackText = activeDetail || 'Processing...';
+            html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">';
+            if (run.status === 'active') html += spin;
+            html += esc(fallbackText) + '</div>';
         }
         html += '</div>';
     } else if (run.status === 'completed') {
@@ -1253,35 +1290,13 @@ function _pipeRenderRow(run) {
         html += '<div style="font-size:11px;color:#ef4444;background:#ef444415;padding:6px 10px;border-radius:4px;margin-bottom:8px;">' + esc(run.error) + '</div>';
     }
 
-    // Recent activity (last 3 visible) + full log (collapsible)
     var log = run.activityLog || [];
     if (log.length > 0) {
-        html += '<div style="margin-bottom:4px;">';
-        var recentCount = Math.min(3, log.length);
-        html += '<div style="font-size:10px;font-family:monospace;background:#0a0d14;border-radius:4px;padding:6px 8px;">';
-        html += '<div style="color:#475569;margin-bottom:4px;font-size:9px;">Recent activity:</div>';
-        for (var ri = log.length - recentCount; ri < log.length; ri++) {
-            var logLine = log[ri];
-            var lineCol = '#94a3b8';
-            if (logLine.indexOf('FAILED') >= 0 || logLine.indexOf('error') >= 0 || logLine.indexOf('Error') >= 0) lineCol = '#ef4444';
-            else if (logLine.indexOf('OK') >= 0 || logLine.indexOf('Complete') >= 0 || logLine.indexOf('complete') >= 0) lineCol = '#22c55e';
-            else if (logLine.indexOf('WARN') >= 0 || logLine.indexOf('Resumed') >= 0) lineCol = '#f59e0b';
-            html += '<div style="padding:1px 0;color:' + lineCol + ';">' + esc(logLine) + '</div>';
-        }
-        html += '</div>';
-        if (log.length > 3) {
-            html += '<details style="margin-top:4px;"><summary style="font-size:10px;color:#475569;cursor:pointer;list-style:none;">Full log (' + log.length + ' entries)</summary>';
-            html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:150px;overflow-y:auto;background:#0a0d14;border-radius:4px;padding:6px 8px;margin-top:4px;">';
-            for (var li = log.length - 1; li >= 0; li--) {
-                var lCol = '#94a3b8';
-                if (log[li].indexOf('FAILED') >= 0 || log[li].indexOf('error') >= 0 || log[li].indexOf('Error') >= 0) lCol = '#ef4444';
-                else if (log[li].indexOf('OK') >= 0 || log[li].indexOf('Complete') >= 0) lCol = '#22c55e';
-                else if (log[li].indexOf('WARN') >= 0) lCol = '#f59e0b';
-                html += '<div style="padding:1px 0;color:' + lCol + ';">' + esc(log[li]) + '</div>';
-            }
-            html += '</div></details>';
-        }
-        html += '</div>';
+        var lastLog = log[log.length - 1];
+        var lc = '#94a3b8';
+        if (lastLog.indexOf('FAILED') >= 0 || lastLog.indexOf('error') >= 0 || lastLog.indexOf('Error') >= 0) lc = '#ef4444';
+        else if (lastLog.indexOf('Complete') >= 0 || lastLog.indexOf('complete') >= 0) lc = '#22c55e';
+        html += '<div style="font-size:10px;color:' + lc + ';font-family:monospace;padding:2px 0;">' + esc(lastLog) + '</div>';
     }
 
     html += '</div>';
