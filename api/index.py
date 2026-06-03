@@ -226,10 +226,27 @@ def refresh_stats():
             # --- Refresh campaign stats + group assignments ---
             _refresh_campaigns(data, req, _time)
 
+            # --- Recalculate warmup days for generic groups ---
+            _refresh_warmup_days(data)
+
             store.cache_patch("overview_v2", data)
         return _cors(jsonify({"ok": True, "accounts": len(health_today)}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
+
+
+def _refresh_warmup_days(data):
+    """Recalculate warmup_days for all generic groups that have a warmup_start date."""
+    from datetime import date
+    today = date.today()
+    for g in (data.get("generic_groups") or []):
+        ws = g.get("warmup_start")
+        if ws:
+            try:
+                start = date.fromisoformat(ws)
+                g["warmup_days"] = (today - start).days
+            except Exception:
+                pass
 
 
 def _refresh_campaigns(data, req, _time):
@@ -2828,6 +2845,9 @@ def finalize_generic_group():
         state["finalize_log"] = log_lines
         store.set_state(f"generic_group_wizard_{letter}", state)
 
+        # Add new group to overview cache immediately
+        _add_generic_group_to_cache(letter, found, state, store)
+
         return _cors(jsonify({"ok": True, "letter": letter,
                               "accounts_found": len(found_ids),
                               "accounts_tagged": tagged,
@@ -2836,6 +2856,47 @@ def finalize_generic_group():
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+def _add_generic_group_to_cache(letter, found_accounts, wizard_state, store):
+    """Add a newly finalized generic group to the overview cache so it appears immediately."""
+    try:
+        from datetime import date
+        data, _ = store.cache_get("overview_v2")
+        if not data:
+            return
+        group_name = f"Generic {letter}"
+        existing = data.get("generic_groups") or []
+        if any(g.get("name") == group_name for g in existing):
+            return
+        domains = {a["email"].split("@")[-1] for a in found_accounts if "@" in a.get("email", "")}
+        today = date.today()
+        new_group = {
+            "name": group_name,
+            "accounts": len(found_accounts),
+            "total_domains": len(domains),
+            "daily_capacity": len(found_accounts) * 15,
+            "in_campaign": 0,
+            "smtp_failures": 0,
+            "avg_bounce_rate": None,
+            "avg_reply_rate": None,
+            "avg_warmup_reputation": None,
+            "total_sent": 0,
+            "daily_sent": 0,
+            "campaigns": [],
+            "account_details": [{"id": a["id"], "email": a["email"], "domain": a["email"].split("@")[-1],
+                                  "bounce_rate": None, "reply_rate": None, "sent": 0, "smtp_ok": True,
+                                  "warmup_enabled": True, "in_campaign": False, "campaign_names": [],
+                                  "warmup_reputation": None} for a in found_accounts],
+            "warmup_start": today.isoformat(),
+            "warmup_days": 0,
+        }
+        existing.append(new_group)
+        existing.sort(key=lambda g: g["name"])
+        data["generic_groups"] = existing
+        store.cache_patch("overview_v2", data)
+    except Exception:
+        pass
 
 
 @app.route("/api/group/wizard-state")
