@@ -812,7 +812,7 @@ function _pipeUpsert(letter, phase, extra) {
         run = {
             id: Date.now(), letter: letter, status: 'active',
             stepIdx: 0, stepStatuses: ['pending','pending','pending','pending'],
-            stepDetails: {}, domains: [],
+            stepDetails: {}, activityLog: [], domains: [],
             started: new Date().toISOString(), updated: new Date().toISOString(),
             error: null, niche: _wizardState.niche || 'generic',
             tld: _wizardState.tld || '.info', registrar: _wizardState.registrar || 'spaceship'
@@ -820,12 +820,19 @@ function _pipeUpsert(letter, phase, extra) {
         runs.unshift(run);
     }
     if (!run.stepDetails) run.stepDetails = {};
+    if (!run.activityLog) run.activityLog = [];
     var si = _PHASE_TO_STEP[phase] || 0;
     run.stepIdx = si;
     run.updated = new Date().toISOString();
     if (extra) {
         if (extra.domains) run.domains = extra.domains;
         if (extra.detail) run.stepDetails[si] = extra.detail;
+        if (extra.logMsg) {
+            var now = new Date();
+            var ts = now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+            run.activityLog.push(ts + ' — ' + extra.logMsg);
+            if (run.activityLog.length > 50) run.activityLog = run.activityLog.slice(-50);
+        }
         if (extra.error) { run.error = extra.error; run.status = 'error'; run.stepStatuses[si] = 'error'; }
     }
     if (phase === 'error') {
@@ -917,33 +924,42 @@ function renderPipelineRuns() {
 
 function _pipeRenderRow(run) {
     var borderCol = run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#3b82f6';
-    var html = '<details style="background:#0f1219;border-radius:8px;margin-bottom:8px;border-left:3px solid ' + borderCol + ';">';
+    var detail = run.stepDetails || {};
+    var domCount = (run.domains && run.domains.length) || 0;
+    var activeDetail = detail[run.stepIdx];
+    var spinner = run.status === 'active' ? '<span style="display:inline-block;width:10px;height:10px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:6px;"></span>' : '';
+
+    var html = '<details' + (run.status === 'active' ? ' open' : '') + ' style="background:#0f1219;border-radius:8px;margin-bottom:8px;border-left:3px solid ' + borderCol + ';">';
     html += '<summary style="padding:12px 16px;cursor:pointer;list-style:none;">';
+
+    // Header row
     html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
     html += '<div style="display:flex;gap:10px;align-items:center;">';
     html += '<span style="font-size:14px;font-weight:600;color:#f1f5f9;">Generic ' + esc(run.letter) + '</span>';
-    var domCount = (run.domains && run.domains.length) || 0;
-    html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' domains · ' + esc(run.tld || '.info') + '</span>';
-    var detail = run.stepDetails || {};
-    var activeDetail = detail[run.stepIdx];
+    if (domCount > 0) {
+        html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' domains · ' + esc(run.tld || '.info') + '</span>';
+    } else {
+        html += '<span style="font-size:11px;color:#64748b;">' + esc(run.tld || '.info') + '</span>';
+    }
     if (activeDetail && run.status === 'active') {
-        html += '<span style="font-size:11px;color:#3b82f6;">' + esc(activeDetail) + '</span>';
+        html += spinner + ' <span style="font-size:11px;color:#3b82f6;font-weight:500;">' + esc(activeDetail) + '</span>';
     }
     html += '</div>';
     html += '<div style="display:flex;gap:6px;align-items:center;">';
-    var ts = run.updated ? new Date(run.updated) : null;
-    if (ts) html += '<span style="font-size:10px;color:#475569;">' + ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '</span>';
     if (run.status === 'error') {
         html += '<button onclick="event.stopPropagation();_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
     }
+    var ts = run.updated ? new Date(run.updated) : null;
+    if (ts) html += '<span style="font-size:10px;color:#475569;">' + ts.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '</span>';
     html += '</div></div>';
+
     // Step progress bar
     html += '<div style="display:flex;gap:4px;align-items:center;margin-top:8px;">';
     for (var i = 0; i < 4; i++) {
         var st = run.stepStatuses[i];
         var col = st === 'done' ? '#22c55e' : st === 'active' ? '#3b82f6' : st === 'error' ? '#ef4444' : '#475569';
-        var icon = st === 'done' ? '✓' : st === 'active' ? '●' : st === 'error' ? '✕' : '·';
-        html += '<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:' + col + ';">';
+        var icon = st === 'done' ? '✓' : st === 'active' ? '▸' : st === 'error' ? '✕' : '·';
+        html += '<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:' + col + ';' + (st === 'active' ? 'font-weight:600;' : '') + '">';
         html += '<span style="font-size:9px;">' + icon + '</span>' + _PIPE_STEPS[i];
         var sd = detail[i];
         if (sd) html += ' <span style="color:#64748b;font-size:10px;">(' + esc(sd) + ')</span>';
@@ -951,25 +967,47 @@ function _pipeRenderRow(run) {
         if (i < 3) html += '<span style="color:#334155;font-size:10px;margin:0 2px;">→</span>';
     }
     html += '</div>';
+
     if (run.error) {
         html += '<div style="margin-top:6px;font-size:11px;color:#ef4444;background:#ef444415;padding:4px 8px;border-radius:4px;">' + esc(run.error) + '</div>';
     }
     html += '</summary>';
+
     // Expanded detail section
     html += '<div style="padding:0 16px 12px 16px;border-top:1px solid #1e293b;margin-top:4px;">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;margin-bottom:8px;">';
-    html += '<span style="font-size:11px;color:#64748b;">Started: ' + (run.started ? new Date(run.started).toLocaleString() : '—') + '</span>';
-    html += '<button onclick="event.stopPropagation();if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:transparent;color:#ef4444;border:1px solid #ef444440;border-radius:4px;cursor:pointer;">Remove Run</button>';
-    html += '</div>';
+
+    // Activity log
+    var log = run.activityLog || [];
+    if (log.length > 0) {
+        html += '<div style="margin-top:10px;margin-bottom:8px;">';
+        html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Activity Log</div>';
+        html += '<div id="pipelog-' + run.id + '" style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:120px;overflow-y:auto;background:#0a0d14;border-radius:4px;padding:6px 8px;">';
+        for (var li = log.length - 1; li >= 0; li--) {
+            html += '<div style="padding:1px 0;' + (li === log.length - 1 ? 'color:#e2e8f0;' : '') + '">' + esc(log[li]) + '</div>';
+        }
+        html += '</div></div>';
+    } else if (run.status === 'active') {
+        html += '<div style="margin-top:10px;font-size:11px;color:#475569;">Starting...</div>';
+    }
+
+    // Domains list (if known)
     if (domCount > 0) {
-        html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;">Domains:</div>';
-        html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:100px;overflow-y:auto;">';
+        html += '<div style="margin-top:8px;">';
+        html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Domains (' + domCount + ')</div>';
+        html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:80px;overflow-y:auto;">';
         for (var di = 0; di < run.domains.length; di++) {
             html += esc(run.domains[di]);
             if (di < run.domains.length - 1) html += ', ';
         }
-        html += '</div>';
+        html += '</div></div>';
     }
+
+    // Footer: timestamps + remove
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid #1e293b;">';
+    html += '<span style="font-size:10px;color:#475569;">Started ' + (run.started ? new Date(run.started).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—') + '</span>';
+    html += '<button onclick="event.stopPropagation();if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:transparent;color:#ef4444;border:1px solid #ef444440;border-radius:4px;cursor:pointer;">Remove Run</button>';
+    html += '</div>';
+
     html += '</div></details>';
     return html;
 }
@@ -1046,7 +1084,7 @@ function _wizRetry() {
 function _wizLog(msg) { _wizardState.log.push(msg); }
 function _wizErr(msg) {
     _wizardState.phase = 'error'; _wizardState.error = msg;
-    if (_wizardState.letter) _pipeUpsert(_wizardState.letter, 'error', { error: msg, domains: _wizardState.purchasedDomains || [] });
+    if (_wizardState.letter) _pipeUpsert(_wizardState.letter, 'error', { error: msg, domains: _wizardState.purchasedDomains || [], logMsg: 'Error: ' + msg });
     renderCreateGroupWizard();
 }
 
@@ -1348,6 +1386,7 @@ function _wizRenderPicking() {
 function _wizFindDomains() {
     _wizardState.phase = 'searching';
     _wizardState.checkResults = [];
+    _pipeUpsert(_wizardState.letter || '?', 'searching', { logMsg: 'Searching for ' + _wizardState.targetCount + ' available ' + _wizardState.tld + ' domains (' + _wizardState.niche + ')' });
     renderCreateGroupWizard();
     _wizFindBatch(_wizardState.targetCount);
 }
@@ -1357,6 +1396,7 @@ function _wizFindBatch(total, emptyRuns) {
     var need = total - have;
     if (need <= 0) {
         _wizardState.phase = 'found';
+        _pipeUpsert(_wizardState.letter || '?', 'found', { detail: have + ' domains found', logMsg: 'Found ' + have + ' available domains — ready to purchase' });
         renderCreateGroupWizard();
         return;
     }
@@ -1410,7 +1450,7 @@ function _wizPurchaseNext(idx) {
         _wizardState.purchasedDomains = pp.filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
         if (_wizardState.purchasedDomains.length) {
             _wizardState.phase = 'purchased';
-            _pipeUpsert(_wizardState.letter || '?', 'purchased', { domains: _wizardState.purchasedDomains, detail: _wizardState.purchasedDomains.length + ' purchased' });
+            _pipeUpsert(_wizardState.letter || '?', 'purchased', { domains: _wizardState.purchasedDomains, detail: _wizardState.purchasedDomains.length + ' purchased', logMsg: 'Purchased ' + _wizardState.purchasedDomains.length + ' domains with CloudNS nameservers' });
         } else {
             _wizErr('No domains were purchased.');
         }
@@ -1418,6 +1458,7 @@ function _wizPurchaseNext(idx) {
         return;
     }
     pp[idx].status = 'buying';
+    _pipeUpsert(_wizardState.letter || '?', 'purchasing', { detail: (idx + 1) + '/' + pp.length + ' domains', logMsg: 'Purchasing ' + pp[idx].domain + '...' });
     renderCreateGroupWizard();
     fetch('/api/domains/purchase-one' + _authQs(), {
         method: 'POST',
@@ -1429,11 +1470,14 @@ function _wizPurchaseNext(idx) {
         pp[idx].autorenew_off = !!d.autorenew_off;
         pp[idx].error = d.error || null;
         pp[idx].status = 'done';
+        var logSuffix = d.purchased ? ' — purchased + NS set' : ' — FAILED: ' + (d.error || 'unknown');
+        _pipeUpsert(_wizardState.letter || '?', 'purchasing', { detail: (idx + 1) + '/' + pp.length + ' domains', logMsg: pp[idx].domain + logSuffix });
         renderCreateGroupWizard();
         _wizPurchaseNext(idx + 1);
     }).catch(function(e) {
         pp[idx].error = e.message;
         pp[idx].status = 'done';
+        _pipeUpsert(_wizardState.letter || '?', 'purchasing', { logMsg: pp[idx].domain + ' — FAILED: ' + e.message });
         renderCreateGroupWizard();
         _wizPurchaseNext(idx + 1);
     });
@@ -1515,7 +1559,7 @@ function _wizardCreateGroup() {
         return { domain: d, status: 'pending', zapmail: false, mailboxes: 0, photos: false, mb_ids: [], error: null };
     });
     _wizardState.log = [];
-    _pipeUpsert(_wizardState.letter, 'creating', { domains: domains, detail: '0/' + domains.length + ' domains' });
+    _pipeUpsert(_wizardState.letter, 'creating', { domains: domains, detail: '0/' + domains.length + ' domains', logMsg: 'Connecting ' + domains.length + ' domains to Zapmail...' });
     renderCreateGroupWizard();
 
     fetch('/api/group/connect-domains' + _authQs(), {
@@ -1526,6 +1570,7 @@ function _wizardCreateGroup() {
         if (d.error) { _wizErr(d.error); return; }
         _wizardState.log = (d.log || []);
         _wizardState.createStep = 'mailboxes';
+        _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Zapmail connected — starting mailbox creation' });
         renderCreateGroupWizard();
         _wizSetupNext(0);
     }).catch(function(e) { _wizErr(e.message); });
@@ -1546,12 +1591,13 @@ function _wizSetupNext(idx) {
         }).then(function() {
             _wizardState.phase = 'mailboxes_done';
             _wizardState.log.push('Phase 1 complete: ' + allMbIds.length + ' mailboxes across ' + okDomains.length + ' domains.');
-            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: okDomains, detail: allMbIds.length + ' mailboxes on ' + okDomains.length + ' domains' });
+            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: okDomains, detail: allMbIds.length + ' mailboxes on ' + okDomains.length + ' domains', logMsg: 'Phase 1 complete: ' + allMbIds.length + ' mailboxes on ' + okDomains.length + ' domains — ready for SmartLead' });
             renderCreateGroupWizard();
         }).catch(function(e) { _wizErr(e.message); });
         return;
     }
     cp[idx].status = 'active';
+    _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Setting up ' + cp[idx].domain + ' (mailboxes + photos)...' });
     renderCreateGroupWizard();
     fetch('/api/group/setup-domain' + _authQs(), {
         method: 'POST',
@@ -1565,12 +1611,14 @@ function _wizSetupNext(idx) {
         cp[idx].error = d.error || null;
         cp[idx].status = d.error && !d.zapmail_connected ? 'error' : 'done';
         var doneCount = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
-        _pipeUpsert(_wizardState.letter, 'creating', { detail: doneCount + '/' + cp.length + ' domains' });
+        var logSuffix = cp[idx].error ? ' — error: ' + cp[idx].error : ' — ' + cp[idx].mailboxes + ' mailboxes + photos';
+        _pipeUpsert(_wizardState.letter, 'creating', { detail: doneCount + '/' + cp.length + ' domains', logMsg: cp[idx].domain + logSuffix });
         renderCreateGroupWizard();
         _wizSetupNext(idx + 1);
     }).catch(function(e) {
         cp[idx].error = e.message;
         cp[idx].status = 'error';
+        _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — error: ' + e.message });
         renderCreateGroupWizard();
         _wizSetupNext(idx + 1);
     });
@@ -1591,7 +1639,7 @@ function _wizardFinalize() {
     s.phase = 'finalizing';
     s.finalizeProgress = {};
     s.log.push('Starting Phase 2: Export + Tag + Warmup...');
-    _pipeUpsert(s.letter, 'finalizing', { detail: 'Exporting...' });
+    _pipeUpsert(s.letter, 'finalizing', { detail: 'Exporting...', logMsg: 'Exporting ' + allMbIds.length + ' mailboxes to SmartLead via Zapmail' });
     _wizFinalizeSetStep('export', 'active');
 
     var allMbIds = [];
@@ -1622,7 +1670,8 @@ function _wizardFinalize() {
 
 function _wizFinalizeWait(sec, domains) {
     _wizFinalizeSetStep('wait', 'active', { waitSec: sec });
-    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Waiting ' + sec + 's...' });
+    var logExtra = (sec === 90 || sec === 60 || sec === 30 || sec === 0) ? { logMsg: 'Waiting for SmartLead (' + sec + 's remaining)' } : {};
+    _pipeUpsert(_wizardState.letter, 'finalizing', Object.assign({ detail: 'Waiting ' + sec + 's...' }, logExtra));
     if (sec <= 0) {
         _wizFinalizeSetStep('wait', 'done', { waitSec: 0 });
         _wizFinalizeFind(domains, 0);
@@ -1635,7 +1684,7 @@ function _wizFinalizeWait(sec, domains) {
 
 function _wizFinalizeFind(domains, attempt) {
     _wizFinalizeSetStep('find', 'active', { foundCount: null });
-    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Searching SmartLead...' });
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Searching SmartLead...', logMsg: 'Searching SmartLead for accounts on ' + domains.length + ' domains (attempt ' + (attempt + 1) + ')' });
 
     fetch('/api/group/find-smartlead-accounts' + _authQs(), {
         method: 'POST',
@@ -1650,7 +1699,7 @@ function _wizFinalizeFind(domains, attempt) {
         if (d.count < expected && attempt < 3) {
             _wizardState.log.push('Not all accounts yet — waiting 30s and retrying...');
             _wizFinalizeSetStep('find', 'active', { foundCount: d.count + ' (retry in 30s)' });
-            _pipeUpsert(_wizardState.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...' });
+            _pipeUpsert(_wizardState.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...', logMsg: 'Found ' + d.count + '/' + expected + ' — retrying in 30s' });
             setTimeout(function() { _wizFinalizeFind(domains, attempt + 1); }, 30000);
             return;
         }
@@ -1666,7 +1715,7 @@ function _wizFinalizeFind(domains, attempt) {
 
 function _wizFinalizeTags(accounts) {
     _wizFinalizeSetStep('tags', 'active');
-    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Setting up tags...' });
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Setting up tags...', logMsg: 'Creating tags: Zapmail + Generic ' + _wizardState.letter + ' + today\'s date' });
 
     fetch('/api/group/setup-tags' + _authQs(), {
         method: 'POST',
@@ -1685,13 +1734,14 @@ function _wizFinalizeTags(accounts) {
 
 function _wizFinalizeAccounts(accounts, tagIds, idx) {
     _wizFinalizeSetStep('accounts', 'active', { accountsDone: idx, accountsTotal: accounts.length });
-    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: idx + '/' + accounts.length + ' accounts' });
+    var acctLogMsg = idx === 0 ? 'Starting tag + warmup on ' + accounts.length + ' accounts' : null;
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: idx + '/' + accounts.length + ' accounts', logMsg: acctLogMsg });
 
     if (idx >= accounts.length) {
         _wizFinalizeSetStep('accounts', 'done', { accountsDone: accounts.length });
         _wizardState.phase = 'complete';
         _wizardState.log.push('Done! ' + accounts.length + ' accounts tagged + warmup enabled.');
-        _pipeUpsert(_wizardState.letter, 'complete', { detail: accounts.length + ' accounts configured' });
+        _pipeUpsert(_wizardState.letter, 'complete', { detail: accounts.length + ' accounts configured', logMsg: 'Complete! ' + accounts.length + ' accounts tagged + warmup enabled' });
         renderCreateGroupWizard();
         return;
     }
