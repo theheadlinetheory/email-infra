@@ -306,6 +306,21 @@ def _refresh_campaigns(data, req, _time):
             existing_stats.append(stat)
     data["acq_campaign_stats"] = existing_stats
 
+    # Auto-pause campaigns that are done (>=95% and <=5 leads remaining)
+    for cid, stat in stats_updates.items():
+        total_emails = stat.get("total_leads", 0)
+        sent = stat.get("completed", 0)
+        remaining = stat.get("remaining", 0)
+        if total_emails > 0 and remaining <= 5 and sent / total_emails >= 0.95:
+            try:
+                pr = req.post(f"{SMARTLEAD_API}/campaigns/{cid}/status?api_key={SMARTLEAD_KEY}",
+                              json={"status": "PAUSED"}, timeout=10)
+                if pr.status_code == 200:
+                    stat["status"] = "PAUSED"
+                    stat["_auto_paused"] = True
+            except Exception:
+                pass
+
     # Update group campaigns from live email→campaign mapping
     for section in ("acquisition_groups", "generic_groups"):
         for g in (data.get(section) or []):
