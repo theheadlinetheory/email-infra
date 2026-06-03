@@ -366,6 +366,26 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
         gs = _group_stats(accts)
         gs["name"] = f"Generic {letter}"
         gs["accounts"] = len(accts)
+        # Extract warmup start date from date tag (e.g. "6/2/26")
+        date_tag = None
+        for a in accts:
+            for t in a.get("tags", []):
+                tn = t.get("name", "")
+                if re.match(r'^\d{1,2}/\d{1,2}/\d{2,4}$', tn):
+                    if date_tag is None or tn < date_tag:
+                        date_tag = tn
+                    break
+        if date_tag:
+            try:
+                parts = date_tag.split("/")
+                m, d, y = int(parts[0]), int(parts[1]), int(parts[2])
+                if y < 100:
+                    y += 2000
+                start = datetime(y, m, d)
+                gs["warmup_start"] = start.strftime("%Y-%m-%d")
+                gs["warmup_days"] = (datetime.now() - start).days
+            except Exception:
+                pass
         generic_list.append(gs)
 
     total = len(accounts)

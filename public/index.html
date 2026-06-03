@@ -503,6 +503,30 @@ function renderGeneric() {
         if (oversized) badges += '<span class="acq-badge" style="background:#fef2f2;color:#dc2626;">⚠ ' + g.accounts + ' accounts</span>';
         if (badgeText) badges += '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(badgeText) + '</span>';
         else if (!oversized) badges += '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">Reserve</span>';
+        var warmupBar = '';
+        if (g.warmup_days != null) {
+            var pct = Math.min(100, Math.round(g.warmup_days / 14 * 100));
+            var remaining = Math.max(0, 14 - g.warmup_days);
+            var barColor = pct >= 100 ? '#22c55e' : '#f59e0b';
+            var label = pct >= 100 ? 'Warmup Complete' : 'Day ' + g.warmup_days + '/14 (' + remaining + ' left)';
+            warmupBar = '<div style="margin-top:8px;padding:0 4px;">' +
+                '<div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-bottom:3px;">' +
+                    '<span>' + label + '</span><span>' + pct + '%</span></div>' +
+                '<div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;">' +
+                    '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:3px;transition:width 0.3s;"></div>' +
+                '</div></div>';
+        }
+        var repBar = '';
+        if (g.avg_warmup_reputation != null) {
+            var rep = Math.round(g.avg_warmup_reputation);
+            var repColor = rep >= 90 ? '#22c55e' : rep >= 70 ? '#f59e0b' : '#ef4444';
+            repBar = '<div style="margin-top:4px;padding:0 4px;">' +
+                '<div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-bottom:3px;">' +
+                    '<span>Reputation</span><span style="color:' + repColor + '">' + rep + '%</span></div>' +
+                '<div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden;">' +
+                    '<div style="height:100%;width:' + rep + '%;background:' + repColor + ';border-radius:2px;"></div>' +
+                '</div></div>';
+        }
         return '<div class="acq-card" onclick="openModal(\'generic\',' + i + ')">' +
             '<div class="acq-header">' +
                 '<span class="acq-name">' + esc(g.name) + '</span>' + badges +
@@ -513,6 +537,7 @@ function renderGeneric() {
                 cardStat('Capacity', (g.daily_capacity || 0) + '/day') +
                 cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'warn' : 'good') +
             '</div>' +
+            warmupBar + repBar +
         '</div>';
     }).join('');
 }
