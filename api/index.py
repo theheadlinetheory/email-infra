@@ -1457,6 +1457,16 @@ def available_domains():
                 gname = g.get("name", "")
                 if gname.startswith("Generic "):
                     existing_letters.add(gname[8:].strip())
+        # Also check Supabase wizard states (survives stale overview cache)
+        try:
+            wiz_rows = store._request("GET", "/state",
+                                      params={"select": "key", "key": "like.generic_group_wizard_%"})
+            for wr in (wiz_rows or []):
+                letter = wr.get("key", "").replace("generic_group_wizard_", "").strip()
+                if letter:
+                    existing_letters.add(letter)
+        except Exception:
+            pass
         all_letters = [chr(i) for i in range(65, 91)]
         free_letters = [l for l in all_letters if l not in existing_letters]
         return _cors(jsonify({"domains": available, "existing_letters": sorted(existing_letters),
