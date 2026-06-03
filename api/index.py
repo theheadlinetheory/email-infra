@@ -1418,10 +1418,30 @@ def available_domains():
             if skip >= total:
                 break
 
+        # Also exclude domains that already have mailboxes in Zapmail
+        zm_used = set()
+        try:
+            zm_api = "https://api.zapmail.ai/api"
+            zm_key = os.environ.get("ZAPMAIL_API_KEY", "").strip()
+            zm_headers = {"x-api-key": zm_key}
+            pg = 1
+            while True:
+                zr = req.get(f"{zm_api}/v2/domains?page={pg}&limit=100",
+                             headers=zm_headers, timeout=30)
+                zd = zr.json().get("data", {})
+                for zdom in zd.get("domains", []):
+                    if zdom.get("mailboxes") and len(zdom.get("mailboxes", [])) >= 1:
+                        zm_used.add(zdom["domain"])
+                if pg >= zd.get("totalPages", 1):
+                    break
+                pg += 1
+        except Exception:
+            pass
+
         available = []
         for d in all_sp:
             name = d.get("name", "")
-            if name in sl_domains:
+            if name in sl_domains or name in zm_used:
                 continue
             ns_hosts = d.get("nameservers", {}).get("hosts", [])
             if not any("cloudns" in h.lower() for h in ns_hosts):
