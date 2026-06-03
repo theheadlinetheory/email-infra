@@ -1045,30 +1045,44 @@ function _pipeRenderRow(run) {
         }
         html += '</div>';
     } else if (run.status === 'active' || run.status === 'error') {
-        // Fallback: build status from stored run data
+        // Fallback: build real status from stored run data
         var activeDetail = detail[run.stepIdx];
         var lastLog = (run.activityLog && run.activityLog.length) ? run.activityLog[run.activityLog.length - 1] : null;
         var stepDescriptions = [
-            'Finding available ' + esc(run.tld || '') + ' domains',
-            'Purchasing domains + setting nameservers',
-            'Connecting to Zapmail + creating mailboxes + setting photos',
-            'Exporting to SmartLead + tagging + enabling warmup'
+            'Step 1: Finding available domains',
+            'Step 2: Purchasing domains + setting CloudNS nameservers',
+            'Step 3: Connecting to Zapmail + creating mailboxes + setting profile photos',
+            'Step 4: Exporting to SmartLead + tagging + enabling warmup'
         ];
-        var fallbackText = activeDetail || stepDescriptions[run.stepIdx] || 'Processing...';
+        // Determine the real active step from stepStatuses
+        var realStep = run.stepIdx;
+        for (var rs = 0; rs < 4; rs++) {
+            if (run.stepStatuses[rs] === 'active' || run.stepStatuses[rs] === 'error') { realStep = rs; break; }
+        }
+        var fallbackText = activeDetail || stepDescriptions[realStep] || 'Processing...';
+
+        // If active but wizard is not running this letter, show stalled warning
+        var wizardRunning = _wizardState.letter === run.letter && _wizardState.phase !== 'idle' && _wizardState.phase !== 'error';
         html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+        if (run.status === 'active' && !wizardRunning) {
+            html += '<div style="display:flex;align-items:center;font-size:12px;color:#f59e0b;font-weight:500;margin-bottom:6px;">';
+            html += '<span style="margin-right:6px;">⚠</span> Process stalled — wizard lost state on refresh. Resume to continue.</div>';
+        }
         html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">';
-        if (run.status === 'active') html += spin;
+        if (run.status === 'active' && wizardRunning) html += spin;
         html += esc(fallbackText) + '</div>';
-        if (lastLog) html += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;padding-left:' + (run.status === 'active' ? '22' : '0') + 'px;font-family:monospace;">Last: ' + esc(lastLog) + '</div>';
-        if (domCount > 0 && run.stepIdx >= 2) {
-            html += '<div style="font-size:10px;color:#64748b;margin-top:4px;padding-left:' + (run.status === 'active' ? '22' : '0') + 'px;">Domains: ' + run.domains.map(function(d) { return esc(d); }).join(', ') + '</div>';
+        if (lastLog) html += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;font-family:monospace;">Last: ' + esc(lastLog) + '</div>';
+        if (domCount > 0) {
+            html += '<div style="font-size:10px;color:#64748b;margin-top:6px;">Domains: ' + run.domains.map(function(d) { return esc(d); }).join(', ') + '</div>';
         }
         html += '</div>';
     } else if (run.status === 'completed') {
         var completedDetail = detail[3] || detail[2] || '';
-        if (completedDetail) {
-            html += '<div style="font-size:11px;color:#94a3b8;margin-bottom:8px;">' + esc(completedDetail) + '</div>';
-        }
+        html += '<div style="background:#22c55e10;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+        html += '<div style="font-size:13px;color:#22c55e;font-weight:500;">Setup complete</div>';
+        if (completedDetail) html += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">' + esc(completedDetail) + '</div>';
+        if (domCount > 0) html += '<div style="font-size:10px;color:#64748b;margin-top:4px;">' + domCount + ' domains configured</div>';
+        html += '</div>';
     }
 
     // Error detail
