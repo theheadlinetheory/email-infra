@@ -274,27 +274,21 @@ def _refresh_campaigns(data, req, _time):
             cr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics?api_key={SMARTLEAD_KEY}", timeout=10)
             if cr.status_code == 200:
                 ad = cr.json()
+                sent_count = int(ad.get("sent_count", 0))
+                total_count = int(ad.get("total_count", 0))
+                unique_sent = int(ad.get("unique_sent_count", 0))
+                total_emails = total_count * 2
                 stat = {
                     "id": cid, "name": camp["name"], "status": "ACTIVE",
                     "accounts": len(acct_emails),
-                    "total_sent": int(ad.get("sent_count", 0)),
+                    "total_sent": sent_count,
                     "total_opened": int(ad.get("unique_open_count", 0)),
                     "total_replied": int(ad.get("reply_count", 0)),
                     "total_bounced": int(ad.get("bounce_count", 0)),
+                    "total_leads": total_emails,
+                    "completed": sent_count,
+                    "remaining": total_count - unique_sent,
                 }
-                # Fetch lead counts
-                total_leads = completed = 0
-                for status_key in ("COMPLETED", "INPROGRESS", "STARTED"):
-                    lr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
-                                 params={"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": status_key}, timeout=10)
-                    if lr.status_code == 200:
-                        cnt = int(lr.json().get("total_leads", 0))
-                        total_leads += cnt
-                        if status_key == "COMPLETED":
-                            completed = cnt
-                stat["total_leads"] = total_leads
-                stat["completed"] = completed
-                stat["remaining"] = total_leads - completed
                 stats_updates[cid] = stat
         except Exception:
             pass

@@ -3118,8 +3118,16 @@ function renderKanban() {
     }
 
     var allCols = Object.values(campMap);
-    var activeCols = allCols.filter(function(c) { return c.status === 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
-    var pausedCols = allCols.filter(function(c) { return c.status !== 'ACTIVE'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+    var activeCols = allCols.filter(function(c) {
+        if (c.status !== 'ACTIVE') return false;
+        var st = campStatsById[c.id];
+        if (st && c.groups.length === 0) {
+            var pct = st.total_leads > 0 ? Math.round(st.completed / st.total_leads * 100) : 0;
+            if (pct >= 95) return false;
+        }
+        return true;
+    }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+    var pausedCols = allCols.filter(function(c) { return activeCols.indexOf(c) === -1; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
 
     function kanbanCard(g, campId) {
         var isLars = (g.name || '').match(/\bG\b/);

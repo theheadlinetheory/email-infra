@@ -432,29 +432,23 @@ def fetch_acq_campaign_stats(progress_cb=None):
             total_replied = int(ad.get("reply_count", 0))
             total_bounced = int(ad.get("bounce_count", 0))
             total_leads_count = int(ad.get("total_count", 0))
+            unique_sent = int(ad.get("unique_sent_count", 0))
         else:
-            total_sent = total_opened = total_replied = total_bounced = total_leads_count = 0
+            total_sent = total_opened = total_replied = total_bounced = total_leads_count = unique_sent = 0
 
-        total_leads = completed = remaining = 0
+        total_emails = total_leads_count * 2
+        remaining = total_leads_count - unique_sent
+
         if is_active:
             acct_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/email-accounts", {"api_key": SMARTLEAD_KEY}, timeout=15)
             acct_count = len(acct_r.json()) if acct_r and acct_r.status_code == 200 else 0
-
-            for status_key in ("COMPLETED", "INPROGRESS", "STARTED"):
-                lr = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
-                              {"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": status_key}, timeout=15)
-                cnt = int(lr.json().get("total_leads", 0)) if lr and lr.status_code == 200 else 0
-                total_leads += cnt
-                if status_key == "COMPLETED":
-                    completed = cnt
-            remaining = total_leads - completed
         else:
             acct_count = 0
 
         stats.append({
             "id": cid, "name": camp["name"], "status": camp.get("status", ""),
             "accounts": acct_count,
-            "total_leads": total_leads, "completed": completed, "remaining": remaining,
+            "total_leads": total_emails, "completed": total_sent, "remaining": remaining,
             "total_sent": total_sent, "total_opened": total_opened,
             "total_replied": total_replied, "total_bounced": total_bounced,
         })
