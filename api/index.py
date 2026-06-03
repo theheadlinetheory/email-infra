@@ -239,6 +239,9 @@ def _refresh_campaigns(data, req, _time):
 
     try:
         r = req.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
+        if r.status_code == 429:
+            _time.sleep(10)
+            r = req.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
         if r.status_code != 200:
             return
         all_campaigns = r.json() if r.text.strip() else []

@@ -1003,10 +1003,26 @@ function _pipeRefinalize(letter, runId) {
     var run = null;
     for (var i = 0; i < runs.length; i++) { if (runs[i].id === runId) { run = runs[i]; break; } }
     if (!run) return;
+    // Check server state first — skip re-finalize if already complete
+    fetch('/api/group/wizard-state' + _authQs() + '&letter=' + letter, { headers: _authHeaders() })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.state && d.state.phase === 'complete') {
+                _pipeUpsert(letter, 'complete', { detail: (d.state.accounts_found || 0) + ' accounts configured', logMsg: 'Already complete on server' });
+                _wizardState.phase = 'complete';
+                _wizardState.letter = letter;
+                _wizSave();
+                renderCreateGroupWizard();
+                return;
+            }
+            _pipeRefinalizeInner(letter, run);
+        }).catch(function() { _pipeRefinalizeInner(letter, run); });
+}
+function _pipeRefinalizeInner(letter, run) {
     run.status = 'active';
     run.stepIdx = 3;
     run.stepStatuses[3] = 'active';
-    _pipeSave(runs);
+    _pipeSave(_pipeGet().map(function(r) { return r.id === run.id ? run : r; }));
     _wizardState.phase = 'finalizing';
     _wizardState.letter = letter;
     _wizardState.purchasedDomains = run.domains || [];
@@ -2258,7 +2274,30 @@ function _wizFinalizeSetStep(key, status, extra) {
 
 function _wizFinalizeResume() {
     var s = _wizardState;
-    if (s.phase !== 'finalizing' || !s.finalizeProgress) return;
+    if (s.phase !== 'finalizing') return;
+
+    // Always check server state first — it may already be complete
+    if (s.letter) {
+        fetch('/api/group/wizard-state' + _authQs() + '&letter=' + s.letter, { headers: _authHeaders() })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.state && d.state.phase === 'complete') {
+                    s.phase = 'complete';
+                    s.log.push('Server confirms complete: ' + (d.state.accounts_found || 0) + ' accounts configured');
+                    _pipeUpsert(s.letter, 'complete', { detail: (d.state.accounts_found || 0) + ' accounts configured' });
+                    _wizSave();
+                    renderCreateGroupWizard();
+                    return;
+                }
+                _wizFinalizeResumeInner();
+            }).catch(function() { _wizFinalizeResumeInner(); });
+        return;
+    }
+    _wizFinalizeResumeInner();
+}
+function _wizFinalizeResumeInner() {
+    var s = _wizardState;
+    if (!s.finalizeProgress) return;
     var fp = s.finalizeProgress;
     var domains = s._allDomains || s.purchasedDomains || [];
 
@@ -2267,7 +2306,6 @@ function _wizFinalizeResume() {
         _wizFinalizeProvisionPoll(domains, 0);
         return;
     }
-    // Everything after provision runs server-side — just poll for status, don't re-fire
     s.log.push('Checking server progress...');
     _wizPollServerProgress();
 }
