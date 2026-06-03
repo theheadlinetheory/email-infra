@@ -853,13 +853,15 @@ function _pipeResume(id) {
     _wizardState.tld = run.tld || '.info';
     _wizardState.registrar = run.registrar || 'spaceship';
     _wizardState.purchasedDomains = run.domains || [];
-    var si = run.stepIdx;
-    if (si <= 0) { _wizardState.phase = 'idle'; }
-    else if (si === 1) { _wizardState.phase = 'picking'; _wizardState.selected = {}; _wizardLoadDomains(); }
-    else if (si === 2) { _wizardState.phase = 'mailboxes_done'; }
-    else if (si === 3) { _wizardState.phase = 'mailboxes_done'; }
+    _wizardState.phase = 'picking';
+    _wizardState.error = '';
+    _wizardState.createProgress = null;
+    _wizardState.createStep = null;
+    _wizardState.log = [];
+    if (run.stepIdx >= 2) _wizardState.phase = 'mailboxes_done';
+    if (run.stepIdx >= 3) _wizardState.phase = 'mailboxes_done';
+    _wizardLoadDomains();
     renderPipelineRuns();
-    renderCreateGroupWizard();
 }
 function _pipeRemove(id) {
     var runs = _pipeGet().filter(function(r) { return r.id !== id; });
@@ -994,6 +996,13 @@ function _wizReset() {
     };
     _wizSave();
     renderCreateGroupWizard();
+}
+function _wizRetry() {
+    _wizardState.phase = 'picking';
+    _wizardState.error = '';
+    _wizardState.createProgress = null;
+    _wizardState.createStep = null;
+    _wizardLoadDomains();
 }
 function _wizLog(msg) { _wizardState.log.push(msg); }
 function _wizErr(msg) {
@@ -1178,7 +1187,14 @@ function renderCreateGroupWizard() {
         html += '<button onclick="_wizReset()" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Create Another Group</button>';
     } else if (s.phase === 'error') {
         html += '<div style="color:#ef4444;font-size:13px;margin-bottom:8px;">Error: ' + esc(s.error || 'Unknown') + '</div>';
-        html += '<button onclick="_wizardState.phase=\'idle\';renderCreateGroupWizard();" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Try Again</button>';
+        if (s.letter) {
+            html += '<div style="display:flex;gap:10px;margin-top:8px;">';
+            html += '<button onclick="_wizRetry()" style="padding:6px 14px;font-size:12px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">Retry Generic ' + esc(s.letter) + '</button>';
+            html += '<button onclick="_wizReset()" style="padding:6px 14px;font-size:12px;background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;cursor:pointer;">Start Over</button>';
+            html += '</div>';
+        } else {
+            html += '<button onclick="_wizReset()" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Start Over</button>';
+        }
     }
 
     if (s.log.length) {
