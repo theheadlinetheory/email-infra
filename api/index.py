@@ -1503,6 +1503,185 @@ def create_generic_group():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/group/connect-domains", methods=["POST", "OPTIONS"])
+def group_connect_domains():
+    """Connect domains to Zapmail and buy mailbox slots."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        letter = body.get("letter", "").strip().upper()
+        domains = body.get("domains", [])
+        if not domains:
+            return _cors(jsonify({"error": "No domains"})), 400
+
+        ZAPMAIL_API = "https://api.zapmail.ai/api"
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
+        NS_STR = "pns61.cloudns.net,pns62.cloudns.com,pns63.cloudns.net,pns64.cloudns.uk"
+        def zm_h():
+            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+
+        log = []
+        connected = 0
+        for dn in domains[:30]:
+            try:
+                r = req.post(f"{ZAPMAIL_API}/v2/domains/connect", headers=zm_h(),
+                             json={"domainName": dn, "nameServers": NS_STR}, timeout=30)
+                msg = r.json().get("message", r.text[:100])
+                log.append(f"{dn}: {msg}")
+                connected += 1
+            except Exception as e:
+                log.append(f"{dn}: error — {str(e)[:80]}")
+            _time.sleep(0.3)
+
+        # Buy mailbox slots proactively
+        slots_bought = 0
+        try:
+            inboxes_needed = len(domains) * 3
+            ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
+            ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
+            purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
+            assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
+            free_slots = purchased - assigned
+            if free_slots < inboxes_needed:
+                to_buy = inboxes_needed - free_slots
+                buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
+                                 headers=zm_h(), json={}, timeout=30)
+                if buy_r.status_code == 200:
+                    slots_bought = to_buy
+                    log.append(f"Bought {to_buy} mailbox slots")
+                else:
+                    log.append(f"Slot purchase failed: {buy_r.text[:100]}")
+            else:
+                log.append(f"Have {free_slots} free slots (need {inboxes_needed})")
+        except Exception as e:
+            log.append(f"Slot check error: {str(e)[:80]}")
+
+        return _cors(jsonify({"ok": True, "connected": connected, "slots_bought": slots_bought, "log": log}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/group/setup-domain", methods=["POST", "OPTIONS"])
+def group_setup_domain():
+    """Setup ONE domain: resolve Zapmail ID, create 3 mailboxes, set profile photo."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        domain = (body.get("domain") or "").strip().lower()
+        letter = body.get("letter", "").strip().upper()
+        if not domain:
+            return _cors(jsonify({"error": "No domain"})), 400
+
+        ZAPMAIL_API = "https://api.zapmail.ai/api"
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
+        SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
+        PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
+        def zm_h():
+            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+
+        result = {"domain": domain, "zapmail_connected": False, "mailboxes_created": 0,
+                  "photos_set": False, "mb_ids": [], "error": None}
+
+        # Find domain in Zapmail
+        zapmail_id = None
+        page = 1
+        for _ in range(10):
+            try:
+                zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
+                zd = zr.json().get("data", {})
+                for d in zd.get("domains", []):
+                    if d.get("name", "") == domain:
+                        zapmail_id = d.get("id", "")
+                        break
+                if zapmail_id or page >= zd.get("totalPages", 1):
+                    break
+                page += 1
+            except Exception:
+                break
+
+        if not zapmail_id:
+            result["error"] = "Domain not found in Zapmail yet — DNS may still be propagating"
+            return _cors(jsonify(result))
+
+        result["zapmail_connected"] = True
+
+        # Create 3 mailboxes
+        SPECS = [
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
+            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.reynolds"},
+        ]
+        mailboxes = [{**s, "domainName": domain} for s in SPECS]
+        payload = {zapmail_id: mailboxes}
+        try:
+            r = req.post(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json=payload, timeout=60)
+            mb_data = r.json()
+            mb_ids = mb_data.get("data", [])
+            if isinstance(mb_ids, list):
+                result["mb_ids"] = mb_ids
+                result["mailboxes_created"] = len(mb_ids)
+            else:
+                result["error"] = f"Mailbox creation unexpected response: {str(mb_data)[:150]}"
+                return _cors(jsonify(result))
+        except Exception as e:
+            result["error"] = f"Mailbox creation failed: {str(e)[:150]}"
+            return _cors(jsonify(result))
+
+        # Set profile photos
+        if result["mb_ids"]:
+            try:
+                mb_photo_data = [{"mailboxId": mid, "profilePicture": PHOTO_URL} for mid in result["mb_ids"]]
+                req.put(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json={"mailboxData": mb_photo_data}, timeout=60)
+                result["photos_set"] = True
+            except Exception:
+                pass
+
+        return _cors(jsonify(result))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/group/save-state", methods=["POST", "OPTIONS"])
+def group_save_state():
+    """Save group wizard state to DB for Phase 2."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import db as store
+        body = request.get_json(silent=True) or {}
+        letter = body.get("letter", "").strip().upper()
+        domains = body.get("domains", [])
+        all_mb_ids = body.get("all_mb_ids", [])
+        if not letter:
+            return _cors(jsonify({"error": "letter required"})), 400
+        state = {
+            "letter": letter,
+            "domains": [{"domain": d, "emails": [f"s.reynolds@{d}", f"sean.r@{d}", f"sean.reynolds@{d}"], "mb_ids": []} for d in domains],
+            "all_mb_ids": all_mb_ids,
+            "phase": "mailboxes_created",
+            "created_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        store.set_state(f"generic_group_wizard_{letter}", state)
+        return _cors(jsonify({"ok": True}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/finalize-generic-group", methods=["POST", "OPTIONS"])
 def finalize_generic_group():
     """Phase 2: Export to SmartLead, tag with Zapmail + Generic letter + date, enable warmup."""

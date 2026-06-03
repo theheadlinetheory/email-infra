@@ -961,10 +961,17 @@ function _wizRestore() {
         if (saved) {
             var s = JSON.parse(saved);
             if (s && s.phase && s.phase !== 'idle') {
-                if (s.phase === 'searching' || s.phase === 'replacing' || s.phase === 'purchasing') {
+                if (s.phase === 'searching' || s.phase === 'replacing' || s.phase === 'purchasing' || s.phase === 'creating') {
                     if (s.phase === 'purchasing' && s.purchaseProgress) {
                         s.phase = 'purchased';
                         s.purchasedDomains = (s.purchaseProgress || []).filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
+                    } else if (s.phase === 'creating' && s.createProgress) {
+                        var done = s.createProgress.filter(function(p) { return p.mailboxes > 0; });
+                        if (done.length === s.createProgress.length) {
+                            s.phase = 'mailboxes_done';
+                        } else {
+                            s.phase = 'picking';
+                        }
                     } else if (s.checkResults && s.checkResults.length) {
                         s.phase = 'found';
                     } else {
@@ -1132,9 +1139,36 @@ function renderCreateGroupWizard() {
         html += '<button onclick="_wizardState.phase=\'picking\';_wizardLoadDomains();" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Continue to Mailbox Setup</button>';
     } else if (s.phase === 'picking') {
         html += _wizRenderPicking();
-    } else if (s.phase === 'creating' || s.phase === 'finalizing') {
-        var label = s.phase === 'creating' ? 'Creating mailboxes...' : 'Exporting & configuring...';
-        html += '<div style="color:#3b82f6;font-size:13px;">' + esc(label) + _wizSpinner + '</div>';
+    } else if (s.phase === 'creating') {
+        var cp = s.createProgress || [];
+        var cDone = cp.filter(function(p) { return p.status !== 'pending' && p.status !== 'active'; }).length;
+        var cTotal = cp.length;
+        var cPct = cTotal ? Math.round((cDone / cTotal) * 100) : 0;
+        var cStep = s.createStep || 'connecting';
+        var cLabel = cStep === 'connecting' ? 'Connecting domains to Zapmail...' : 'Setting up mailboxes...';
+        html += '<div style="color:#3b82f6;font-size:13px;margin-bottom:8px;">' + esc(cLabel) + ' ' + cDone + '/' + cTotal + _wizSpinner + '</div>';
+        html += '<div style="background:#1e293b;border-radius:4px;height:8px;overflow:hidden;margin-bottom:12px;">';
+        html += '<div style="background:#3b82f6;height:100%;width:' + cPct + '%;border-radius:4px;transition:width 0.3s;"></div></div>';
+        if (cp.length) {
+            html += '<div style="max-height:300px;overflow-y:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:5px 8px;text-align:left;">Domain</th><th style="padding:5px 8px;text-align:center;">Zapmail</th><th style="padding:5px 8px;text-align:center;">Mailboxes</th><th style="padding:5px 8px;text-align:center;">Photos</th></tr></thead><tbody>';
+            for (var ci = 0; ci < cp.length; ci++) {
+                var c = cp[ci];
+                var zSt = c.zapmail ? '✅' : c.status === 'active' ? '🔄' : c.status === 'error' ? '❌' : '⏳';
+                var mSt = c.mailboxes > 0 ? '✅ ' + c.mailboxes : c.zapmail && c.status === 'active' ? '🔄' : '';
+                var pSt = c.photos ? '✅' : c.mailboxes > 0 && c.status === 'active' ? '🔄' : '';
+                var rowBg = c.error ? '#ef444420' : c.status === 'active' ? '#3b82f620' : 'transparent';
+                html += '<tr style="border-bottom:1px solid #0f1219;background:' + rowBg + ';">';
+                html += '<td style="padding:5px 8px;color:' + (c.error ? '#ef4444' : '#e2e8f0') + ';">' + esc(c.domain) + (c.error ? '<div style="font-size:10px;color:#ef4444;">' + esc(c.error) + '</div>' : '') + '</td>';
+                html += '<td style="padding:5px 8px;text-align:center;">' + zSt + '</td>';
+                html += '<td style="padding:5px 8px;text-align:center;">' + mSt + '</td>';
+                html += '<td style="padding:5px 8px;text-align:center;">' + pSt + '</td></tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+    } else if (s.phase === 'finalizing') {
+        html += '<div style="color:#3b82f6;font-size:13px;">Exporting & configuring...' + _wizSpinner + '</div>';
     } else if (s.phase === 'mailboxes_done') {
         html += '<div style="color:#22c55e;font-size:13px;margin-bottom:8px;">Mailboxes created for Generic ' + esc(s.letter) + '!</div>';
         html += '<div style="color:#94a3b8;font-size:12px;margin-bottom:12px;">Wait a minute for mailboxes to activate, then finalize:</div>';
@@ -1386,25 +1420,68 @@ function _wizardCreateGroup() {
     var domains = Object.keys(_wizardState.selected);
     if (!domains.length || !_wizardState.letter) return;
     _wizardState.phase = 'creating';
-    _wizardState.log = ['Starting Phase 1: Create mailboxes for Generic ' + _wizardState.letter + '...'];
+    _wizardState.createStep = 'connecting';
+    _wizardState.createProgress = domains.map(function(d) {
+        return { domain: d, status: 'pending', zapmail: false, mailboxes: 0, photos: false, mb_ids: [], error: null };
+    });
+    _wizardState.log = [];
     _pipeUpsert(_wizardState.letter, 'creating', { domains: domains });
     renderCreateGroupWizard();
-    fetch('/api/create-generic-group' + _authQs(), {
+
+    fetch('/api/group/connect-domains' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ letter: _wizardState.letter, domains: domains })
     }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.ok) {
-            _wizardState.phase = 'mailboxes_done';
-            _wizardState.log = _wizardState.log.concat(d.log || []);
-            _wizardState.log.push('Phase 1 complete: ' + (d.mailboxes_count || 0) + ' mailboxes created.');
-            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: domains });
-        } else {
-            _wizErr(d.error || 'Unknown error');
-            _wizardState.log = _wizardState.log.concat(d.log || []);
-        }
+        if (d.error) { _wizErr(d.error); return; }
+        _wizardState.log = (d.log || []);
+        _wizardState.createStep = 'mailboxes';
         renderCreateGroupWizard();
+        _wizSetupNext(0);
     }).catch(function(e) { _wizErr(e.message); });
+}
+function _wizSetupNext(idx) {
+    var cp = _wizardState.createProgress;
+    if (idx >= cp.length) {
+        var allMbIds = [];
+        var okDomains = [];
+        for (var i = 0; i < cp.length; i++) {
+            if (cp[i].mailboxes > 0) { okDomains.push(cp[i].domain); allMbIds = allMbIds.concat(cp[i].mb_ids); }
+        }
+        if (!okDomains.length) { _wizErr('No mailboxes were created.'); return; }
+        fetch('/api/group/save-state' + _authQs(), {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+            body: JSON.stringify({ letter: _wizardState.letter, domains: okDomains, all_mb_ids: allMbIds })
+        }).then(function() {
+            _wizardState.phase = 'mailboxes_done';
+            _wizardState.log.push('Phase 1 complete: ' + allMbIds.length + ' mailboxes across ' + okDomains.length + ' domains.');
+            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: okDomains });
+            renderCreateGroupWizard();
+        }).catch(function(e) { _wizErr(e.message); });
+        return;
+    }
+    cp[idx].status = 'active';
+    renderCreateGroupWizard();
+    fetch('/api/group/setup-domain' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ domain: cp[idx].domain, letter: _wizardState.letter })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        cp[idx].zapmail = !!d.zapmail_connected;
+        cp[idx].mailboxes = d.mailboxes_created || 0;
+        cp[idx].photos = !!d.photos_set;
+        cp[idx].mb_ids = d.mb_ids || [];
+        cp[idx].error = d.error || null;
+        cp[idx].status = d.error && !d.zapmail_connected ? 'error' : 'done';
+        renderCreateGroupWizard();
+        _wizSetupNext(idx + 1);
+    }).catch(function(e) {
+        cp[idx].error = e.message;
+        cp[idx].status = 'error';
+        renderCreateGroupWizard();
+        _wizSetupNext(idx + 1);
+    });
 }
 
 /* ─── Wizard: Phase 2 — Finalize ─── */
