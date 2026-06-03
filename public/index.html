@@ -861,9 +861,9 @@ function _pipeResume(id) {
     _wizardState.createStep = null;
     _wizardState.log = [];
     var failedStep = run.stepIdx;
-    var stepWasOk = run.stepStatuses[failedStep] === 'done';
-    if (failedStep >= 3 && stepWasOk) {
+    if (failedStep >= 3) {
         _wizardState.phase = 'mailboxes_done';
+        _wizardState.finalizeProgress = null;
         renderPipelineRuns();
         renderCreateGroupWizard();
     } else {
@@ -982,7 +982,7 @@ var _wizardState = {
     checkResults: null,
     purchasedDomains: [],
     domains: null, selected: {}, letter: '', free_letters: [],
-    error: ''
+    error: '', finalizeProgress: null
 };
 var _wizSt = 'padding:4px 8px;font-size:13px;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:4px;';
 var _wizBtn = 'padding:8px 20px;font-size:13px;border:none;border-radius:6px;cursor:pointer;font-weight:600;';
@@ -997,6 +997,10 @@ function _wizRestore() {
         if (saved) {
             var s = JSON.parse(saved);
             if (s && s.phase && s.phase !== 'idle') {
+                if (s.phase === 'finalizing') {
+                    s.phase = 'mailboxes_done';
+                    s.finalizeProgress = null;
+                }
                 if (s.phase === 'searching' || s.phase === 'replacing' || s.phase === 'purchasing' || s.phase === 'creating') {
                     if (s.phase === 'purchasing' && s.purchaseProgress) {
                         s.phase = 'purchased';
@@ -1026,7 +1030,7 @@ function _wizReset() {
         targetCount: 14,
         checkResults: null, purchasedDomains: [], purchaseProgress: null,
         domains: null, selected: {}, letter: '', free_letters: [],
-        error: ''
+        error: '', finalizeProgress: null
     };
     _wizSave();
     renderCreateGroupWizard();
@@ -1034,6 +1038,7 @@ function _wizReset() {
 function _wizRetry() {
     _wizardState.phase = 'picking';
     _wizardState.error = '';
+    _wizardState.finalizeProgress = null;
     _wizardState.createProgress = null;
     _wizardState.createStep = null;
     _wizardLoadDomains();
@@ -1211,7 +1216,32 @@ function renderCreateGroupWizard() {
             html += '</tbody></table></div>';
         }
     } else if (s.phase === 'finalizing') {
-        html += '<div style="color:#3b82f6;font-size:13px;">Exporting & configuring...' + _wizSpinner + '</div>';
+        var fp = s.finalizeProgress || {};
+        html += '<div style="color:#3b82f6;font-size:14px;font-weight:600;margin-bottom:10px;">Finalizing Generic ' + esc(s.letter) + _wizSpinner + '</div>';
+        var fSteps = [
+            { key: 'export', label: 'Export to SmartLead' },
+            { key: 'wait', label: 'Waiting for SmartLead' },
+            { key: 'find', label: 'Finding accounts' },
+            { key: 'tags', label: 'Setting up tags' },
+            { key: 'accounts', label: 'Tagging + warmup' }
+        ];
+        html += '<div style="margin-bottom:10px;">';
+        for (var fi = 0; fi < fSteps.length; fi++) {
+            var fk = fSteps[fi].key;
+            var fst = fp[fk];
+            var fIcon = fst === 'done' ? '<span style="color:#22c55e;">✓</span>' :
+                        fst === 'active' ? '<span style="color:#3b82f6;">●</span>' :
+                        fst === 'error' ? '<span style="color:#ef4444;">✕</span>' :
+                        '<span style="color:#475569;">·</span>';
+            var fCol = fst === 'done' ? '#22c55e' : fst === 'active' ? '#3b82f6' : fst === 'error' ? '#ef4444' : '#475569';
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:' + fCol + ';">';
+            html += fIcon + ' ' + fSteps[fi].label;
+            if (fk === 'wait' && fp.waitSec != null) html += ' <span style="color:#64748b;">(' + fp.waitSec + 's remaining)</span>';
+            if (fk === 'find' && fp.foundCount != null) html += ' <span style="color:#64748b;">(' + fp.foundCount + ' found)</span>';
+            if (fk === 'accounts' && fp.accountsDone != null) html += ' <span style="color:#64748b;">(' + fp.accountsDone + '/' + (fp.accountsTotal || '?') + ')</span>';
+            html += '</div>';
+        }
+        html += '</div>';
     } else if (s.phase === 'mailboxes_done') {
         html += '<div style="color:#22c55e;font-size:13px;margin-bottom:8px;">Mailboxes created for Generic ' + esc(s.letter) + '!</div>';
         html += '<div style="color:#94a3b8;font-size:12px;margin-bottom:12px;">Wait a minute for mailboxes to activate, then finalize:</div>';
@@ -1546,32 +1576,140 @@ function _wizSetupNext(idx) {
     });
 }
 
-/* ─── Wizard: Phase 2 — Finalize ─── */
-function _wizardFinalize() {
-    _wizardState.phase = 'finalizing';
-    _wizardState.log.push('Starting Phase 2: Export + Tag + Warmup...');
-    _pipeUpsert(_wizardState.letter, 'finalizing');
+/* ─── Wizard: Phase 2 — Finalize (multi-step) ─── */
+function _wizFinalizeSetStep(key, status, extra) {
+    if (!_wizardState.finalizeProgress) _wizardState.finalizeProgress = {};
+    _wizardState.finalizeProgress[key] = status;
+    if (extra) {
+        for (var k in extra) _wizardState.finalizeProgress[k] = extra[k];
+    }
     renderCreateGroupWizard();
-    fetch('/api/finalize-generic-group' + _authQs(), {
+}
+
+function _wizardFinalize() {
+    var s = _wizardState;
+    s.phase = 'finalizing';
+    s.finalizeProgress = {};
+    s.log.push('Starting Phase 2: Export + Tag + Warmup...');
+    _pipeUpsert(s.letter, 'finalizing', { detail: 'Exporting...' });
+    _wizFinalizeSetStep('export', 'active');
+
+    var allMbIds = [];
+    var allDomains = [];
+    if (s.createProgress) {
+        for (var ci = 0; ci < s.createProgress.length; ci++) {
+            var cp = s.createProgress[ci];
+            if (cp.mb_ids) allMbIds = allMbIds.concat(cp.mb_ids);
+            allDomains.push(cp.domain);
+        }
+    }
+    if (!allDomains.length && s.purchasedDomains) allDomains = s.purchasedDomains;
+
+    fetch('/api/group/export-smartlead' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ letter: s.letter, mb_ids: allMbIds, domains: allDomains })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) throw new Error(d.error);
+        s.log.push('Export: ' + (d.message || 'done'));
+        _wizFinalizeSetStep('export', 'done');
+        _wizFinalizeWait(90, allDomains);
+    }).catch(function(e) {
+        _wizFinalizeSetStep('export', 'error');
+        _wizErr(e.message);
+    });
+}
+
+function _wizFinalizeWait(sec, domains) {
+    _wizFinalizeSetStep('wait', 'active', { waitSec: sec });
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Waiting ' + sec + 's...' });
+    if (sec <= 0) {
+        _wizFinalizeSetStep('wait', 'done', { waitSec: 0 });
+        _wizFinalizeFind(domains, 0);
+        return;
+    }
+    setTimeout(function() {
+        _wizFinalizeWait(sec - 5, domains);
+    }, 5000);
+}
+
+function _wizFinalizeFind(domains, attempt) {
+    _wizFinalizeSetStep('find', 'active', { foundCount: null });
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Searching SmartLead...' });
+
+    fetch('/api/group/find-smartlead-accounts' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ domains: domains })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) throw new Error(d.error);
+        var expected = domains.length * 3;
+        _wizFinalizeSetStep('find', 'active', { foundCount: d.count });
+        _wizardState.log.push('Found ' + d.count + '/' + expected + ' accounts');
+
+        if (d.count < expected && attempt < 3) {
+            _wizardState.log.push('Not all accounts yet — waiting 30s and retrying...');
+            _wizFinalizeSetStep('find', 'active', { foundCount: d.count + ' (retry in 30s)' });
+            _pipeUpsert(_wizardState.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...' });
+            setTimeout(function() { _wizFinalizeFind(domains, attempt + 1); }, 30000);
+            return;
+        }
+
+        _wizFinalizeSetStep('find', 'done', { foundCount: d.count });
+        _wizardState._slAccounts = d.accounts;
+        _wizFinalizeTags(d.accounts);
+    }).catch(function(e) {
+        _wizFinalizeSetStep('find', 'error');
+        _wizErr(e.message);
+    });
+}
+
+function _wizFinalizeTags(accounts) {
+    _wizFinalizeSetStep('tags', 'active');
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Setting up tags...' });
+
+    fetch('/api/group/setup-tags' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ letter: _wizardState.letter })
     }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.ok) {
-            _wizardState.phase = 'complete';
-            _wizardState.log = _wizardState.log.concat(d.log || []);
-            _wizardState.log.push('Done! ' + (d.accounts_found || 0) + ' accounts tagged + warmup enabled.');
-            _pipeUpsert(_wizardState.letter, 'complete');
-        } else if (d.retry) {
-            _wizardState.phase = 'mailboxes_done';
-            _wizardState.log = _wizardState.log.concat(d.log || []);
-            _wizardState.log.push('Export not ready yet — wait a bit and try again.');
-        } else {
-            _wizErr(d.error || 'Unknown error');
-            _wizardState.log = _wizardState.log.concat(d.log || []);
-        }
+        if (d.error) throw new Error(d.error);
+        _wizardState.log.push('Tags ready: ' + (d.tag_names || []).join(', '));
+        _wizFinalizeSetStep('tags', 'done');
+        _wizFinalizeAccounts(accounts, d.tag_ids, 0);
+    }).catch(function(e) {
+        _wizFinalizeSetStep('tags', 'error');
+        _wizErr(e.message);
+    });
+}
+
+function _wizFinalizeAccounts(accounts, tagIds, idx) {
+    _wizFinalizeSetStep('accounts', 'active', { accountsDone: idx, accountsTotal: accounts.length });
+    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: idx + '/' + accounts.length + ' accounts' });
+
+    if (idx >= accounts.length) {
+        _wizFinalizeSetStep('accounts', 'done', { accountsDone: accounts.length });
+        _wizardState.phase = 'complete';
+        _wizardState.log.push('Done! ' + accounts.length + ' accounts tagged + warmup enabled.');
+        _pipeUpsert(_wizardState.letter, 'complete', { detail: accounts.length + ' accounts configured' });
         renderCreateGroupWizard();
-    }).catch(function(e) { _wizErr(e.message); });
+        return;
+    }
+
+    var acct = accounts[idx];
+    fetch('/api/group/finalize-account' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ account_id: acct.id, tag_ids: tagIds })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) {
+            _wizardState.log.push('Account ' + (acct.email || acct.id) + ': error — ' + d.error);
+        }
+        _wizFinalizeAccounts(accounts, tagIds, idx + 1);
+    }).catch(function(e) {
+        _wizardState.log.push('Account ' + (acct.email || acct.id) + ': ' + e.message);
+        _wizFinalizeAccounts(accounts, tagIds, idx + 1);
+    });
 }
 function renderMaintFilters() {
     var el = document.getElementById('maint-filters');

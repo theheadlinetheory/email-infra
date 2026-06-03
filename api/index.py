@@ -1682,6 +1682,204 @@ def group_save_state():
         return _cors(jsonify({"error": str(e)})), 500
 
 
+# ──────────────────────────────────────────────────────────
+# Per-step finalize endpoints (replace monolithic finalize)
+# ──────────────────────────────────────────────────────────
+
+@app.route("/api/group/export-smartlead", methods=["POST", "OPTIONS"])
+def group_export_smartlead():
+    """Export mailboxes to SmartLead via Zapmail."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        letter = body.get("letter", "").strip().upper()
+        mb_ids = body.get("mb_ids", [])
+        domains = body.get("domains", [])
+
+        ZAPMAIL_API = "https://api.zapmail.ai/api"
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
+        def zm_h():
+            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+
+        if mb_ids:
+            r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                         json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
+            msg = r.json().get("message", r.text[:200])
+        else:
+            for dd in domains:
+                req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                         json={"apps": ["SMARTLEAD"], "contains": dd}, timeout=30)
+                import time; time.sleep(2)
+            msg = f"Exported by domain name ({len(domains)} domains)"
+
+        return _cors(jsonify({"ok": True, "message": msg}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
+@app.route("/api/group/find-smartlead-accounts", methods=["POST", "OPTIONS"])
+def group_find_smartlead_accounts():
+    """Search SmartLead for accounts matching our domains."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        domains = set(body.get("domains", []))
+        if not domains:
+            return _cors(jsonify({"error": "domains required"})), 400
+
+        SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
+        SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
+
+        found = []
+        offset = 0
+        for _ in range(20):
+            url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
+            r = req.get(url, timeout=30)
+            accts = r.json() if r.status_code == 200 else []
+            if not isinstance(accts, list) or not accts:
+                break
+            for a in accts:
+                email = a.get("from_email", a.get("email", ""))
+                domain = email.split("@")[-1] if "@" in email else ""
+                if domain in domains:
+                    found.append({"id": a.get("id"), "email": email})
+            offset += 100
+            _time.sleep(0.5)
+
+        return _cors(jsonify({"ok": True, "accounts": found, "count": len(found)}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
+@app.route("/api/group/setup-tags", methods=["POST", "OPTIONS"])
+def group_setup_tags():
+    """Get or create the 3 required tags (Zapmail, group letter, date)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        letter = body.get("letter", "").strip().upper()
+        if not letter:
+            return _cors(jsonify({"error": "letter required"})), 400
+
+        SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+        SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+        def sl_h():
+            return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
+        def _gql(query, variables=None):
+            b = {"query": query}
+            if variables: b["variables"] = variables
+            return req.post(SMARTLEAD_GQL, headers=sl_h(), json=b, timeout=30).json()
+
+        tags_result = _gql("{ tags { id name color } }")
+        all_tags = {t["name"]: t for t in tags_result.get("data", {}).get("tags", [])}
+
+        ZAPMAIL_TAG_ID = 262254
+        tag_name = f"Generic {letter}"
+        today_str = _time.strftime("%-m/%-d/%y")
+
+        group_tag_id = None
+        if tag_name in all_tags:
+            group_tag_id = all_tags[tag_name]["id"]
+        else:
+            used_colors = {t.get("color", "").upper() for t in all_tags.values()}
+            palette = ["#FF6B6B", "#FF8E72", "#FFA94D", "#FFD43B", "#A9E34B",
+                       "#51CF66", "#20C997", "#22B8CF", "#339AF0", "#5C7CFA",
+                       "#7950F2", "#BE4BDB", "#E64980", "#F06595", "#CC5DE8"]
+            color = next((c for c in palette if c.upper() not in used_colors), "#7950F2")
+            mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
+            result = _gql(mut, {"o": {"name": tag_name, "color": color}})
+            group_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
+
+        date_tag_id = None
+        if today_str in all_tags:
+            date_tag_id = all_tags[today_str]["id"]
+        else:
+            mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
+            result = _gql(mut, {"o": {"name": today_str, "color": "#94a3b8"}})
+            date_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
+
+        if not group_tag_id or not date_tag_id:
+            return _cors(jsonify({"error": "Failed to create tags"})), 500
+
+        return _cors(jsonify({"ok": True, "tag_ids": [ZAPMAIL_TAG_ID, group_tag_id, date_tag_id],
+                              "tag_names": ["Zapmail", tag_name, today_str]}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
+@app.route("/api/group/finalize-account", methods=["POST", "OPTIONS"])
+def group_finalize_account():
+    """Tag one account + enable warmup. Called per-account from frontend."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import time as _time
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        account_id = body.get("account_id")
+        tag_ids = body.get("tag_ids", [])
+        if not account_id or not tag_ids:
+            return _cors(jsonify({"error": "account_id and tag_ids required"})), 400
+
+        SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
+        SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
+        SMARTLEAD_INTERNAL = "https://server.smartlead.ai/api"
+        SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
+        def sl_h():
+            return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
+
+        # Tag the account
+        tag_body = {"id": account_id, "tags": tag_ids, "clientId": None}
+        r = req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-management-details",
+                     headers=sl_h(), json=tag_body, timeout=30)
+        tagged = r.status_code == 200
+
+        # Enable warmup (public API)
+        warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
+                       "daily_rampup": 5, "reply_rate_percentage": 40}
+        r = req.post(f"{SMARTLEAD_API}/email-accounts/{account_id}/warmup?api_key={SMARTLEAD_KEY}",
+                     json=warmup_body, timeout=30)
+        warmed = r.status_code == 200
+
+        # Full warmup config (internal API)
+        warmup_key = ""
+        wd = req.get(f"{SMARTLEAD_INTERNAL}/email-account/fetch-warmup-details-by-email-account-id/{account_id}",
+                     headers=sl_h(), timeout=30)
+        if wd.status_code == 200:
+            warmup_key = wd.json().get("message", {}).get("warmup_key_id", "")
+        if warmup_key:
+            full_body = {
+                "emailAccountId": str(account_id), "maxEmailPerDay": 15,
+                "isRampupEnabled": True, "rampupValue": 5,
+                "warmupMinCount": 10, "warmupMaxCount": 15,
+                "replyRate": 40, "dailyReplyLimit": 15,
+                "autoAdjustWarmup": False, "sendWarmupsOnlyOnWeekdays": False,
+                "useCustomDomain": False, "status": "ACTIVE", "warmupKeyId": warmup_key
+            }
+            req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-warmup",
+                     headers=sl_h(), json=full_body, timeout=30)
+
+        return _cors(jsonify({"ok": True, "tagged": tagged, "warmed": warmed}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/finalize-generic-group", methods=["POST", "OPTIONS"])
 def finalize_generic_group():
     """Phase 2: Export to SmartLead, tag with Zapmail + Generic letter + date, enable warmup."""
