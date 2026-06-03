@@ -2421,14 +2421,33 @@ def finalize_generic_group():
             return _cors(jsonify({"error": "letter required"})), 400
 
         import db as store
+        from datetime import datetime, timezone
         state = store.get_state(f"generic_group_wizard_{letter}")
         if not state:
             return _cors(jsonify({"error": f"No pending group {letter} — run Phase 1 first"})), 400
+
+        # If already finalizing, check if it's recent — don't restart
+        if state.get("phase") == "finalizing":
+            updated = state.get("_finalize_started", "")
+            if updated:
+                try:
+                    started = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - started).total_seconds()
+                    if age < 300:  # within 5 min — still running
+                        return _cors(jsonify({"ok": True, "already_running": True,
+                                              "step": state.get("finalize_step", "unknown"),
+                                              "detail": state.get("finalize_detail", ""),
+                                              "age_seconds": int(age)}))
+                except Exception:
+                    pass
+
         if state.get("phase") not in ("mailboxes_created", "export_failed", "finalizing"):
             if state.get("phase") == "complete" and state.get("accounts_found", 0) == 0:
                 pass  # allow re-run if complete but 0 accounts
             else:
                 return _cors(jsonify({"error": f"Group {letter} phase is '{state.get('phase')}' — expected mailboxes_created"})), 400
+
+        state["_finalize_started"] = datetime.now(timezone.utc).isoformat()
 
         ZAPMAIL_API = "https://api.zapmail.ai/api"
         ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()

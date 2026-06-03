@@ -2189,16 +2189,14 @@ function _wizFinalizeResume() {
     var fp = s.finalizeProgress;
     var domains = s._allDomains || s.purchasedDomains || [];
 
-    s.log.push('Resuming finalize — checking server state...');
-    _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Resumed — checking if server is still running' });
-
     if (fp.provision !== 'done') {
+        s.log.push('Resuming — checking mailbox provisioning...');
         _wizFinalizeProvisionPoll(domains, 0);
         return;
     }
-    // Everything after provision runs server-side — poll for status
+    // Everything after provision runs server-side — just poll for status, don't re-fire
+    s.log.push('Checking server progress...');
     _wizPollServerProgress();
-    _wizFinalizeServerSide();
 }
 
 function _wizardFinalize() {
@@ -2274,6 +2272,11 @@ function _wizFinalizeServerSide() {
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ letter: s.letter })
     }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.already_running) {
+            s.log.push('Server already running (' + d.step + ': ' + d.detail + ') — polling for updates');
+            _wizPollServerProgress();
+            return;
+        }
         if (d.error) {
             s.log.push('Server finalize error: ' + d.error);
             _wizFinalizeSetStep('find', 'error');
