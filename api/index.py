@@ -1545,27 +1545,39 @@ def create_generic_group():
 
         _log(f"{len(domain_info)} domains connected")
 
-        # Step 3: Buy mailbox slots if needed
+        # Step 3: Buy mailbox slots if needed (retry on low wallet — auto-topoff takes ~60s)
         inboxes_needed = len(domain_info) * 3
-        ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
-        ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
-        purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-        assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-        free_slots = purchased - assigned
+        buy_ok = False
+        for buy_attempt in range(3):
+            ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
+            ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
+            purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
+            assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
+            free_slots = purchased - assigned
 
-        if free_slots < inboxes_needed:
+            if free_slots >= inboxes_needed:
+                _log(f"Have {free_slots} free slots (need {inboxes_needed})")
+                buy_ok = True
+                break
             to_buy = inboxes_needed - free_slots
             _log(f"Buying {to_buy} mailbox slots...")
             buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
                              headers=zm_h(), json={}, timeout=30)
             buy_data = buy_r.json()
-            if buy_r.status_code != 200 or "Insufficient" in str(buy_data.get("message", "")):
-                return _cors(jsonify({"error": f"Failed to buy slots: {buy_data.get('message', buy_r.text[:200])}",
-                                      "log": log_lines})), 400
-            _log(f"Bought {to_buy} slots")
-            _time.sleep(3)
-        else:
-            _log(f"Have {free_slots} free slots (need {inboxes_needed})")
+            if buy_r.status_code == 200 and "Insufficient" not in str(buy_data.get("message", "")):
+                _log(f"Bought {to_buy} slots")
+                _time.sleep(3)
+                buy_ok = True
+                break
+            if "Insufficient" in str(buy_data.get("message", "")) and buy_attempt < 2:
+                wait_sec = 60 * (buy_attempt + 1)
+                _log(f"Wallet balance too low, waiting {wait_sec}s for auto-topoff (attempt {buy_attempt + 1}/3)...")
+                _time.sleep(wait_sec)
+                continue
+            return _cors(jsonify({"error": f"Failed to buy slots: {buy_data.get('message', buy_r.text[:200])}",
+                                  "log": log_lines})), 400
+        if not buy_ok:
+            return _cors(jsonify({"error": "Zapmail wallet balance too low after retries", "log": log_lines})), 400
 
         # Step 4: Create mailboxes
         SPECS = [
@@ -1712,26 +1724,33 @@ def group_connect_domains():
             for dn in domains[:30]:
                 domain_checks.setdefault(dn, []).append(f"zapmail_verify: SKIP — {str(e)[:60]}")
 
-        # Buy mailbox slots proactively
+        # Buy mailbox slots proactively (retry on low wallet)
         slots_bought = 0
         try:
             inboxes_needed = len(domains) * 3
-            ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
-            ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
-            purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-            assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-            free_slots = purchased - assigned
-            if free_slots < inboxes_needed:
+            for buy_attempt in range(3):
+                ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
+                ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
+                purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
+                assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
+                free_slots = purchased - assigned
+                if free_slots >= inboxes_needed:
+                    log.append(f"Have {free_slots} free slots (need {inboxes_needed})")
+                    break
                 to_buy = inboxes_needed - free_slots
                 buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
                                  headers=zm_h(), json={}, timeout=30)
                 if buy_r.status_code == 200:
                     slots_bought = to_buy
                     log.append(f"Bought {to_buy} mailbox slots")
-                else:
-                    log.append(f"Slot purchase failed: {buy_r.text[:100]}")
-            else:
-                log.append(f"Have {free_slots} free slots (need {inboxes_needed})")
+                    break
+                if "Insufficient" in buy_r.text and buy_attempt < 2:
+                    wait_sec = 60 * (buy_attempt + 1)
+                    log.append(f"Wallet low, waiting {wait_sec}s for auto-topoff (attempt {buy_attempt + 1}/3)")
+                    _time.sleep(wait_sec)
+                    continue
+                log.append(f"Slot purchase failed: {buy_r.text[:100]}")
+                break
         except Exception as e:
             log.append(f"Slot check error: {str(e)[:80]}")
 
@@ -1821,30 +1840,43 @@ def group_setup_domain():
             result["checks"].append(f"existing_mailboxes: {len(existing_mb)} found, creating new")
 
         if not skip_creation:
-            # Step 3: Buy mailbox slots if needed
+            # Step 3: Buy mailbox slots if needed (retry on low wallet — auto-topoff takes ~60s)
             needed = 3 - len(existing_mb)
-            try:
-                ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
-                ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
-                purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-                assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-                free_slots = purchased - assigned
-                if free_slots < needed:
+            buy_ok = False
+            for buy_attempt in range(3):
+                try:
+                    ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
+                    ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
+                    purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
+                    assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
+                    free_slots = purchased - assigned
+                    if free_slots >= needed:
+                        result["checks"].append(f"slot_check: OK ({free_slots} free, need {needed})")
+                        buy_ok = True
+                        break
                     to_buy = max(needed - free_slots, 3)
                     buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
                                      headers=zm_h(), json={}, timeout=30)
                     if buy_r.status_code == 200:
                         result["checks"].append(f"buy_slots: OK (bought {to_buy}, had {free_slots} free)")
-                    else:
-                        buy_msg = buy_r.text[:120]
-                        result["checks"].append(f"buy_slots: FAILED — HTTP {buy_r.status_code}: {buy_msg}")
-                        if "Insufficient wallet balance" in buy_msg:
-                            result["error"] = f"Zapmail wallet balance too low — add funds at zapmail.ai"
-                            return _cors(jsonify(result))
-                else:
-                    result["checks"].append(f"slot_check: OK ({free_slots} free, need {needed})")
-            except Exception as e:
-                result["checks"].append(f"slot_check: WARN — {str(e)[:60]}")
+                        buy_ok = True
+                        break
+                    buy_msg = buy_r.text[:120]
+                    if "Insufficient wallet balance" in buy_msg and buy_attempt < 2:
+                        wait_sec = 60 * (buy_attempt + 1)
+                        result["checks"].append(f"buy_slots: wallet low, waiting {wait_sec}s for auto-topoff (attempt {buy_attempt + 1})")
+                        _time.sleep(wait_sec)
+                        continue
+                    result["checks"].append(f"buy_slots: FAILED — HTTP {buy_r.status_code}: {buy_msg}")
+                    result["error"] = f"Zapmail wallet balance too low — add funds at zapmail.ai"
+                    return _cors(jsonify(result))
+                except Exception as e:
+                    result["checks"].append(f"slot_check: WARN — {str(e)[:60]}")
+                    buy_ok = True
+                    break
+            if not buy_ok:
+                result["error"] = "Zapmail wallet balance too low after retries"
+                return _cors(jsonify(result))
 
             # Step 4: Create mailboxes with retry (slots take time to propagate after purchase)
             SPECS = [
