@@ -950,7 +950,7 @@ function _pipeLiveStatus(run) {
         return { text: 'Finding available domains...', sub: found + '/' + ws.targetCount + ' found so far' };
     }
     if (phase === 'found') {
-        return { text: (ws.checkResults || []).length + ' domains found', sub: 'Ready to purchase' };
+        return { text: (ws.checkResults || []).length + ' domains found — ready to purchase', sub: 'Click "Purchase" to buy domains and set CloudNS nameservers', waiting: true };
     }
     if (phase === 'purchasing' && pp) {
         var bought = pp.filter(function(p) { return p.purchased; }).length;
@@ -958,10 +958,26 @@ function _pipeLiveStatus(run) {
         return { text: 'Purchasing domains (' + bought + '/' + pp.length + ')', sub: current ? 'Buying ' + current.domain + '...' : null };
     }
     if (phase === 'purchased') {
-        return { text: (ws.purchasedDomains || []).length + ' domains purchased', sub: 'Nameservers set — select domains for mailboxes' };
+        return { text: (ws.purchasedDomains || []).length + ' domains purchased + NS set to CloudNS', sub: 'Select domains below and click "Create Group" to continue', waiting: true };
     }
     if (phase === 'picking') {
-        return { text: 'Selecting domains for group', sub: null };
+        var pickMsg = 'Waiting for you to select domains';
+        var pickSub = 'Pick domains below and click "Create Group ' + (ws.letter || '') + '" to start connecting to Zapmail';
+        var prevErrors = (ws.createProgress || []).filter(function(p) { return p.status === 'error'; });
+        if (prevErrors.length > 0) {
+            pickMsg = 'Previous attempt: ' + prevErrors.length + '/' + ws.createProgress.length + ' domains failed';
+            var reasons = {};
+            for (var ei = 0; ei < prevErrors.length; ei++) {
+                var reason = prevErrors[ei].error || 'unknown';
+                if (reason.indexOf('DNS') >= 0 || reason.indexOf('propagat') >= 0) reason = 'DNS still propagating';
+                else if (reason.indexOf('mailbox') >= 0 || reason.indexOf('Mailbox') >= 0) reason = 'Mailbox creation failed';
+                reasons[reason] = (reasons[reason] || 0) + 1;
+            }
+            var reasonParts = [];
+            for (var r in reasons) reasonParts.push(reasons[r] + 'x ' + r);
+            pickSub = reasonParts.join(', ') + ' — select domains to retry';
+        }
+        return { text: pickMsg, sub: pickSub, waiting: true };
     }
     if (phase === 'creating' && cp) {
         var done = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
@@ -981,7 +997,15 @@ function _pipeLiveStatus(run) {
         return { text: statusText, sub: sub, progress: cp };
     }
     if (phase === 'mailboxes_done') {
-        return { text: 'Mailboxes created', sub: 'Ready to export to SmartLead' };
+        var mbTotal = 0;
+        var mbDomains = 0;
+        if (ws.createProgress) {
+            for (var mi = 0; mi < ws.createProgress.length; mi++) {
+                mbTotal += (ws.createProgress[mi].mailboxes || 0);
+                if (ws.createProgress[mi].mailboxes > 0) mbDomains++;
+            }
+        }
+        return { text: mbTotal + ' mailboxes created on ' + mbDomains + ' domains', sub: 'Click "Export to SmartLead" to continue to tagging + warmup', waiting: true };
     }
     if (phase === 'finalizing' && fp) {
         if (fp.accounts === 'active') return { text: 'Tagging + warmup (' + (fp.accountsDone || 0) + '/' + (fp.accountsTotal || '?') + ' accounts)', sub: null };
@@ -998,10 +1022,11 @@ function _pipeLiveStatus(run) {
 }
 
 function _pipeRenderRow(run) {
-    var borderCol = run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#3b82f6';
     var detail = run.stepDetails || {};
     var domCount = (run.domains && run.domains.length) || 0;
     var live = _pipeLiveStatus(run);
+    var isWaiting = live && live.waiting;
+    var borderCol = run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : isWaiting ? '#f59e0b' : '#3b82f6';
     var spin = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px;"></span>';
 
     var html = '<div style="background:#0f1219;border-radius:8px;margin-bottom:8px;border-left:3px solid ' + borderCol + ';padding:12px 16px;">';
@@ -1012,6 +1037,7 @@ function _pipeRenderRow(run) {
     html += '<span style="font-size:14px;font-weight:600;color:#f1f5f9;">Generic ' + esc(run.letter) + '</span>';
     var badge = run.status === 'completed' ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#22c55e20;color:#22c55e;">Complete</span>' :
                 run.status === 'error' ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#ef444420;color:#ef4444;">Error</span>' :
+                isWaiting ? '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#f59e0b20;color:#f59e0b;">Action Required</span>' :
                 '<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:#3b82f620;color:#3b82f6;">Running</span>';
     html += badge;
     if (domCount > 0) html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' ' + esc(run.tld || '') + ' domains</span>';
@@ -1039,11 +1065,13 @@ function _pipeRenderRow(run) {
 
     // Live status: the main "what's happening now" section
     if (live) {
-        html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+        var statusBg = isWaiting ? '#f59e0b10' : '#1e293b';
+        html += '<div style="background:' + statusBg + ';border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
         html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">';
-        if (run.status === 'active') html += spin;
+        if (run.status === 'active' && !isWaiting) html += spin;
+        if (isWaiting) html += '<span style="margin-right:6px;font-size:14px;">👉</span>';
         html += esc(live.text) + '</div>';
-        if (live.sub) html += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;padding-left:22px;">' + esc(live.sub) + '</div>';
+        if (live.sub) html += '<div style="font-size:11px;color:' + (isWaiting ? '#f59e0b' : '#94a3b8') + ';margin-top:3px;padding-left:22px;">' + esc(live.sub) + '</div>';
 
         // Per-domain progress table for creating phase
         if (live.progress) {
@@ -1122,15 +1150,35 @@ function _pipeRenderRow(run) {
         html += '<div style="font-size:11px;color:#ef4444;background:#ef444415;padding:6px 10px;border-radius:4px;margin-bottom:8px;">' + esc(run.error) + '</div>';
     }
 
-    // Activity log (collapsible)
+    // Recent activity (last 3 visible) + full log (collapsible)
     var log = run.activityLog || [];
     if (log.length > 0) {
-        html += '<details style="margin-bottom:4px;"><summary style="font-size:10px;color:#475569;cursor:pointer;list-style:none;">Activity log (' + log.length + ' entries)</summary>';
-        html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:100px;overflow-y:auto;background:#0a0d14;border-radius:4px;padding:6px 8px;margin-top:4px;">';
-        for (var li = log.length - 1; li >= 0; li--) {
-            html += '<div style="padding:1px 0;' + (li === log.length - 1 ? 'color:#e2e8f0;' : '') + '">' + esc(log[li]) + '</div>';
+        html += '<div style="margin-bottom:4px;">';
+        var recentCount = Math.min(3, log.length);
+        html += '<div style="font-size:10px;font-family:monospace;background:#0a0d14;border-radius:4px;padding:6px 8px;">';
+        html += '<div style="color:#475569;margin-bottom:4px;font-size:9px;">Recent activity:</div>';
+        for (var ri = log.length - recentCount; ri < log.length; ri++) {
+            var logLine = log[ri];
+            var lineCol = '#94a3b8';
+            if (logLine.indexOf('FAILED') >= 0 || logLine.indexOf('error') >= 0 || logLine.indexOf('Error') >= 0) lineCol = '#ef4444';
+            else if (logLine.indexOf('OK') >= 0 || logLine.indexOf('Complete') >= 0 || logLine.indexOf('complete') >= 0) lineCol = '#22c55e';
+            else if (logLine.indexOf('WARN') >= 0 || logLine.indexOf('Resumed') >= 0) lineCol = '#f59e0b';
+            html += '<div style="padding:1px 0;color:' + lineCol + ';">' + esc(logLine) + '</div>';
         }
-        html += '</div></details>';
+        html += '</div>';
+        if (log.length > 3) {
+            html += '<details style="margin-top:4px;"><summary style="font-size:10px;color:#475569;cursor:pointer;list-style:none;">Full log (' + log.length + ' entries)</summary>';
+            html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:150px;overflow-y:auto;background:#0a0d14;border-radius:4px;padding:6px 8px;margin-top:4px;">';
+            for (var li = log.length - 1; li >= 0; li--) {
+                var lCol = '#94a3b8';
+                if (log[li].indexOf('FAILED') >= 0 || log[li].indexOf('error') >= 0 || log[li].indexOf('Error') >= 0) lCol = '#ef4444';
+                else if (log[li].indexOf('OK') >= 0 || log[li].indexOf('Complete') >= 0) lCol = '#22c55e';
+                else if (log[li].indexOf('WARN') >= 0) lCol = '#f59e0b';
+                html += '<div style="padding:1px 0;color:' + lCol + ';">' + esc(log[li]) + '</div>';
+            }
+            html += '</div></details>';
+        }
+        html += '</div>';
     }
 
     html += '</div>';
