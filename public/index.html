@@ -963,11 +963,20 @@ function _pipeLiveStatus(run) {
     }
     if (phase === 'creating' && cp) {
         var done = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
+        var errors = cp.filter(function(p) { return p.status === 'error'; }).length;
         var active = cp.filter(function(p) { return p.status === 'active'; })[0];
         var totalMb = 0;
         for (var i = 0; i < cp.length; i++) totalMb += (cp[i].mailboxes || 0);
-        var sub = active ? active.domain + ' — creating mailboxes + setting photos' : null;
-        return { text: 'Creating mailboxes (' + done + '/' + cp.length + ' domains, ' + totalMb + ' mailboxes)', sub: sub, progress: cp };
+        var sub = null;
+        if (ws.createStep === 'connecting') {
+            sub = 'Connecting all domains to Zapmail...';
+        } else if (active) {
+            var subStep = !active.zapmail ? 'finding domain in Zapmail' : active.mailboxes === 0 ? 'creating 3 mailboxes' : 'setting profile photos';
+            sub = active.domain + ' — ' + subStep;
+        }
+        var statusText = 'Creating mailboxes (' + done + '/' + cp.length + ' domains, ' + totalMb + ' mailboxes)';
+        if (errors > 0) statusText += ' — ' + errors + ' failed';
+        return { text: statusText, sub: sub, progress: cp };
     }
     if (phase === 'mailboxes_done') {
         return { text: 'Mailboxes created', sub: 'Ready to export to SmartLead' };
@@ -1702,7 +1711,7 @@ function _wizSetupNext(idx) {
         return;
     }
     cp[idx].status = 'active';
-    _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Setting up ' + cp[idx].domain + ' (mailboxes + photos)...' });
+    _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Setting up ' + cp[idx].domain + ' — finding in Zapmail...' });
     renderCreateGroupWizard();
     fetch('/api/group/setup-domain' + _authQs(), {
         method: 'POST',
@@ -1714,10 +1723,24 @@ function _wizSetupNext(idx) {
         cp[idx].photos = !!d.photos_set;
         cp[idx].mb_ids = d.mb_ids || [];
         cp[idx].error = d.error || null;
-        cp[idx].status = d.error && !d.zapmail_connected ? 'error' : 'done';
+
+        // Checkpoint: only mark done if mailboxes were actually created
+        if (cp[idx].mailboxes >= 3) {
+            cp[idx].status = 'done';
+            var logSuffix = (d.skipped ? ' — already had ' : ' — ') + cp[idx].mailboxes + ' mailboxes' + (cp[idx].photos ? ' + photos' : '');
+            if (d.verified) logSuffix += ' (verified)';
+            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + logSuffix });
+        } else if (cp[idx].zapmail && cp[idx].mailboxes === 0) {
+            cp[idx].status = 'error';
+            cp[idx].error = cp[idx].error || 'Mailbox creation returned 0 — check Zapmail manually';
+            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — FAILED: no mailboxes created' });
+        } else {
+            cp[idx].status = 'error';
+            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — error: ' + (cp[idx].error || 'unknown') });
+        }
+
         var doneCount = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
-        var logSuffix = cp[idx].error ? ' — error: ' + cp[idx].error : ' — ' + cp[idx].mailboxes + ' mailboxes + photos';
-        _pipeUpsert(_wizardState.letter, 'creating', { detail: doneCount + '/' + cp.length + ' domains', logMsg: cp[idx].domain + logSuffix });
+        _pipeUpsert(_wizardState.letter, 'creating', { detail: doneCount + '/' + cp.length + ' domains' });
         renderCreateGroupWizard();
         _wizSetupNext(idx + 1);
     }).catch(function(e) {

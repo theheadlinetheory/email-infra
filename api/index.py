@@ -1618,6 +1618,24 @@ def group_setup_domain():
 
         result["zapmail_connected"] = True
 
+        # Check if mailboxes already exist (idempotent)
+        existing_mb = []
+        try:
+            dr = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
+            for dd in dr.json().get("data", {}).get("domains", []):
+                if dd.get("domain") == domain and dd.get("mailboxes"):
+                    existing_mb = [m.get("id") for m in dd["mailboxes"] if isinstance(m, dict) and m.get("id")]
+                    break
+        except Exception:
+            pass
+
+        if len(existing_mb) >= 3:
+            result["mb_ids"] = existing_mb
+            result["mailboxes_created"] = len(existing_mb)
+            result["photos_set"] = True
+            result["skipped"] = "mailboxes already exist"
+            return _cors(jsonify(result))
+
         # Create 3 mailboxes
         SPECS = [
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
@@ -1630,15 +1648,28 @@ def group_setup_domain():
             r = req.post(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json=payload, timeout=60)
             mb_data = r.json()
             mb_ids = mb_data.get("data", [])
-            if isinstance(mb_ids, list):
+            if isinstance(mb_ids, list) and len(mb_ids) > 0:
                 result["mb_ids"] = mb_ids
                 result["mailboxes_created"] = len(mb_ids)
             else:
-                result["error"] = f"Mailbox creation unexpected response: {str(mb_data)[:150]}"
+                result["error"] = f"Mailbox creation failed: {mb_data.get('message', str(mb_data)[:150])}"
                 return _cors(jsonify(result))
         except Exception as e:
             result["error"] = f"Mailbox creation failed: {str(e)[:150]}"
             return _cors(jsonify(result))
+
+        # Verify: re-fetch domain to confirm mailboxes exist
+        _time.sleep(1)
+        try:
+            vr = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
+            for dd in vr.json().get("data", {}).get("domains", []):
+                if dd.get("domain") == domain:
+                    actual_mb = dd.get("mailboxes", [])
+                    if isinstance(actual_mb, list) and len(actual_mb) >= 3:
+                        result["verified"] = True
+                    break
+        except Exception:
+            pass
 
         # Set profile photos
         if result["mb_ids"]:
