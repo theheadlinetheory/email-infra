@@ -1423,7 +1423,7 @@ def available_domains():
         try:
             zm_api = "https://api.zapmail.ai/api"
             zm_key = os.environ.get("ZAPMAIL_API_KEY", "").strip()
-            zm_headers = {"x-api-key": zm_key}
+            zm_headers = {"x-auth-zapmail": zm_key, "Content-Type": "application/json"}
             pg = 1
             while True:
                 zr = req.get(f"{zm_api}/v2/domains?page={pg}&limit=100",
