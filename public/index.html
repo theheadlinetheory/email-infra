@@ -1044,13 +1044,30 @@ function _pipeRenderRow(run) {
             html += '</div>';
         }
         html += '</div>';
-    } else if (run.status === 'active') {
-        // Fallback: show stored detail
+    } else if (run.status === 'active' || run.status === 'error') {
+        // Fallback: build status from stored run data
         var activeDetail = detail[run.stepIdx];
-        if (activeDetail) {
-            html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
-            html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;">' + spin + esc(activeDetail) + '</div>';
-            html += '</div>';
+        var lastLog = (run.activityLog && run.activityLog.length) ? run.activityLog[run.activityLog.length - 1] : null;
+        var stepDescriptions = [
+            'Finding available ' + esc(run.tld || '') + ' domains',
+            'Purchasing domains + setting nameservers',
+            'Connecting to Zapmail + creating mailboxes + setting photos',
+            'Exporting to SmartLead + tagging + enabling warmup'
+        ];
+        var fallbackText = activeDetail || stepDescriptions[run.stepIdx] || 'Processing...';
+        html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+        html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">';
+        if (run.status === 'active') html += spin;
+        html += esc(fallbackText) + '</div>';
+        if (lastLog) html += '<div style="font-size:10px;color:#94a3b8;margin-top:4px;padding-left:' + (run.status === 'active' ? '22' : '0') + 'px;font-family:monospace;">Last: ' + esc(lastLog) + '</div>';
+        if (domCount > 0 && run.stepIdx >= 2) {
+            html += '<div style="font-size:10px;color:#64748b;margin-top:4px;padding-left:' + (run.status === 'active' ? '22' : '0') + 'px;">Domains: ' + run.domains.map(function(d) { return esc(d); }).join(', ') + '</div>';
+        }
+        html += '</div>';
+    } else if (run.status === 'completed') {
+        var completedDetail = detail[3] || detail[2] || '';
+        if (completedDetail) {
+            html += '<div style="font-size:11px;color:#94a3b8;margin-bottom:8px;">' + esc(completedDetail) + '</div>';
         }
     }
 
