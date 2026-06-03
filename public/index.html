@@ -951,10 +951,11 @@ function _pipeRemove(id) {
     _pipeSave(runs);
     renderPipelineRuns();
 }
+var _pipeServerPollTimers = {};
 function _pipeAutoCheckActive() {
     var runs = _pipeGet();
     for (var i = 0; i < runs.length; i++) {
-        if (runs[i].status === 'active' && runs[i].stepIdx >= 3 && _wizardState.letter !== runs[i].letter) {
+        if (runs[i].status === 'active' && runs[i].stepIdx >= 3) {
             _pipeCheckServer(runs[i].letter, runs[i].id);
         }
     }
@@ -963,18 +964,37 @@ function _pipeCheckServer(letter, runId) {
     fetch('/api/group/wizard-state' + _authQs() + '&letter=' + letter, { headers: _authHeaders() })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (!d.state) { _pipeUpsert(letter, 'finalizing', { logMsg: 'No server state found — may need to retry' }); return; }
+            if (!d.state) { _pipeUpsert(letter, 'finalizing', { detail: 'Waiting for server...', logMsg: 'No server state yet' }); _pipeSchedulePoll(letter, runId); return; }
             var st = d.state;
             if (st.phase === 'complete') {
+                _pipeStopPoll(letter);
                 _pipeUpsert(letter, 'complete', { detail: (st.accounts_found || 0) + ' accounts configured', logMsg: 'Complete: ' + (st.accounts_found || 0) + ' accounts' });
             } else if (st.finalize_step) {
-                _pipeUpsert(letter, 'finalizing', { detail: st.finalize_detail || st.finalize_step, logMsg: 'Server: ' + (st.finalize_detail || st.finalize_step) });
+                _pipeUpsert(letter, 'finalizing', { detail: st.finalize_detail || st.finalize_step });
+                _pipeSchedulePoll(letter, runId);
             } else {
-                _pipeUpsert(letter, 'finalizing', { logMsg: 'Server state: ' + (st.phase || 'unknown') });
+                _pipeUpsert(letter, 'finalizing', { detail: st.phase || 'processing' });
+                _pipeSchedulePoll(letter, runId);
             }
         }).catch(function() {
-            _pipeUpsert(letter, 'finalizing', { logMsg: 'Could not reach server — try again' });
+            _pipeSchedulePoll(letter, runId);
         });
+}
+function _pipeSchedulePoll(letter, runId) {
+    if (_pipeServerPollTimers[letter]) return;
+    _pipeServerPollTimers[letter] = setTimeout(function() {
+        _pipeServerPollTimers[letter] = null;
+        var runs = _pipeGet();
+        for (var i = 0; i < runs.length; i++) {
+            if (runs[i].letter === letter && runs[i].status === 'active') {
+                _pipeCheckServer(letter, runs[i].id);
+                return;
+            }
+        }
+    }, 10000);
+}
+function _pipeStopPoll(letter) {
+    if (_pipeServerPollTimers[letter]) { clearTimeout(_pipeServerPollTimers[letter]); _pipeServerPollTimers[letter] = null; }
 }
 function _pipeRefinalize(letter, runId) {
     var runs = _pipeGet();
@@ -1192,7 +1212,7 @@ function _pipeRenderRow(run) {
         } else {
             html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
         }
-    } else if (run.status === 'active' && run.stepIdx >= 3 && _wizardState.letter !== run.letter) {
+    } else if (run.status === 'active' && run.stepIdx >= 3) {
         html += '<button onclick="_pipeCheckServer(\'' + run.letter + '\',' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Check Status</button>';
     }
     html += '<button onclick="if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 8px;font-size:10px;background:transparent;color:#475569;border:1px solid #334155;border-radius:4px;cursor:pointer;">&times;</button>';
@@ -1260,7 +1280,9 @@ function _pipeRenderRow(run) {
         }
         html += '<div style="background:#1e293b;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
         if (run.status === 'active' && realStep >= 3) {
-            html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">' + spin + 'Running on server</div>';
+            var serverDetail = activeDetail || '';
+            var serverText = serverDetail ? 'Running on server — ' + serverDetail : 'Running on server';
+            html += '<div style="display:flex;align-items:center;font-size:13px;color:#e2e8f0;font-weight:500;">' + spin + esc(serverText) + '</div>';
             html += '<div style="font-size:11px;color:#94a3b8;margin-top:3px;padding-left:22px;">Safe to close browser</div>';
         } else {
             var fallbackText = activeDetail || 'Processing...';
