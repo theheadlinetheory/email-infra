@@ -12,3 +12,4 @@ __pycache__/
 .superpowers/
 .DS_Store
 .vercel
+.env*.local

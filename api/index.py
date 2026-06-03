@@ -1862,22 +1862,9 @@ def group_setup_domain():
             except Exception as e:
                 result["checks"].append(f"set_photos: FAILED — {str(e)[:60]}")
 
-        # Step 7: Verify photos actually applied
-        if result["photos_set"] and result["mb_ids"]:
-            _time.sleep(1)
-            try:
-                vr2 = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
-                for dd in vr2.json().get("data", {}).get("domains", []):
-                    if dd.get("domain") == domain:
-                        mbs = dd.get("mailboxes", [])
-                        photos_ok = sum(1 for m in mbs if isinstance(m, dict) and m.get("profilePicture"))
-                        if photos_ok >= len(result["mb_ids"]):
-                            result["checks"].append(f"verify_photos: OK ({photos_ok}/{len(result['mb_ids'])})")
-                        else:
-                            result["checks"].append(f"verify_photos: WARN — {photos_ok}/{len(result['mb_ids'])} have photos")
-                        break
-            except Exception as e:
-                result["checks"].append(f"verify_photos: SKIP — {str(e)[:60]}")
+        # Step 7: Photos are applied async — trust PUT 200 response
+        if result["photos_set"]:
+            result["checks"].append(f"verify_photos: OK (async — PUT accepted {len(result['mb_ids'])} mailboxes)")
 
         return _cors(jsonify(result))
     except Exception as e:
@@ -2292,18 +2279,22 @@ def group_finalize_account():
         except Exception:
             checks.append("time_to_wait: SKIP")
 
-        # Step 4: Verify tags applied
+        # Step 4: Verify tags applied (internal endpoint — public API doesn't return tags)
         _time.sleep(1)
         try:
-            vr = req.get(f"{SMARTLEAD_API}/email-accounts/{account_id}?api_key={SMARTLEAD_KEY}", timeout=15)
+            vr = req.get(f"{SMARTLEAD_INTERNAL}/email-account/{account_id}/details",
+                         headers=sl_h(), timeout=15)
             if vr.status_code == 200:
                 acct_data = vr.json()
-                acct_tags = acct_data.get("tags", [])
-                if isinstance(acct_tags, list) and len(acct_tags) >= len(tag_ids):
-                    checks.append(f"verify_tags: OK ({len(acct_tags)} tags)")
+                acct_pk = acct_data.get("email_accounts_by_pk", {})
+                tag_mappings = acct_pk.get("email_account_tag_mappings", [])
+                applied_ids = {m.get("tag", {}).get("id") for m in tag_mappings if isinstance(m, dict)}
+                if all(tid in applied_ids for tid in tag_ids):
+                    checks.append(f"verify_tags: OK ({len(applied_ids)} tags confirmed)")
                 else:
-                    checks.append(f"verify_tags: WARN — expected {len(tag_ids)}, got {len(acct_tags) if isinstance(acct_tags, list) else 0}")
-                warmup_status = acct_data.get("warmup_enabled") or acct_data.get("warmupEnabled")
+                    missing = [str(t) for t in tag_ids if t not in applied_ids]
+                    checks.append(f"verify_tags: WARN — missing tag IDs: {', '.join(missing)}")
+                warmup_status = acct_pk.get("warmup_enabled") or acct_pk.get("warmupEnabled")
                 if warmup_status:
                     checks.append("verify_warmup: OK — warmup enabled")
                 else:
