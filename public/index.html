@@ -904,9 +904,10 @@ function renderPipelineRuns() {
     var runs = _pipeGet();
     if (!runs.length) { el.innerHTML = ''; return; }
     var box = 'margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:20px 24px;';
-    var active = [], completed = [], errored = [];
+    var active = [], completed = [], errored = [], queued = [];
     for (var i = 0; i < runs.length; i++) {
-        if (runs[i].status === 'active') active.push(runs[i]);
+        if (runs[i].status === 'queued') queued.push(runs[i]);
+        else if (runs[i].status === 'active') active.push(runs[i]);
         else if (runs[i].status === 'completed') completed.push(runs[i]);
         else errored.push(runs[i]);
     }
@@ -917,6 +918,21 @@ function renderPipelineRuns() {
         html += '<div style="margin-bottom:16px;">';
         html += '<div style="font-size:12px;color:#3b82f6;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Active (' + active.length + ')</div>';
         for (var a = 0; a < active.length; a++) html += _pipeRenderRow(active[a]);
+        html += '</div>';
+    }
+    if (queued.length) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-size:12px;color:#7c3aed;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Queued (' + queued.length + ')</div>';
+        for (var q = 0; q < queued.length; q++) {
+            var qr = queued[q];
+            html += '<div style="border:1px solid #7c3aed30;border-radius:8px;padding:12px 16px;margin-bottom:8px;background:#7c3aed08;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+            html += '<div><span style="font-weight:600;color:#e2e8f0;">Generic ' + esc(qr.letter) + '</span>';
+            html += ' <span style="font-size:10px;padding:2px 8px;border-radius:4px;background:#7c3aed20;color:#a78bfa;font-weight:600;">Queued</span>';
+            html += ' <span style="font-size:11px;color:#64748b;margin-left:8px;">' + (qr.domains || []).length + ' domains</span></div>';
+            html += '<button onclick="_pipeRemove(\'' + qr.id + '\')" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;" title="Remove">&times;</button>';
+            html += '</div></div>';
+        }
         html += '</div>';
     }
     if (errored.length) {
@@ -1215,8 +1231,10 @@ var _wizardState = {
     checkResults: null,
     purchasedDomains: [],
     domains: null, selected: {}, letter: '', free_letters: [],
-    error: '', finalizeProgress: null
+    error: '', finalizeProgress: null,
+    bulkQueue: null
 };
+var _bulkInput = '';
 var _wizSt = 'padding:4px 8px;font-size:13px;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:4px;';
 var _wizBtn = 'padding:8px 20px;font-size:13px;border:none;border-radius:6px;cursor:pointer;font-weight:600;';
 var _wizSpinner = '<span style="display:inline-block;width:14px;height:14px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:8px;"></span>';
@@ -1274,6 +1292,9 @@ function _wizRestore() {
                 if (_wizardState.phase === 'finalizing') {
                     setTimeout(_wizFinalizeResume, 500);
                 }
+                if (_wizardState.phase === 'mailboxes_done' && _wizardState.bulkQueue) {
+                    setTimeout(_wizardFinalize, 2000);
+                }
             }
         }
     } catch(e) {}
@@ -1285,8 +1306,10 @@ function _wizReset() {
         targetCount: 14,
         checkResults: null, purchasedDomains: [], purchaseProgress: null,
         domains: null, selected: {}, letter: '', free_letters: [],
-        error: '', finalizeProgress: null
+        error: '', finalizeProgress: null,
+        bulkQueue: null
     };
+    _bulkInput = '';
     _wizSave();
     renderCreateGroupWizard();
 }
@@ -1392,6 +1415,18 @@ function renderCreateGroupWizard() {
     html += '</div>';
 
     if (s.phase === 'idle') {
+        if (!s.free_letters || !s.free_letters.length) {
+            if (!_wizDomainsLoading) {
+                _wizDomainsLoading = true;
+                fetch('/api/available-domains' + _authQs(), { headers: _authHeaders() })
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) {
+                        _wizDomainsLoading = false;
+                        _wizardState.free_letters = d.free_letters || [];
+                        renderCreateGroupWizard();
+                    }).catch(function() { _wizDomainsLoading = false; });
+            }
+        }
         html += '<div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">';
         html += '<select id="wiz-niche" onchange="_wizardState.niche=this.value" style="' + _wizSt + '">';
         var nicheKeys = Object.keys(_wizNiches);
@@ -1413,9 +1448,38 @@ function renderCreateGroupWizard() {
         html += '<input id="wiz-count" type="number" min="1" max="30" value="' + s.targetCount + '" onchange="_wizardState.targetCount=Math.max(1,Math.min(30,parseInt(this.value)||14));renderCreateGroupWizard();" style="width:52px;text-align:center;' + _wizSt + '" title="Number of domains">';
         html += '<span style="color:#64748b;font-size:12px;">domains</span>';
         html += '</div>';
-        html += '<div style="display:flex;gap:10px;">';
+        html += '<div style="display:flex;gap:10px;margin-bottom:16px;">';
         html += '<button onclick="_wizFindDomains()" style="' + _wizBtn + 'background:#3b82f6;color:#fff;">Find ' + s.targetCount + ' Available Domains</button>';
         html += '<button onclick="_wizardSkipPurchase()" style="' + _wizBtn + 'background:transparent;color:#94a3b8;border:1px solid #334155;">Skip — Use Existing Domains</button>';
+        html += '</div>';
+        html += '<div style="border-top:1px solid #2a2d38;padding-top:16px;">';
+        html += '<div style="font-size:13px;font-weight:600;color:#94a3b8;margin-bottom:8px;">Bulk Upload + Split</div>';
+        html += '<div style="font-size:11px;color:#64748b;margin-bottom:8px;">Paste domains (one per line) and split into groups of ' + s.targetCount + '. Skips purchase — domains must already be owned.</div>';
+        html += '<textarea id="bulk-domains" rows="5" placeholder="domain1.info&#10;domain2.info&#10;domain3.info&#10;..." style="width:100%;padding:8px;font-size:12px;font-family:monospace;background:#0f1219;color:#e2e8f0;border:1px solid #334155;border-radius:6px;resize:vertical;" oninput="_bulkInput=this.value">' + esc(_bulkInput) + '</textarea>';
+        var bulkDomains = _bulkInput ? _bulkInput.split(/[\n,]+/).map(function(d){return d.trim().toLowerCase();}).filter(function(d){return d && d.indexOf('.')>0;}) : [];
+        var groupSize = s.targetCount;
+        var numGroups = bulkDomains.length ? Math.ceil(bulkDomains.length / groupSize) : 0;
+        if (bulkDomains.length > 0) {
+            html += '<div style="margin-top:8px;font-size:12px;color:#e2e8f0;">' + bulkDomains.length + ' domains → <b style="color:#22c55e;">' + numGroups + ' group' + (numGroups > 1 ? 's' : '') + '</b> of ' + groupSize + '</div>';
+            html += '<div style="margin-top:6px;max-height:140px;overflow-y:auto;font-size:11px;font-family:monospace;background:#0f1219;border-radius:4px;padding:8px;">';
+            var fl = s.free_letters || [];
+            for (var gi = 0; gi < numGroups; gi++) {
+                var gLetter = fl[gi] || '?';
+                var gStart = gi * groupSize;
+                var gEnd = Math.min(gStart + groupSize, bulkDomains.length);
+                var gCount = gEnd - gStart;
+                html += '<div style="color:' + (gLetter === '?' ? '#ef4444' : '#3b82f6') + ';font-weight:600;margin-top:' + (gi > 0 ? '6px' : '0') + ';">Generic ' + gLetter + ' (' + gCount + ' domains)</div>';
+                for (var di = gStart; di < gEnd; di++) {
+                    html += '<div style="color:#94a3b8;padding-left:12px;">' + esc(bulkDomains[di]) + '</div>';
+                }
+            }
+            html += '</div>';
+            if (numGroups > fl.length) {
+                html += '<div style="margin-top:6px;color:#ef4444;font-size:11px;">Not enough free letters — only ' + fl.length + ' available. Reduce domains or group size.</div>';
+            } else {
+                html += '<button onclick="_wizBulkStart()" style="margin-top:10px;' + _wizBtn + 'background:#7c3aed;color:#fff;">Start ' + numGroups + ' Group' + (numGroups > 1 ? 's' : '') + ' Pipeline</button>';
+            }
+        }
         html += '</div>';
     } else if (s.phase === 'searching') {
         var progress = (s.checkResults || []).length;
@@ -1553,7 +1617,19 @@ function renderCreateGroupWizard() {
         html += '<button onclick="_wizardFinalize()" style="' + _wizBtn + 'background:#7c3aed;color:#fff;">Export to SmartLead + Tag + Warmup</button>';
     } else if (s.phase === 'complete') {
         html += '<div style="color:#22c55e;font-size:14px;font-weight:600;margin-bottom:8px;">Generic ' + esc(s.letter) + ' created!</div>';
-        html += '<button onclick="_wizReset()" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Create Another Group</button>';
+        if (s.bulkQueue) {
+            var bqDone = s.bulkQueue.filter(function(g){return g.status!=='queued';}).length;
+            var bqTotal = s.bulkQueue.length;
+            var bqRemaining = bqTotal - bqDone;
+            if (bqRemaining > 0) {
+                html += '<div style="color:#7c3aed;font-size:12px;margin-bottom:8px;">Bulk pipeline: ' + bqDone + '/' + bqTotal + ' groups done — starting next group in 5s...</div>';
+            } else {
+                html += '<div style="color:#22c55e;font-size:12px;margin-bottom:8px;">All ' + bqTotal + ' bulk groups complete!</div>';
+            }
+        }
+        if (!s.bulkQueue) {
+            html += '<button onclick="_wizReset()" style="padding:6px 14px;font-size:12px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">Create Another Group</button>';
+        }
     } else if (s.phase === 'error') {
         html += '<div style="color:#ef4444;font-size:13px;margin-bottom:8px;">Error: ' + esc(s.error || 'Unknown') + '</div>';
         if (s.letter) {
@@ -1759,6 +1835,69 @@ function _wizardSkipPurchase() {
     _wizardLoadDomains();
 }
 
+function _wizBulkStart() {
+    var raw = _bulkInput || '';
+    var domains = raw.split(/[\n,]+/).map(function(d){return d.trim().toLowerCase();}).filter(function(d){return d && d.indexOf('.')>0;});
+    if (!domains.length) return;
+    var groupSize = _wizardState.targetCount;
+    var fl = _wizardState.free_letters || [];
+    var groups = [];
+    for (var i = 0; i < domains.length; i += groupSize) {
+        var gi = groups.length;
+        if (gi >= fl.length) break;
+        groups.push({ letter: fl[gi], domains: domains.slice(i, i + groupSize), status: 'queued' });
+    }
+    if (!groups.length) return;
+    groups[0].status = 'active';
+    _wizardState.bulkQueue = groups;
+    _bulkInput = '';
+    for (var qi = 0; qi < groups.length; qi++) {
+        _pipeUpsert(groups[qi].letter, qi === 0 ? 'creating' : 'queued', {
+            domains: groups[qi].domains,
+            detail: groups[qi].domains.length + ' domains' + (qi > 0 ? ' (queued)' : ''),
+            logMsg: qi === 0 ? 'Bulk pipeline: starting Generic ' + groups[qi].letter : 'Queued — waiting for previous group'
+        });
+    }
+    _wizBulkRunNext();
+}
+
+function _wizBulkRunNext() {
+    var bq = _wizardState.bulkQueue;
+    if (!bq || !bq.length) return;
+    var next = null;
+    for (var i = 0; i < bq.length; i++) {
+        if (bq[i].status === 'queued') { next = bq[i]; next.status = 'active'; break; }
+    }
+    if (!next) { _wizardState.bulkQueue = null; _wizSave(); renderCreateGroupWizard(); return; }
+    _wizardState.phase = 'creating';
+    _wizardState.createStep = 'connecting';
+    _wizardState.letter = next.letter;
+    _wizardState.purchasedDomains = next.domains;
+    _wizardState.selected = {};
+    for (var di = 0; di < next.domains.length; di++) _wizardState.selected[next.domains[di]] = true;
+    _wizardState.createProgress = next.domains.map(function(d) {
+        return { domain: d, status: 'pending', zapmail: false, mailboxes: 0, photos: false, mb_ids: [], error: null };
+    });
+    _wizardState.finalizeProgress = null;
+    _wizardState.log = [];
+    _wizardState._retryRound = 0;
+    _pipeUpsert(next.letter, 'creating', { domains: next.domains, detail: '0/' + next.domains.length + ' domains', logMsg: 'Connecting ' + next.domains.length + ' domains to Zapmail...' });
+    _wizSave();
+    renderCreateGroupWizard();
+    fetch('/api/group/connect-domains' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ letter: next.letter, domains: next.domains })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) { _wizErr(d.error); return; }
+        _wizardState.log = (d.log || []);
+        _wizardState.createStep = 'mailboxes';
+        _pipeUpsert(next.letter, 'creating', { logMsg: 'Zapmail: ' + (d.connected || 0) + '/' + next.domains.length + ' connected — starting mailbox creation' });
+        renderCreateGroupWizard();
+        _wizSetupNext(0);
+    }).catch(function(e) { _wizErr(e.message); });
+}
+
 /* ─── Wizard: Phase 1 — Pick & Create Mailboxes ─── */
 function _wizardLoadDomains() {
     _wizardState.domains = null;
@@ -1935,6 +2074,10 @@ function _wizSetupNext(idx) {
             _wizardState.log.push('Phase 1 complete: ' + allMbIds.length + ' mailboxes across ' + okDomains.length + ' domains.');
             _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: okDomains, detail: allMbIds.length + ' mailboxes on ' + okDomains.length + ' domains', logMsg: 'Phase 1 complete: ' + allMbIds.length + ' mailboxes on ' + okDomains.length + ' domains — ready for SmartLead' });
             renderCreateGroupWizard();
+            if (_wizardState.bulkQueue) {
+                _wizardState.log.push('Bulk mode — auto-starting finalize...');
+                setTimeout(_wizardFinalize, 2000);
+            }
         }).catch(function(e) { _wizErr(e.message); });
         return;
     }
@@ -2242,6 +2385,18 @@ function _wizFinalizeAccounts(accounts, tagIds, idx) {
         _wizardState.log.push('Done! ' + accounts.length + ' accounts tagged + warmup enabled.');
         _pipeUpsert(_wizardState.letter, 'complete', { detail: accounts.length + ' accounts configured', logMsg: 'Complete! ' + accounts.length + ' accounts tagged + warmup enabled' });
         renderCreateGroupWizard();
+        if (_wizardState.bulkQueue) {
+            var bq = _wizardState.bulkQueue;
+            var remaining = bq.filter(function(g) { return g.status === 'queued'; }).length;
+            if (remaining > 0) {
+                _wizardState.log.push('Bulk queue: ' + remaining + ' group(s) remaining — starting next in 5s...');
+                _pipeUpsert(_wizardState.letter, 'complete', { logMsg: 'Bulk: ' + remaining + ' group(s) remaining' });
+                setTimeout(_wizBulkRunNext, 5000);
+            } else {
+                _wizardState.bulkQueue = null;
+                _wizSave();
+            }
+        }
         return;
     }
 
