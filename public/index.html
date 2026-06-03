@@ -1734,7 +1734,7 @@ function _wizRenderPicking() {
             html += '<button onclick="_wizardCreateGroup()" style="padding:6px 16px;font-size:12px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Group ' + esc(s.letter) + ' (' + selCount + ' domains)</button>';
         }
         html += '</div>';
-        html += '<div style="margin-top:12px;max-height:340px;overflow-y:auto;">';
+        html += '<div id="wiz-domain-scroll" style="margin-top:12px;max-height:340px;overflow-y:auto;">';
         html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
         html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;">';
         html += '<th style="padding:5px 8px;text-align:left;width:30px;"><input type="checkbox" onchange="_wizardSelectFiltered()"' + (allVisibleSelected ? ' checked' : '') + '></th>';
@@ -1968,9 +1968,13 @@ function _wizardLoadDomains() {
         });
 }
 function _wizardToggle(domain) {
+    var el = document.getElementById('wiz-domain-scroll');
+    var st = el ? el.scrollTop : 0;
     if (_wizardState.selected[domain]) delete _wizardState.selected[domain];
     else _wizardState.selected[domain] = true;
     renderCreateGroupWizard();
+    var el2 = document.getElementById('wiz-domain-scroll');
+    if (el2) el2.scrollTop = st;
 }
 function _wizardSelectAll() {
     var d = _wizardState.domains || [];
@@ -1984,6 +1988,8 @@ function _wizardSelectAll() {
     renderCreateGroupWizard();
 }
 function _wizardSelectFiltered() {
+    var el = document.getElementById('wiz-domain-scroll');
+    var st = el ? el.scrollTop : 0;
     var allDomains = _wizardState.domains || [];
     var filtered = _wizDateFilter ? allDomains.filter(function(x) { return x.registered === _wizDateFilter; }) : allDomains;
     var visSel = 0;
@@ -1994,6 +2000,8 @@ function _wizardSelectFiltered() {
         else _wizardState.selected[filtered[j].domain] = true;
     }
     renderCreateGroupWizard();
+    var el2 = document.getElementById('wiz-domain-scroll');
+    if (el2) el2.scrollTop = st;
 }
 function _wizardCreateGroup() {
     var domains = Object.keys(_wizardState.selected);
