@@ -1157,13 +1157,18 @@ function renderCreateGroupWizard() {
     _wizSave();
 }
 
+var _wizDateFilter = '';
 function _wizRenderPicking() {
     var s = _wizardState;
     var html = '';
     html += '<button onclick="_wizardLoadDomains()" style="padding:8px 20px;font-size:13px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;">' +
         (s.domains ? 'Refresh Domains' : 'Load Available Domains') + '</button>';
     if (s.domains && s.domains.length) {
-        var d = s.domains;
+        var allDomains = s.domains;
+        var dates = {};
+        for (var di = 0; di < allDomains.length; di++) { var dt = allDomains[di].registered || 'unknown'; dates[dt] = (dates[dt] || 0) + 1; }
+        var dateKeys = Object.keys(dates).sort().reverse();
+        var d = _wizDateFilter ? allDomains.filter(function(x) { return x.registered === _wizDateFilter; }) : allDomains;
         var selCount = Object.keys(s.selected).length;
         html += '<div style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">';
         html += '<label style="font-size:12px;color:#94a3b8;">Group Letter:</label>';
@@ -1174,22 +1179,38 @@ function _wizRenderPicking() {
             html += '<option value="' + fl[i] + '"' + (fl[i] === s.letter ? ' selected' : '') + '>' + fl[i] + rec + '</option>';
         }
         html += '</select>';
+        html += '<label style="font-size:12px;color:#94a3b8;">Purchased:</label>';
+        html += '<select onchange="_wizDateFilter=this.value;renderCreateGroupWizard();" style="' + _wizSt + '">';
+        html += '<option value=""' + (!_wizDateFilter ? ' selected' : '') + '>All dates (' + allDomains.length + ')</option>';
+        for (var ki = 0; ki < dateKeys.length; ki++) {
+            var dk = dateKeys[ki];
+            html += '<option value="' + dk + '"' + (_wizDateFilter === dk ? ' selected' : '') + '>' + dk + ' (' + dates[dk] + ')</option>';
+        }
+        html += '</select>';
         html += '<span style="font-size:12px;color:#64748b;">Selected: <b style="color:' + (selCount === s.targetCount ? '#22c55e' : '#f59e0b') + '">' + selCount + '/' + s.targetCount + '</b></span>';
-        var allSelected = selCount === d.length;
-        html += '<button onclick="_wizardSelectAll()" style="padding:4px 12px;font-size:11px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">' + (allSelected ? 'Deselect All' : 'Select All') + '</button>';
+        var visibleSelected = 0;
+        for (var vi = 0; vi < d.length; vi++) { if (s.selected[d[vi].domain]) visibleSelected++; }
+        var allVisibleSelected = visibleSelected === d.length && d.length > 0;
+        html += '<button onclick="_wizardSelectFiltered()" style="padding:4px 12px;font-size:11px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">' + (allVisibleSelected ? 'Deselect Shown' : 'Select Shown (' + d.length + ')') + '</button>';
         if (selCount > 0 && s.letter) {
             html += '<button onclick="_wizardCreateGroup()" style="padding:6px 16px;font-size:12px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Group ' + esc(s.letter) + ' (' + selCount + ' domains)</button>';
         }
         html += '</div>';
-        html += '<div style="margin-top:12px;max-height:300px;overflow-y:auto;">';
+        html += '<div style="margin-top:12px;max-height:340px;overflow-y:auto;">';
         html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-        html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;"><th style="padding:4px 8px;text-align:left;width:30px;"><input type="checkbox" onchange="_wizardSelectAll()"' + (allSelected ? ' checked' : '') + '></th><th style="padding:4px 8px;text-align:left;">Domain (' + selCount + ' of ' + d.length + ' selected)</th><th style="padding:4px 8px;">Purchased</th></tr></thead><tbody>';
+        html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;">';
+        html += '<th style="padding:5px 8px;text-align:left;width:30px;"><input type="checkbox" onchange="_wizardSelectFiltered()"' + (allVisibleSelected ? ' checked' : '') + '></th>';
+        html += '<th style="padding:5px 8px;text-align:left;">Domain</th>';
+        html += '<th style="padding:5px 8px;text-align:left;">Purchased</th></tr></thead><tbody>';
         for (var i = 0; i < d.length; i++) {
             var checked = s.selected[d[i].domain] ? ' checked' : '';
+            var regDate = d[i].registered || '';
+            var isToday = regDate === new Date().toISOString().slice(0, 10);
+            var dateColor = isToday ? '#22c55e' : '#94a3b8';
             html += '<tr style="border-bottom:1px solid #0f1219;">' +
-                '<td style="padding:4px 8px;"><input type="checkbox" onchange="_wizardToggle(\'' + esc(d[i].domain) + '\')"' + checked + '></td>' +
-                '<td style="padding:4px 8px;color:#e2e8f0;">' + esc(d[i].domain) + '</td>' +
-                '<td style="padding:4px 8px;color:#64748b;">' + (d[i].registered || '') + '</td></tr>';
+                '<td style="padding:5px 8px;"><input type="checkbox" onchange="_wizardToggle(\'' + esc(d[i].domain) + '\')"' + checked + '></td>' +
+                '<td style="padding:5px 8px;color:#e2e8f0;">' + esc(d[i].domain) + '</td>' +
+                '<td style="padding:5px 8px;color:' + dateColor + ';font-weight:' + (isToday ? '600' : '400') + ';">' + esc(regDate) + (isToday ? ' (today)' : '') + '</td></tr>';
         }
         html += '</tbody></table></div>';
     } else if (s.domains) {
@@ -1343,6 +1364,18 @@ function _wizardSelectAll() {
         for (var i = 0; i < d.length; i++) {
             _wizardState.selected[d[i].domain] = true;
         }
+    }
+    renderCreateGroupWizard();
+}
+function _wizardSelectFiltered() {
+    var allDomains = _wizardState.domains || [];
+    var filtered = _wizDateFilter ? allDomains.filter(function(x) { return x.registered === _wizDateFilter; }) : allDomains;
+    var visSel = 0;
+    for (var i = 0; i < filtered.length; i++) { if (_wizardState.selected[filtered[i].domain]) visSel++; }
+    var allVis = visSel === filtered.length && filtered.length > 0;
+    for (var j = 0; j < filtered.length; j++) {
+        if (allVis) delete _wizardState.selected[filtered[j].domain];
+        else _wizardState.selected[filtered[j].domain] = true;
     }
     renderCreateGroupWizard();
 }

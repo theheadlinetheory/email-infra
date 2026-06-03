@@ -1339,12 +1339,10 @@ def available_domains():
             ns_hosts = d.get("nameservers", {}).get("hosts", [])
             if not any("cloudns" in h.lower() for h in ns_hosts):
                 continue
-            if not name.endswith(".info"):
-                continue
             reg = d.get("registrationDate", "")[:10]
             available.append({"domain": name, "registered": reg})
 
-        available.sort(key=lambda x: x["domain"])
+        available.sort(key=lambda x: x["registered"], reverse=True)
 
         existing_letters = set()
         if overview:
