@@ -897,6 +897,31 @@ function _pipeRemove(id) {
     _pipeSave(runs);
     renderPipelineRuns();
 }
+function _pipeRefinalize(letter, runId) {
+    var runs = _pipeGet();
+    var run = null;
+    for (var i = 0; i < runs.length; i++) { if (runs[i].id === runId) { run = runs[i]; break; } }
+    if (!run) return;
+    run.status = 'active';
+    run.stepIdx = 3;
+    run.stepStatuses[3] = 'active';
+    _pipeSave(runs);
+    var domains = run.domains || [];
+    _wizardState.phase = 'finalizing';
+    _wizardState.letter = letter;
+    _wizardState.purchasedDomains = domains;
+    _wizardState._allDomains = domains;
+    _wizardState._allMbIds = [];
+    _wizardState._slAccounts = null;
+    _wizardState._tagIds = null;
+    _wizardState.finalizeProgress = {};
+    _wizardState.log = ['Re-running finalize for Generic ' + letter + '...'];
+    _wizardState.error = '';
+    _wizSave();
+    _pipeUpsert(letter, 'finalizing', { detail: 'Re-exporting...', logMsg: 'Re-running finalize: export + find + tag + warmup' });
+    _wizFinalizeSetStep('provision', 'done');
+    _wizFinalizeExport();
+}
 
 function renderPipelineRuns() {
     var el = document.getElementById('pipeline-runs');
@@ -1176,9 +1201,16 @@ function _pipeRenderRow(run) {
         html += '</div>';
     } else if (run.status === 'completed') {
         var completedDetail = detail[3] || detail[2] || '';
-        html += '<div style="background:#22c55e10;border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
-        html += '<div style="font-size:13px;color:#22c55e;font-weight:500;">Setup complete</div>';
-        if (completedDetail) html += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">' + esc(completedDetail) + '</div>';
+        var zeroAccounts = completedDetail && completedDetail.indexOf('0 accounts') >= 0;
+        html += '<div style="background:' + (zeroAccounts ? '#f59e0b10' : '#22c55e10') + ';border-radius:6px;padding:10px 12px;margin-bottom:8px;">';
+        if (zeroAccounts) {
+            html += '<div style="font-size:13px;color:#f59e0b;font-weight:500;">Finalize incomplete — 0 accounts in SmartLead</div>';
+            html += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">Mailboxes exist but were never exported/tagged. Re-run finalize to fix.</div>';
+            html += '<button onclick="_pipeRefinalize(\'' + run.letter + '\',' + run.id + ')" style="margin-top:8px;padding:6px 16px;font-size:12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Re-run Export + Tag + Warmup</button>';
+        } else {
+            html += '<div style="font-size:13px;color:#22c55e;font-weight:500;">Setup complete</div>';
+            if (completedDetail) html += '<div style="font-size:11px;color:#94a3b8;margin-top:2px;">' + esc(completedDetail) + '</div>';
+        }
         if (domCount > 0) html += '<div style="font-size:10px;color:#64748b;margin-top:4px;">' + domCount + ' domains configured</div>';
         html += '</div>';
     }
