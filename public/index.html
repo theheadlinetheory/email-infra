@@ -1233,6 +1233,19 @@ function _wizRestore() {
                     s.phase = 'mailboxes_done';
                     s.finalizeProgress = null;
                 }
+                // Catch mailboxes_done with incomplete domains — push back to retry
+                if (s.phase === 'mailboxes_done' && s.createProgress) {
+                    var allDone = true;
+                    var anyDone = false;
+                    for (var ci = 0; ci < s.createProgress.length; ci++) {
+                        if (s.createProgress[ci].mailboxes > 0) anyDone = true;
+                        else { allDone = false; s.createProgress[ci].status = 'error'; s.createProgress[ci].error = s.createProgress[ci].error || 'Incomplete — no mailboxes'; }
+                    }
+                    if (!allDone && anyDone) {
+                        s.phase = 'creating_partial';
+                        s.createStep = 'retry_needed';
+                    }
+                }
                 if (s.phase === 'searching' || s.phase === 'replacing' || s.phase === 'purchasing' || s.phase === 'creating') {
                     if (s.phase === 'purchasing' && s.purchaseProgress) {
                         s.phase = 'purchased';
