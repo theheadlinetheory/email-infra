@@ -1531,9 +1531,11 @@ def group_connect_domains():
             try:
                 r = req.post(f"{ZAPMAIL_API}/v2/domains/connect", headers=zm_h(),
                              json={"domainName": dn, "nameServers": NS_STR}, timeout=30)
-                msg = r.json().get("message", r.text[:100])
+                resp = r.json()
+                msg = resp.get("message", r.text[:100])
+                if "already" in msg.lower() or r.status_code == 200:
+                    connected += 1
                 log.append(f"{dn}: {msg}")
-                connected += 1
             except Exception as e:
                 log.append(f"{dn}: error — {str(e)[:80]}")
             _time.sleep(0.3)
@@ -1601,7 +1603,7 @@ def group_setup_domain():
                 zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
                 zd = zr.json().get("data", {})
                 for d in zd.get("domains", []):
-                    if d.get("name", "") == domain:
+                    if d.get("domain", "") == domain:
                         zapmail_id = d.get("id", "")
                         break
                 if zapmail_id or page >= zd.get("totalPages", 1):
