@@ -2164,6 +2164,7 @@ function _wizFinalizeSetStep(key, status, extra) {
     if (extra) {
         for (var k in extra) _wizardState.finalizeProgress[k] = extra[k];
     }
+    _wizSave();
     renderCreateGroupWizard();
 }
 
@@ -2303,12 +2304,19 @@ function _wizFinalizeExport() {
 
 function _wizFinalizeWait(sec, domains) {
     var fp = _wizardState.finalizeProgress || {};
-    if (!fp._waitTarget) _wizardState.finalizeProgress._waitTarget = Date.now() + sec * 1000;
-    _wizFinalizeSetStep('wait', 'active', { waitSec: sec });
+    var firstCall = !fp._waitTarget;
+    if (firstCall) _wizardState.finalizeProgress._waitTarget = Date.now() + sec * 1000;
+    if (firstCall || sec <= 0) {
+        _wizFinalizeSetStep('wait', sec <= 0 ? 'done' : 'active', { waitSec: sec });
+    } else {
+        if (!_wizardState.finalizeProgress) _wizardState.finalizeProgress = {};
+        _wizardState.finalizeProgress.wait = 'active';
+        _wizardState.finalizeProgress.waitSec = sec;
+        renderCreateGroupWizard();
+    }
     var logExtra = (sec === 180 || sec === 120 || sec === 60 || sec === 30 || sec === 0) ? { logMsg: 'Waiting for SmartLead (' + sec + 's remaining)' } : {};
     _pipeUpsert(_wizardState.letter, 'finalizing', Object.assign({ detail: 'Waiting ' + sec + 's...' }, logExtra));
     if (sec <= 0) {
-        _wizFinalizeSetStep('wait', 'done', { waitSec: 0 });
         _wizFinalizeFind(domains, 0);
         return;
     }
@@ -2374,8 +2382,8 @@ function _wizFinalizeFind(domains, attempt) {
             return;
         }
 
-        _wizFinalizeSetStep('find', 'done', { foundCount: d.count });
         s._slAccounts = d.accounts;
+        _wizFinalizeSetStep('find', 'done', { foundCount: d.count });
         _wizFinalizeTags(d.accounts);
     }).catch(function(e) {
         _wizFinalizeSetStep('find', 'error');

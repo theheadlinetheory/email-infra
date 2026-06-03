@@ -2237,13 +2237,23 @@ def group_finalize_account():
         tagged = r.status_code == 200
         checks.append(f"tag_account: {'OK' if tagged else 'FAILED — HTTP ' + str(r.status_code)}")
 
-        # Step 2: Enable warmup (public API)
+        # Step 2: Enable warmup (public API) — verify + retry since 200 doesn't guarantee activation
         warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
                        "daily_rampup": 5, "reply_rate_percentage": 40}
-        r = req.post(f"{SMARTLEAD_API}/email-accounts/{account_id}/warmup?api_key={SMARTLEAD_KEY}",
-                     json=warmup_body, timeout=30)
-        warmed = r.status_code == 200
-        checks.append(f"enable_warmup: {'OK' if warmed else 'FAILED — HTTP ' + str(r.status_code)}")
+        warmed = False
+        for warmup_attempt in range(3):
+            r = req.post(f"{SMARTLEAD_API}/email-accounts/{account_id}/warmup?api_key={SMARTLEAD_KEY}",
+                         json=warmup_body, timeout=30)
+            if r.status_code == 429:
+                _time.sleep(10)
+                continue
+            _time.sleep(1)
+            vr = req.get(f"{SMARTLEAD_API}/email-accounts/{account_id}?api_key={SMARTLEAD_KEY}", timeout=15)
+            if vr.status_code == 200 and vr.json().get("warmup_enabled"):
+                warmed = True
+                break
+            _time.sleep(2)
+        checks.append(f"enable_warmup: {'OK (verified)' if warmed else 'WARN — sent but unverified'}")
 
         # Step 3: Full warmup config (internal API)
         warmup_key = ""
