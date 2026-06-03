@@ -1715,7 +1715,30 @@ def group_setup_domain():
 
         result["checks"].append(f"existing_mailboxes: {len(existing_mb)} found, creating new")
 
-        # Step 3: Create 3 mailboxes
+        # Step 3: Ensure enough mailbox slots before creating
+        needed = 3 - len(existing_mb)
+        try:
+            ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
+            ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
+            purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
+            assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
+            free_slots = purchased - assigned
+            if free_slots < needed:
+                to_buy = max(needed - free_slots, 3)
+                buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
+                                 headers=zm_h(), json={}, timeout=30)
+                if buy_r.status_code == 200:
+                    result["checks"].append(f"buy_slots: OK (bought {to_buy}, had {free_slots} free)")
+                else:
+                    result["checks"].append(f"buy_slots: FAILED — HTTP {buy_r.status_code}: {buy_r.text[:80]}")
+                    result["error"] = f"Not enough mailbox slots and purchase failed: {buy_r.text[:100]}"
+                    return _cors(jsonify(result))
+            else:
+                result["checks"].append(f"slot_check: OK ({free_slots} free, need {needed})")
+        except Exception as e:
+            result["checks"].append(f"slot_check: WARN — {str(e)[:60]}")
+
+        # Step 4: Create mailboxes
         SPECS = [
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
@@ -1740,7 +1763,7 @@ def group_setup_domain():
             result["checks"].append(f"create_mailboxes: FAILED — {str(e)[:80]}")
             return _cors(jsonify(result))
 
-        # Step 4: Verify mailboxes exist by re-fetching
+        # Step 5: Verify mailboxes exist by re-fetching
         _time.sleep(1)
         try:
             vr = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
@@ -1769,7 +1792,7 @@ def group_setup_domain():
             except Exception as e:
                 result["checks"].append(f"set_photos: FAILED — {str(e)[:60]}")
 
-        # Step 6: Verify photos actually applied
+        # Step 7: Verify photos actually applied
         if result["photos_set"] and result["mb_ids"]:
             _time.sleep(1)
             try:
