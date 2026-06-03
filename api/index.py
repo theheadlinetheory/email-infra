@@ -1866,6 +1866,73 @@ def group_save_state():
 # Per-step finalize endpoints (replace monolithic finalize)
 # ──────────────────────────────────────────────────────────
 
+@app.route("/api/group/check-mailbox-status", methods=["POST", "OPTIONS"])
+def group_check_mailbox_status():
+    """Poll Zapmail to check if all mailboxes are ACTIVE (not In Progress)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import requests as req
+        body = request.get_json(silent=True) or {}
+        domains = set(body.get("domains", []))
+        if not domains:
+            return _cors(jsonify({"error": "domains required"})), 400
+
+        ZAPMAIL_API = "https://api.zapmail.ai/api"
+        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
+        headers = {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
+
+        all_zm = []
+        page = 1
+        for _ in range(10):
+            zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=headers, timeout=30)
+            zd = zr.json().get("data", {})
+            all_zm.extend(zd.get("domains", []))
+            if page >= zd.get("totalPages", 1):
+                break
+            page += 1
+
+        active = 0
+        in_progress = 0
+        other = 0
+        details = {}
+        for d in all_zm:
+            dn = d.get("domain", "")
+            if dn not in domains:
+                continue
+            mbs = d.get("mailboxes", [])
+            if not isinstance(mbs, list):
+                continue
+            domain_active = 0
+            domain_pending = 0
+            for mb in mbs:
+                status = mb.get("status", "unknown")
+                if status == "ACTIVE":
+                    active += 1
+                    domain_active += 1
+                elif status in ("IN_PROGRESS", "PENDING", "PROVISIONING"):
+                    in_progress += 1
+                    domain_pending += 1
+                else:
+                    other += 1
+                    domain_pending += 1
+            details[dn] = {"active": domain_active, "pending": domain_pending}
+
+        total = active + in_progress + other
+        expected = len(domains) * 3
+        all_ready = in_progress == 0 and other == 0 and active >= expected
+
+        return _cors(jsonify({
+            "ok": True, "all_ready": all_ready,
+            "active": active, "in_progress": in_progress, "other": other,
+            "total": total, "expected": expected, "details": details
+        }))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/group/export-smartlead", methods=["POST", "OPTIONS"])
 def group_export_smartlead():
     """Export mailboxes to SmartLead via Zapmail."""
@@ -2110,6 +2177,19 @@ def group_finalize_account():
             checks.append(f"full_warmup_config: {'OK' if sr.status_code == 200 else 'FAILED — HTTP ' + str(sr.status_code)}")
         else:
             checks.append(f"full_warmup_config: SKIP — no warmup_key found")
+
+        # Step 3b: Set time_to_wait_in_mins (matches setup.py)
+        try:
+            import json as _json
+            wait_body = {"time_to_wait_in_mins": 5}
+            wr = req.post(f"{SMARTLEAD_API}/email-accounts/{account_id}/settings?api_key={SMARTLEAD_KEY}",
+                          json=wait_body, timeout=15)
+            if wr.status_code != 200:
+                req.post(f"{SMARTLEAD_INTERNAL}/email-account/update",
+                         headers=sl_h(), json={"id": account_id, "time_to_wait_in_mins": 5}, timeout=15)
+            checks.append("time_to_wait: OK (5 min)")
+        except Exception:
+            checks.append("time_to_wait: SKIP")
 
         # Step 4: Verify tags applied
         _time.sleep(1)

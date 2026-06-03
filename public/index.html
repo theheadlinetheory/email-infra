@@ -1032,8 +1032,9 @@ function _pipeLiveStatus(run) {
         if (fp.accounts === 'active') return { text: 'Tagging + warmup (' + (fp.accountsDone || 0) + '/' + (fp.accountsTotal || '?') + ' accounts)', sub: null };
         if (fp.tags === 'active') return { text: 'Setting up SmartLead tags', sub: null };
         if (fp.find === 'active') return { text: 'Searching for accounts in SmartLead', sub: fp.foundCount != null ? fp.foundCount + ' found' : null };
-        if (fp.wait === 'active') return { text: 'Waiting for SmartLead to process', sub: fp.waitSec != null ? fp.waitSec + 's remaining' : null };
+        if (fp.wait === 'active') return { text: 'Waiting for SmartLead to process export', sub: fp.waitSec != null ? fp.waitSec + 's remaining' : null };
         if (fp.export === 'active') return { text: 'Exporting mailboxes to SmartLead', sub: null };
+        if (fp.provision === 'active') return { text: 'Waiting for mailboxes to finish provisioning', sub: fp.provisionStatus || 'checking...' };
         return { text: 'Finalizing...', sub: null };
     }
     if (phase === 'complete') {
@@ -1517,6 +1518,7 @@ function renderCreateGroupWizard() {
         var fp = s.finalizeProgress || {};
         html += '<div style="color:#3b82f6;font-size:14px;font-weight:600;margin-bottom:10px;">Finalizing Generic ' + esc(s.letter) + _wizSpinner + '</div>';
         var fSteps = [
+            { key: 'provision', label: 'Waiting for mailboxes' },
             { key: 'export', label: 'Export to SmartLead' },
             { key: 'wait', label: 'Waiting for SmartLead' },
             { key: 'find', label: 'Finding accounts' },
@@ -2000,8 +2002,57 @@ function _wizardFinalize() {
         }
     }
     if (!allDomains.length && s.purchasedDomains) allDomains = s.purchasedDomains;
+    s._allMbIds = allMbIds;
+    s._allDomains = allDomains;
 
-    s.log.push('Starting Phase 2: Export + Tag + Warmup...');
+    s.log.push('Starting Phase 2: waiting for mailbox provisioning...');
+    _pipeUpsert(s.letter, 'finalizing', { detail: 'Checking mailbox status...', logMsg: 'Waiting for mailboxes to go ACTIVE before exporting' });
+    _wizFinalizeSetStep('provision', 'active');
+    _wizFinalizeProvisionPoll(allDomains, 0);
+}
+function _wizFinalizeProvisionPoll(domains, poll) {
+    var MAX_POLLS = 24;  // 24 * 30s = 12 minutes max
+    fetch('/api/group/check-mailbox-status' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ domains: domains })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) throw new Error(d.error);
+        var msg = d.active + '/' + d.expected + ' ACTIVE';
+        if (d.in_progress > 0) msg += ', ' + d.in_progress + ' still provisioning';
+        _wizFinalizeSetStep('provision', 'active', { provisionStatus: msg });
+        _pipeUpsert(_wizardState.letter, 'finalizing', { detail: msg });
+
+        if (d.all_ready) {
+            _wizardState.log.push('All mailboxes ACTIVE — proceeding to export');
+            _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'All ' + d.active + ' mailboxes ACTIVE' });
+            _wizFinalizeSetStep('provision', 'done');
+            _wizFinalizeExport();
+            return;
+        }
+        if (poll >= MAX_POLLS) {
+            _wizardState.log.push('Mailboxes still provisioning after ' + (MAX_POLLS * 30) + 's — proceeding anyway');
+            _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'Timeout: ' + msg + ' — proceeding to export' });
+            _wizFinalizeSetStep('provision', 'done');
+            _wizFinalizeExport();
+            return;
+        }
+        _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'Poll ' + (poll + 1) + ': ' + msg + ' — checking again in 30s' });
+        setTimeout(function() { _wizFinalizeProvisionPoll(domains, poll + 1); }, 30000);
+    }).catch(function(e) {
+        if (poll < 3) {
+            setTimeout(function() { _wizFinalizeProvisionPoll(domains, poll + 1); }, 10000);
+        } else {
+            _wizFinalizeSetStep('provision', 'done');
+            _wizFinalizeExport();
+        }
+    });
+}
+function _wizFinalizeExport() {
+    var s = _wizardState;
+    var allMbIds = s._allMbIds || [];
+    var allDomains = s._allDomains || [];
+
     _pipeUpsert(s.letter, 'finalizing', { detail: 'Exporting...', logMsg: 'Exporting ' + allMbIds.length + ' mailboxes to SmartLead via Zapmail' });
     _wizFinalizeSetStep('export', 'active');
 
@@ -2016,7 +2067,7 @@ function _wizardFinalize() {
         s.log.push(exportMsg);
         _pipeUpsert(s.letter, 'finalizing', { logMsg: exportMsg });
         _wizFinalizeSetStep('export', 'done');
-        _wizFinalizeWait(90, allDomains);
+        _wizFinalizeWait(180, allDomains);
     }).catch(function(e) {
         _wizFinalizeSetStep('export', 'error');
         _wizErr(e.message);
@@ -2025,7 +2076,7 @@ function _wizardFinalize() {
 
 function _wizFinalizeWait(sec, domains) {
     _wizFinalizeSetStep('wait', 'active', { waitSec: sec });
-    var logExtra = (sec === 90 || sec === 60 || sec === 30 || sec === 0) ? { logMsg: 'Waiting for SmartLead (' + sec + 's remaining)' } : {};
+    var logExtra = (sec === 180 || sec === 120 || sec === 60 || sec === 30 || sec === 0) ? { logMsg: 'Waiting for SmartLead (' + sec + 's remaining)' } : {};
     _pipeUpsert(_wizardState.letter, 'finalizing', Object.assign({ detail: 'Waiting ' + sec + 's...' }, logExtra));
     if (sec <= 0) {
         _wizFinalizeSetStep('wait', 'done', { waitSec: 0 });
