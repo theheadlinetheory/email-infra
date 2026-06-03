@@ -2343,8 +2343,9 @@ function _wizFinalizeServerSide() {
             }
         }
     }).catch(function(e) {
-        s.log.push('Server finalize network error: ' + e.message);
-        _wizErr('Network error — the server may still be running. Check back in a few minutes.');
+        s.log.push('Server request ended (timeout or network) — auto-retrying to resume...');
+        _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Request ended — retrying to resume from saved progress' });
+        setTimeout(function() { _wizFinalizeServerSide(); }, 5000);
     });
 }
 var _wizServerPollTimer = null;

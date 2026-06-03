@@ -2473,31 +2473,12 @@ def finalize_generic_group():
             state["finalize_log"] = log_lines
             store.set_state(f"generic_group_wizard_{letter}", state)
 
-        # --- Step 1: Export to SmartLead ---
-        _save_progress("export", "Exporting mailboxes...")
-        mb_ids = state.get("all_mb_ids", [])
-        if mb_ids:
-            _log(f"Exporting {len(mb_ids)} mailboxes to SmartLead...")
-            r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
-                         json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
-            _log(f"Export: {r.json().get('message', r.text[:200])}")
-        else:
-            _log("No mailbox IDs — exporting by domain name...")
-            for dd in state.get("domains", []):
-                r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
-                             json={"apps": ["SMARTLEAD"], "contains": dd["domain"]}, timeout=30)
-                _time.sleep(2)
-
-        # --- Step 2: Poll for accounts (instead of fixed wait) ---
-        our_domains = {dd["domain"] for dd in state.get("domains", [])}
-        expected = len(our_domains) * 3
-        found = []
-        MAX_POLLS = 12  # 12 x 15s = 3 min max wait
-        for poll in range(MAX_POLLS):
-            wait_sec = 15 if poll > 0 else 30  # first wait 30s, then 15s
-            _save_progress("waiting", f"Waiting for SmartLead ({poll + 1}/{MAX_POLLS})...")
-            _time.sleep(wait_sec)
-
+        # --- Resume check: skip export+find if we already have processed accounts ---
+        processed = state.get("_processed_ids", [])
+        if processed and state.get("finalize_step") == "accounts":
+            _log(f"Resuming from account {len(processed)}/{state.get('accounts_found', '?')}")
+            # Jump straight to step 4 — need to reconstruct found_ids and tag_ids
+            our_domains = {dd["domain"] for dd in state.get("domains", [])}
             found = []
             offset = 0
             for _ in range(30):
@@ -2518,31 +2499,90 @@ def finalize_generic_group():
                     break
                 offset += 100
                 _time.sleep(0.5)
+            found_ids = [a["id"] for a in found]
+            # Reconstruct tag_ids from state log
+            tag_ids = state.get("_tag_ids", [])
+            if found_ids and tag_ids:
+                # Jump to step 4 processing below
+                pass
+            else:
+                _log("Resume failed — re-running from scratch")
+                processed = []
+                state["_processed_ids"] = []
 
-            _log(f"Poll {poll + 1}: found {len(found)}/{expected} accounts")
-            _save_progress("finding", f"Found {len(found)}/{expected} accounts")
+        # --- Step 1: Export to SmartLead ---
+        if not processed:
+            _save_progress("export", "Exporting mailboxes...")
+            mb_ids = state.get("all_mb_ids", [])
+            if mb_ids:
+                _log(f"Exporting {len(mb_ids)} mailboxes to SmartLead...")
+                r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                             json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
+                _log(f"Export: {r.json().get('message', r.text[:200])}")
+            else:
+                _log("No mailbox IDs — exporting by domain name...")
+                for dd in state.get("domains", []):
+                    r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                                 json={"apps": ["SMARTLEAD"], "contains": dd["domain"]}, timeout=30)
+                    _time.sleep(2)
 
-            if len(found) >= expected:
-                break
+        if not processed:
+            # --- Step 2: Poll for accounts (instead of fixed wait) ---
+            our_domains = {dd["domain"] for dd in state.get("domains", [])}
+            expected = len(our_domains) * 3
+            found = []
+            MAX_POLLS = 12  # 12 x 15s = 3 min max wait
+            for poll in range(MAX_POLLS):
+                wait_sec = 15 if poll > 0 else 30  # first wait 30s, then 15s
+                _save_progress("waiting", f"Waiting for SmartLead ({poll + 1}/{MAX_POLLS})...")
+                _time.sleep(wait_sec)
 
-            # Re-export if 0 found after 2 polls
-            if len(found) == 0 and poll == 2 and mb_ids:
-                _log("Re-exporting — 0 accounts after 2 polls...")
-                req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
-                         json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
+                found = []
+                offset = 0
+                for _ in range(30):
+                    url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
+                    r = req.get(url, timeout=30)
+                    if r.status_code == 429:
+                        _time.sleep(10)
+                        r = req.get(url, timeout=30)
+                    accts = r.json() if r.status_code == 200 else []
+                    if not isinstance(accts, list) or not accts:
+                        break
+                    for a in accts:
+                        email = a.get("from_email", a.get("email", ""))
+                        domain = email.split("@")[-1] if "@" in email else ""
+                        if domain in our_domains:
+                            found.append({"id": a.get("id"), "email": email})
+                    if len(accts) < 100:
+                        break
+                    offset += 100
+                    _time.sleep(0.5)
 
-        if not found:
-            state["phase"] = "export_failed"
-            state["finalize_log"] = log_lines
-            store.set_state(f"generic_group_wizard_{letter}", state)
-            return _cors(jsonify({"ok": False, "error": "No accounts found in SmartLead after polling. Try re-running.",
-                                  "log": log_lines, "retry": True}))
+                _log(f"Poll {poll + 1}: found {len(found)}/{expected} accounts")
+                _save_progress("finding", f"Found {len(found)}/{expected} accounts")
 
-        found_ids = [a["id"] for a in found]
-        _log(f"Found {len(found_ids)} accounts — proceeding to tag + warmup")
+                if len(found) >= expected:
+                    break
 
-        # --- Step 3: Get/create tags via GQL ---
-        _save_progress("tags", "Creating tags...")
+                # Re-export if 0 found after 2 polls
+                if len(found) == 0 and poll == 2:
+                    mb_ids = state.get("all_mb_ids", [])
+                    if mb_ids:
+                        _log("Re-exporting — 0 accounts after 2 polls...")
+                        req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                                 json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
+
+            if not found:
+                state["phase"] = "export_failed"
+                state["finalize_log"] = log_lines
+                store.set_state(f"generic_group_wizard_{letter}", state)
+                return _cors(jsonify({"ok": False, "error": "No accounts found in SmartLead after polling. Try re-running.",
+                                      "log": log_lines, "retry": True}))
+
+            found_ids = [a["id"] for a in found]
+            _log(f"Found {len(found_ids)} accounts — proceeding to tag + warmup")
+
+        # --- Step 3: Get/create tags via GQL (skip if resuming with saved tag_ids) ---
         def _gql(query, variables=None):
             b = {"query": query}
             if variables:
@@ -2550,50 +2590,64 @@ def finalize_generic_group():
             r = req.post(SMARTLEAD_GQL, headers=sl_h(), json=b, timeout=30)
             return r.json()
 
-        tags_result = _gql("{ tags { id name color } }")
-        all_tags = {t["name"]: t for t in tags_result.get("data", {}).get("tags", [])}
-
-        ZAPMAIL_TAG_ID = 262254
-        tag_name = f"Generic {letter}"
-        today_str = _time.strftime("%-m/%-d/%y")
-
-        group_tag_id = None
-        if tag_name in all_tags:
-            group_tag_id = all_tags[tag_name]["id"]
+        if processed and state.get("_tag_ids"):
+            tag_ids = state["_tag_ids"]
+            _log(f"Resuming with saved tag IDs: {tag_ids}")
         else:
-            used_colors = {t.get("color", "").upper() for t in all_tags.values()}
-            palette = ["#FF6B6B", "#FF8E72", "#FFA94D", "#FFD43B", "#A9E34B",
-                       "#51CF66", "#20C997", "#22B8CF", "#339AF0", "#5C7CFA",
-                       "#7950F2", "#BE4BDB", "#E64980", "#F06595", "#CC5DE8"]
-            color = next((c for c in palette if c.upper() not in used_colors), "#7950F2")
-            mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
-            result = _gql(mut, {"o": {"name": tag_name, "color": color}})
-            group_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
-            _log(f"Created tag: {tag_name} (ID: {group_tag_id})")
+            _save_progress("tags", "Creating tags...")
+            tags_result = _gql("{ tags { id name color } }")
+            all_tags = {t["name"]: t for t in tags_result.get("data", {}).get("tags", [])}
 
-        date_tag_id = None
-        if today_str in all_tags:
-            date_tag_id = all_tags[today_str]["id"]
-        else:
-            mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
-            result = _gql(mut, {"o": {"name": today_str, "color": "#94a3b8"}})
-            date_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
-            _log(f"Created date tag: {today_str} (ID: {date_tag_id})")
+            ZAPMAIL_TAG_ID = 262254
+            tag_name = f"Generic {letter}"
+            today_str = _time.strftime("%-m/%-d/%y")
 
-        if not group_tag_id or not date_tag_id:
-            return _cors(jsonify({"error": "Failed to create tags", "log": log_lines})), 500
+            group_tag_id = None
+            if tag_name in all_tags:
+                group_tag_id = all_tags[tag_name]["id"]
+            else:
+                used_colors = {t.get("color", "").upper() for t in all_tags.values()}
+                palette = ["#FF6B6B", "#FF8E72", "#FFA94D", "#FFD43B", "#A9E34B",
+                           "#51CF66", "#20C997", "#22B8CF", "#339AF0", "#5C7CFA",
+                           "#7950F2", "#BE4BDB", "#E64980", "#F06595", "#CC5DE8"]
+                color = next((c for c in palette if c.upper() not in used_colors), "#7950F2")
+                mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
+                result = _gql(mut, {"o": {"name": tag_name, "color": color}})
+                group_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
+                _log(f"Created tag: {tag_name} (ID: {group_tag_id})")
 
-        tag_ids = [ZAPMAIL_TAG_ID, group_tag_id, date_tag_id]
-        _log(f"Tags ready: Zapmail ({ZAPMAIL_TAG_ID}), {tag_name} ({group_tag_id}), {today_str} ({date_tag_id})")
+            date_tag_id = None
+            if today_str in all_tags:
+                date_tag_id = all_tags[today_str]["id"]
+            else:
+                mut = """mutation($o: tags_insert_input!) { insert_tags_one(object: $o) { id name color } }"""
+                result = _gql(mut, {"o": {"name": today_str, "color": "#94a3b8"}})
+                date_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
+                _log(f"Created date tag: {today_str} (ID: {date_tag_id})")
 
-        # --- Step 4: Tag + warmup each account ---
-        tagged = 0
-        warmed = 0
+            if not group_tag_id or not date_tag_id:
+                return _cors(jsonify({"error": "Failed to create tags", "log": log_lines})), 500
+
+            tag_ids = [ZAPMAIL_TAG_ID, group_tag_id, date_tag_id]
+            state["_tag_ids"] = tag_ids
+            state["accounts_found"] = len(found_ids)
+            store.set_state(f"generic_group_wizard_{letter}", state)
+            _log(f"Tags ready: Zapmail ({ZAPMAIL_TAG_ID}), {tag_name} ({group_tag_id}), {today_str} ({date_tag_id})")
+
+        # --- Step 4: Tag + warmup each account (resumable) ---
+        already_done = set(state.get("_processed_ids", []))
+        remaining_ids = [aid for aid in found_ids if aid not in already_done]
+        tagged = state.get("accounts_tagged", 0)
+        warmed = state.get("accounts_warmed", 0)
         warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
                        "daily_rampup": 5, "reply_rate_percentage": 40}
 
-        for i, acc_id in enumerate(found_ids):
-            _save_progress("accounts", f"Configuring account {i + 1}/{len(found_ids)}")
+        if already_done:
+            _log(f"Resuming: {len(already_done)} already done, {len(remaining_ids)} remaining")
+
+        for i, acc_id in enumerate(remaining_ids):
+            total_done = len(already_done) + i + 1
+            _save_progress("accounts", f"Configuring account {total_done}/{len(found_ids)}")
 
             # Tag
             tag_body = {"id": acc_id, "tags": tag_ids, "clientId": None}
@@ -2608,22 +2662,14 @@ def finalize_generic_group():
                 if r.status_code == 200:
                     tagged += 1
 
-            # Warmup — verify + retry
-            acct_warmed = False
-            for warmup_attempt in range(3):
+            # Warmup — fire and move on (no per-account verify loop)
+            wr = req.post(f"{SMARTLEAD_API}/email-accounts/{acc_id}/warmup?api_key={SMARTLEAD_KEY}",
+                          json=warmup_body, timeout=30)
+            if wr.status_code == 429:
+                _time.sleep(5)
                 wr = req.post(f"{SMARTLEAD_API}/email-accounts/{acc_id}/warmup?api_key={SMARTLEAD_KEY}",
                               json=warmup_body, timeout=30)
-                if wr.status_code == 429:
-                    _time.sleep(10)
-                    continue
-                _time.sleep(1)
-                vr = req.get(f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}", timeout=15)
-                if vr.status_code == 200 and vr.json().get("warmup_enabled"):
-                    acct_warmed = True
-                    break
-                _time.sleep(2)
-
-            if acct_warmed:
+            if wr.status_code == 200:
                 warmed += 1
 
             # Full warmup config
@@ -2651,6 +2697,12 @@ def finalize_generic_group():
             except Exception:
                 pass
 
+            # Save progress after each account so we can resume
+            already_done.add(acc_id)
+            state["_processed_ids"] = list(already_done)
+            state["accounts_tagged"] = tagged
+            state["accounts_warmed"] = warmed
+            store.set_state(f"generic_group_wizard_{letter}", state)
             _time.sleep(0.3)
 
         _log(f"Tagged {tagged}/{len(found_ids)}, warmup {warmed}/{len(found_ids)}")
