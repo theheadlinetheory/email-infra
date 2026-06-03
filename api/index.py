@@ -2448,6 +2448,8 @@ def finalize_generic_group():
                 return _cors(jsonify({"error": f"Group {letter} phase is '{state.get('phase')}' — expected mailboxes_created"})), 400
 
         state["_finalize_started"] = datetime.now(timezone.utc).isoformat()
+        state["phase"] = "finalizing"
+        store.set_state(f"generic_group_wizard_{letter}", state)
 
         ZAPMAIL_API = "https://api.zapmail.ai/api"
         ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()

@@ -2380,9 +2380,9 @@ function _wizFinalizeServerSide() {
             }
         }
     }).catch(function(e) {
-        s.log.push('Server request ended (timeout or network) — auto-retrying to resume...');
-        _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Request ended — retrying to resume from saved progress' });
-        setTimeout(function() { _wizFinalizeServerSide(); }, 5000);
+        s.log.push('Server request timed out — polling for progress (server may still be running)');
+        _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Request timed out — polling server for progress' });
+        _wizPollServerProgress();
     });
 }
 var _wizServerPollTimer = null;
@@ -2405,7 +2405,26 @@ function _wizPollServerProgress() {
                 s.log.push('Server finalize complete: ' + (st.accounts_found || 0) + ' accounts');
                 _pipeUpsert(s.letter, 'complete', { detail: (st.accounts_found || 0) + ' accounts configured' });
                 renderCreateGroupWizard();
+                if (s.bulkQueue) {
+                    var remaining = s.bulkQueue.filter(function(g) { return g.status === 'queued'; }).length;
+                    if (remaining > 0) {
+                        s.log.push('Bulk queue: ' + remaining + ' group(s) remaining — starting next in 5s...');
+                        setTimeout(_wizBulkRunNext, 5000);
+                    } else {
+                        s.bulkQueue = null;
+                        _wizSave();
+                    }
+                }
                 return;
+            }
+            if (st.phase === 'finalizing' && st._finalize_started) {
+                var age = (Date.now() - new Date(st._finalize_started).getTime()) / 1000;
+                if (age > 360) {
+                    s.log.push('Server process appears stale (started ' + Math.round(age/60) + 'm ago) — click Retry to re-run');
+                    _pipeUpsert(s.letter, 'error', { detail: 'Server timed out — retry available', logMsg: 'Server stale after ' + Math.round(age/60) + 'm' });
+                    renderCreateGroupWizard();
+                    return;
+                }
             }
             _wizServerPollTimer = setTimeout(_wizPollServerProgress, 5000);
         }).catch(function() {
