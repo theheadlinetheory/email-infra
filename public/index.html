@@ -824,9 +824,18 @@ function _pipeSave(runs) {
 }
 function _pipeUpsert(letter, phase, extra) {
     var runs = _pipeGet();
+    // Deduplicate: only one entry per letter — find existing regardless of status
     var run = null;
+    var runIdx = -1;
     for (var i = 0; i < runs.length; i++) {
-        if (runs[i].letter === letter && runs[i].status === 'active') { run = runs[i]; break; }
+        if (runs[i].letter === letter) {
+            if (!run || runs[i].status === 'active') { run = runs[i]; runIdx = i; }
+        }
+    }
+    // Remove any other entries for the same letter (dedup)
+    if (run) {
+        runs = runs.filter(function(r, idx) { return r.letter !== letter || idx === runIdx; });
+        runIdx = runs.indexOf(run);
     }
     if (!run && letter !== '?') {
         for (var j = 0; j < runs.length; j++) {
