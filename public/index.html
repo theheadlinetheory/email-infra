@@ -855,8 +855,14 @@ function _pipeResume(id) {
     for (var i = 0; i < runs.length; i++) { if (runs[i].id === id) { run = runs[i]; break; } }
     if (!run) return;
     run.status = 'active';
-    if (run.stepStatuses[run.stepIdx] === 'error') run.stepStatuses[run.stepIdx] = 'pending';
     run.error = null;
+    // Find the real active/errored step
+    var realStep = 0;
+    for (var rs = 0; rs < 4; rs++) {
+        if (run.stepStatuses[rs] === 'active' || run.stepStatuses[rs] === 'error') { realStep = rs; break; }
+    }
+    if (run.stepStatuses[realStep] === 'error') run.stepStatuses[realStep] = 'pending';
+    run.stepIdx = realStep;
     _pipeSave(runs);
     _wizardState.letter = run.letter;
     _wizardState.niche = run.niche || 'generic';
@@ -866,16 +872,21 @@ function _pipeResume(id) {
     _wizardState.error = '';
     _wizardState.createProgress = null;
     _wizardState.createStep = null;
+    _wizardState.finalizeProgress = null;
     _wizardState.log = [];
-    var failedStep = run.stepIdx;
-    if (failedStep >= 3) {
+    if (realStep >= 3) {
         _wizardState.phase = 'mailboxes_done';
-        _wizardState.finalizeProgress = null;
-        renderPipelineRuns();
+        _pipeUpsert(run.letter, 'mailboxes_done', { logMsg: 'Resumed — ready to export to SmartLead' });
         renderCreateGroupWizard();
     } else {
+        // Step 0, 1, or 2: go to picking, pre-select run's domains if available
         _wizardState.phase = 'picking';
-        renderPipelineRuns();
+        if (run.domains && run.domains.length) {
+            var sel = {};
+            for (var di = 0; di < run.domains.length; di++) sel[run.domains[di]] = true;
+            _wizardState.selected = sel;
+        }
+        _pipeUpsert(run.letter, 'picking', { logMsg: 'Resumed at step ' + (realStep + 1) + ' — select domains to continue' });
         _wizardLoadDomains();
     }
 }
@@ -995,7 +1006,8 @@ function _pipeRenderRow(run) {
     if (domCount > 0) html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' ' + esc(run.tld || '') + ' domains</span>';
     html += '</div>';
     html += '<div style="display:flex;gap:6px;align-items:center;">';
-    if (run.status === 'error') {
+    var isStalled = run.status === 'active' && _wizardState.letter !== run.letter;
+    if (run.status === 'error' || isStalled) {
         html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
     }
     html += '<button onclick="if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 8px;font-size:10px;background:transparent;color:#475569;border:1px solid #334155;border-radius:4px;cursor:pointer;">&times;</button>';
