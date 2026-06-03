@@ -204,6 +204,8 @@ def refresh_stats():
     store._CACHE_WRITE_ENABLED = True
     try:
         import sync
+        import time as _time
+        import requests as req
         from datetime import date
         today_str = date.today().isoformat()
         health_today = sync.fetch_health_metrics(start_date=today_str, end_date=today_str)
@@ -220,10 +222,105 @@ def refresh_stats():
                     if g.get("group_b") and g["group_b"].get("account_details"):
                         eb = [a["email"] for a in g["group_b"]["account_details"] if a.get("email")]
                         g["group_b"]["daily_sent"] = sum(health_today.get(e, {}).get("sent", 0) for e in eb)
+
+            # --- Refresh campaign stats + group assignments ---
+            _refresh_campaigns(data, req, _time)
+
             store.cache_patch("overview_v2", data)
         return _cors(jsonify({"ok": True, "accounts": len(health_today)}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
+
+
+def _refresh_campaigns(data, req, _time):
+    """Refresh campaign stats and group-campaign assignments in the overview cache."""
+    SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
+    SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
+
+    try:
+        r = req.get(f"{SMARTLEAD_API}/campaigns?api_key={SMARTLEAD_KEY}", timeout=30)
+        if r.status_code != 200:
+            return
+        all_campaigns = r.json() if r.text.strip() else []
+        active_acq = [c for c in all_campaigns if c.get("status") == "ACTIVE"
+                      and "acquisition" in c.get("name", "").lower()
+                      and "subsequence" not in c.get("name", "").lower()]
+    except Exception:
+        return
+
+    # Build email → campaign list mapping from active campaigns
+    email_to_camps = {}
+    stats_updates = {}
+
+    for camp in active_acq:
+        cid = camp["id"]
+        try:
+            # Fetch campaign email accounts
+            ar = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/email-accounts?api_key={SMARTLEAD_KEY}", timeout=10)
+            acct_emails = []
+            if ar.status_code == 200:
+                acct_emails = [a.get("from_email", "") for a in ar.json() if a.get("from_email")]
+            elif ar.status_code == 429:
+                _time.sleep(5)
+                ar = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/email-accounts?api_key={SMARTLEAD_KEY}", timeout=10)
+                if ar.status_code == 200:
+                    acct_emails = [a.get("from_email", "") for a in ar.json() if a.get("from_email")]
+
+            camp_info = {"id": cid, "name": camp["name"], "status": "ACTIVE", "accounts": len(acct_emails)}
+            for em in acct_emails:
+                email_to_camps.setdefault(em, []).append(camp_info)
+
+            # Fetch campaign analytics for progress bar
+            cr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics?api_key={SMARTLEAD_KEY}", timeout=10)
+            if cr.status_code == 200:
+                ad = cr.json()
+                stat = {
+                    "id": cid, "name": camp["name"], "status": "ACTIVE",
+                    "accounts": len(acct_emails),
+                    "total_sent": int(ad.get("sent_count", 0)),
+                    "total_opened": int(ad.get("unique_open_count", 0)),
+                    "total_replied": int(ad.get("reply_count", 0)),
+                    "total_bounced": int(ad.get("bounce_count", 0)),
+                }
+                # Fetch lead counts
+                total_leads = completed = 0
+                for status_key in ("COMPLETED", "INPROGRESS", "STARTED"):
+                    lr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
+                                 params={"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": status_key}, timeout=10)
+                    if lr.status_code == 200:
+                        cnt = int(lr.json().get("total_leads", 0))
+                        total_leads += cnt
+                        if status_key == "COMPLETED":
+                            completed = cnt
+                stat["total_leads"] = total_leads
+                stat["completed"] = completed
+                stat["remaining"] = total_leads - completed
+                stats_updates[cid] = stat
+        except Exception:
+            pass
+        _time.sleep(0.2)
+
+    # Update acq_campaign_stats with fresh data for active campaigns
+    existing_stats = data.get("acq_campaign_stats") or []
+    for i, s in enumerate(existing_stats):
+        if s["id"] in stats_updates:
+            existing_stats[i] = stats_updates[s["id"]]
+    # Add any new campaigns not in the existing list
+    existing_ids = {s["id"] for s in existing_stats}
+    for cid, stat in stats_updates.items():
+        if cid not in existing_ids:
+            existing_stats.append(stat)
+    data["acq_campaign_stats"] = existing_stats
+
+    # Update group campaigns from live email→campaign mapping
+    for section in ("acquisition_groups", "generic_groups"):
+        for g in (data.get(section) or []):
+            group_emails = [a["email"] for a in g.get("account_details", []) if a.get("email")]
+            seen = {}
+            for em in group_emails:
+                for camp_info in email_to_camps.get(em, []):
+                    seen[camp_info["id"]] = camp_info
+            g["campaigns"] = sorted(seen.values(), key=lambda c: c["name"])
 
 
 @app.route("/api/sync-progress")

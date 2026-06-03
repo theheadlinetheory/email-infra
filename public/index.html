@@ -302,6 +302,8 @@ async function load() {
         fetch('/api/domain-renewals' + qs).then(function(r) { return r.ok ? r.json() : null; }).then(function(rn) {
             if (rn && rn.domain_renewals) { data._domainRenewals = rn.domain_renewals; if (currentTab === 'maintenance') renderMaintenance(); }
         }).catch(function() {});
+        // Auto-refresh campaign stats + group assignments in background
+        refreshStats();
     } catch (err) {
         document.getElementById('loading').textContent = 'Error: ' + err.message;
     }
