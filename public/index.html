@@ -853,15 +853,21 @@ function _pipeResume(id) {
     _wizardState.tld = run.tld || '.info';
     _wizardState.registrar = run.registrar || 'spaceship';
     _wizardState.purchasedDomains = run.domains || [];
-    _wizardState.phase = 'picking';
     _wizardState.error = '';
     _wizardState.createProgress = null;
     _wizardState.createStep = null;
     _wizardState.log = [];
-    if (run.stepIdx >= 2) _wizardState.phase = 'mailboxes_done';
-    if (run.stepIdx >= 3) _wizardState.phase = 'mailboxes_done';
-    _wizardLoadDomains();
-    renderPipelineRuns();
+    var failedStep = run.stepIdx;
+    var stepWasOk = run.stepStatuses[failedStep] === 'done';
+    if (failedStep >= 3 && stepWasOk) {
+        _wizardState.phase = 'mailboxes_done';
+        renderPipelineRuns();
+        renderCreateGroupWizard();
+    } else {
+        _wizardState.phase = 'picking';
+        renderPipelineRuns();
+        _wizardLoadDomains();
+    }
 }
 function _pipeRemove(id) {
     var runs = _pipeGet().filter(function(r) { return r.id !== id; });
@@ -1208,9 +1214,17 @@ function renderCreateGroupWizard() {
 }
 
 var _wizDateFilter = '';
+var _wizDomainsLoading = false;
 function _wizRenderPicking() {
     var s = _wizardState;
     var html = '';
+    if (s.letter) {
+        html += '<div style="font-size:13px;color:#22c55e;margin-bottom:12px;font-weight:600;">Setting up Generic ' + esc(s.letter) + '</div>';
+    }
+    if (_wizDomainsLoading) {
+        html += '<div style="color:#3b82f6;font-size:13px;">Loading available domains...' + _wizSpinner + '</div>';
+        return html;
+    }
     html += '<button onclick="_wizardLoadDomains()" style="padding:8px 20px;font-size:13px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;">' +
         (s.domains ? 'Refresh Domains' : 'Load Available Domains') + '</button>';
     if (s.domains && s.domains.length) {
@@ -1376,10 +1390,12 @@ function _wizardSkipPurchase() {
 /* ─── Wizard: Phase 1 — Pick & Create Mailboxes ─── */
 function _wizardLoadDomains() {
     _wizardState.domains = null;
+    _wizDomainsLoading = true;
     renderCreateGroupWizard();
     fetch('/api/available-domains' + _authQs(), { headers: _authHeaders() })
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            _wizDomainsLoading = false;
             var newDomains = d.domains || [];
             _wizardState.domains = newDomains;
             _wizardState.free_letters = d.free_letters || [];
