@@ -787,7 +787,7 @@ var _PIPE_STEPS = ['Find Domains', 'Purchase & DNS', 'Zapmail + Mailboxes', 'Sma
 var _PHASE_TO_STEP = {
     idle: -1, searching: 0, found: 0, replacing: 0,
     purchasing: 1, purchased: 1,
-    picking: 1, creating: 2, mailboxes_done: 2,
+    picking: 1, creating: 2, creating_partial: 2, mailboxes_done: 2,
     finalizing: 3, complete: 3
 };
 
@@ -995,6 +995,27 @@ function _pipeLiveStatus(run) {
         var statusText = 'Creating mailboxes (' + done + '/' + cp.length + ' domains, ' + totalMb + ' mailboxes)';
         if (errors > 0) statusText += ' — ' + errors + ' failed';
         return { text: statusText, sub: sub, progress: cp };
+    }
+    if (phase === 'creating_partial' && cp) {
+        var okCount = cp.filter(function(p) { return p.status === 'done'; }).length;
+        var failCount = cp.filter(function(p) { return p.status === 'error'; }).length;
+        var reasons = {};
+        for (var ei = 0; ei < cp.length; ei++) {
+            if (cp[ei].status !== 'error') continue;
+            var err = cp[ei].error || 'unknown';
+            if (err.indexOf('wallet') >= 0 || err.indexOf('Wallet') >= 0 || err.indexOf('balance') >= 0) err = 'Zapmail wallet balance too low — add funds at zapmail.ai';
+            else if (err.indexOf('not found') >= 0 || err.indexOf('propagat') >= 0) err = 'DNS not propagated yet';
+            else if (err.indexOf('enough mailboxes') >= 0) err = 'Not enough mailbox slots';
+            reasons[err] = (reasons[err] || 0) + 1;
+        }
+        var reasonParts = [];
+        for (var rk in reasons) reasonParts.push(reasons[rk] + ' domain' + (reasons[rk] > 1 ? 's' : '') + ': ' + rk);
+        return {
+            text: okCount + '/' + cp.length + ' domains done — ' + failCount + ' need retry',
+            sub: reasonParts.join('; '),
+            waiting: true,
+            progress: cp
+        };
     }
     if (phase === 'mailboxes_done') {
         var mbTotal = 0;
@@ -1216,10 +1237,14 @@ function _wizRestore() {
                     if (s.phase === 'purchasing' && s.purchaseProgress) {
                         s.phase = 'purchased';
                         s.purchasedDomains = (s.purchaseProgress || []).filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
-                    } else if (s.phase === 'creating' && s.createProgress) {
+                    } else if ((s.phase === 'creating' || s.phase === 'creating_partial') && s.createProgress) {
                         var done = s.createProgress.filter(function(p) { return p.mailboxes > 0; });
+                        var failed = s.createProgress.filter(function(p) { return p.status === 'error' || (p.mailboxes === 0 && p.status !== 'pending'); });
                         if (done.length === s.createProgress.length) {
                             s.phase = 'mailboxes_done';
+                        } else if (done.length > 0 && failed.length > 0) {
+                            s.phase = 'creating_partial';
+                            s.createStep = 'retry_needed';
                         } else {
                             s.phase = 'picking';
                         }
@@ -1292,6 +1317,33 @@ function renderCreateGroupWizard() {
             _wizSave();
             return;
         }
+        if (hasRun && s.phase === 'creating_partial') {
+            var cp = s.createProgress || [];
+            var failedNames = cp.filter(function(p) { return p.status === 'error'; }).map(function(p) { return p.domain; });
+            var okCount = cp.filter(function(p) { return p.status === 'done'; }).length;
+            var html = '<div style="' + box + '">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
+            html += '<div style="font-size:15px;font-weight:600;color:#f1f5f9;">Create Generic Group — Retry Needed</div>';
+            html += '<button onclick="_wizReset()" style="padding:4px 12px;font-size:11px;background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;cursor:pointer;">Start Over</button>';
+            html += '</div>';
+            html += '<div style="background:#f59e0b15;border:1px solid #f59e0b30;border-radius:6px;padding:12px;margin-bottom:12px;">';
+            html += '<div style="color:#f59e0b;font-size:13px;font-weight:600;margin-bottom:6px;">' + failedNames.length + ' of ' + cp.length + ' domains failed — ' + okCount + ' succeeded</div>';
+            html += '<div style="color:#94a3b8;font-size:11px;margin-bottom:8px;">Failed domains:</div>';
+            for (var fi = 0; fi < failedNames.length; fi++) {
+                var fdom = cp.filter(function(p) { return p.domain === failedNames[fi]; })[0];
+                var fErr = fdom && fdom.error ? fdom.error : 'unknown';
+                html += '<div style="font-size:10px;color:#ef4444;font-family:monospace;padding:1px 0;">' + esc(failedNames[fi]) + ' — ' + esc(fErr) + '</div>';
+            }
+            html += '</div>';
+            if (failedNames.some(function(fn) { var fd = cp.filter(function(p) { return p.domain === fn; })[0]; return fd && fd.error && (fd.error.indexOf('wallet') >= 0 || fd.error.indexOf('Wallet') >= 0 || fd.error.indexOf('balance') >= 0); })) {
+                html += '<div style="background:#ef444415;border:1px solid #ef444430;border-radius:6px;padding:10px;margin-bottom:12px;color:#ef4444;font-size:12px;">Zapmail wallet balance is too low. Add funds at <a href="https://app.zapmail.ai" target="_blank" style="color:#3b82f6;text-decoration:underline;">zapmail.ai</a>, then click Retry.</div>';
+            }
+            html += '<button onclick="_wizRetryFailed()" style="padding:8px 20px;font-size:13px;font-weight:600;background:#f59e0b;color:#000;border:none;border-radius:6px;cursor:pointer;">Retry ' + failedNames.length + ' Failed Domains</button>';
+            html += '</div>';
+            el.innerHTML = html;
+            _wizSave();
+            return;
+        }
     }
 
     var html = '<div style="' + box + '">';
@@ -1308,7 +1360,7 @@ function renderCreateGroupWizard() {
         { id: 'finalize', label: '3. Export & Warmup' }
     ];
     var phaseStep = { idle: 0, searching: 0, found: 0, replacing: 0, purchasing: 0, purchased: 0,
-                      picking: 1, creating: 1, mailboxes_done: 1,
+                      picking: 1, creating: 1, creating_partial: 1, mailboxes_done: 1,
                       finalizing: 2, complete: 2, error: -1 };
     var curStep = phaseStep[s.phase] != null ? phaseStep[s.phase] : 0;
     html += '<div style="display:flex;gap:4px;margin-bottom:16px;">';
@@ -1781,15 +1833,57 @@ function _wizardCreateGroup() {
         _wizSetupNext(0);
     }).catch(function(e) { _wizErr(e.message); });
 }
+function _wizRetryFailed() {
+    var cp = _wizardState.createProgress;
+    if (!cp) return;
+    _wizardState.phase = 'creating';
+    _wizardState.createStep = 'mailboxes';
+    // Reset failed domains back to pending
+    for (var i = 0; i < cp.length; i++) {
+        if (cp[i].status === 'error') {
+            cp[i].status = 'pending';
+            cp[i].error = null;
+        }
+    }
+    _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Retrying failed domains...' });
+    renderCreateGroupWizard();
+    _wizSetupNext(0);
+}
 function _wizSetupNext(idx) {
     var cp = _wizardState.createProgress;
+    // Skip domains already done
+    while (idx < cp.length && cp[idx].status === 'done') idx++;
+
     if (idx >= cp.length) {
         var allMbIds = [];
         var okDomains = [];
+        var failedDomains = [];
         for (var i = 0; i < cp.length; i++) {
             if (cp[i].mailboxes > 0) { okDomains.push(cp[i].domain); allMbIds = allMbIds.concat(cp[i].mb_ids); }
+            else { failedDomains.push(cp[i]); }
         }
-        if (!okDomains.length) { _wizErr('No mailboxes were created.'); return; }
+        if (!okDomains.length) { _wizErr('No mailboxes were created on any domain.'); return; }
+
+        // If ANY domains failed, do NOT advance — show retry
+        if (failedDomains.length > 0) {
+            var reasons = {};
+            for (var fi = 0; fi < failedDomains.length; fi++) {
+                var err = failedDomains[fi].error || 'unknown';
+                if (err.indexOf('wallet') >= 0 || err.indexOf('Wallet') >= 0 || err.indexOf('balance') >= 0) err = 'Insufficient Zapmail wallet balance';
+                else if (err.indexOf('not found') >= 0 || err.indexOf('propagat') >= 0) err = 'DNS not propagated';
+                else if (err.indexOf('enough mailboxes') >= 0) err = 'Not enough mailbox slots';
+                reasons[err] = (reasons[err] || 0) + 1;
+            }
+            var reasonParts = [];
+            for (var r in reasons) reasonParts.push(reasons[r] + 'x ' + r);
+            var failMsg = okDomains.length + '/' + cp.length + ' succeeded, ' + failedDomains.length + ' failed: ' + reasonParts.join(', ');
+            _wizardState.phase = 'creating_partial';
+            _wizardState.createStep = 'retry_needed';
+            _pipeUpsert(_wizardState.letter, 'creating', { detail: okDomains.length + '/' + cp.length + ' domains done', logMsg: failMsg });
+            renderCreateGroupWizard();
+            return;
+        }
+
         fetch('/api/group/save-state' + _authQs(), {
             method: 'POST',
             headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
