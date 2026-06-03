@@ -1615,6 +1615,30 @@ def group_connect_domains():
         log = []
         connected = 0
         domain_checks = {}
+
+        # Guard: check Zapmail for domains that already have mailboxes (already in use)
+        already_used = []
+        try:
+            all_zm = []
+            pg = 1
+            while True:
+                zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={pg}&limit=100", headers=zm_h(), timeout=30)
+                zd = zr.json().get("data", {})
+                all_zm.extend(zd.get("domains", []))
+                if pg >= zd.get("totalPages", 1):
+                    break
+                pg += 1
+            zm_used = {d["domain"]: len(d.get("mailboxes", []))
+                       for d in all_zm if d.get("mailboxes") and len(d.get("mailboxes", [])) >= 3}
+            for dn in domains:
+                if dn in zm_used:
+                    already_used.append(dn)
+        except Exception:
+            pass
+        if already_used:
+            return _cors(jsonify({"error": f"{len(already_used)} domain(s) already have mailboxes — remove them first",
+                                  "already_used": already_used})), 400
+
         for dn in domains[:30]:
             checks = []
             try:

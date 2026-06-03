@@ -1921,6 +1921,10 @@ function _wizBulkRunNext() {
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ letter: next.letter, domains: next.domains })
     }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.already_used) {
+            _wizErr('These domains already have mailboxes: ' + d.already_used.join(', ') + '. Remove them from your list.');
+            return;
+        }
         if (d.error) { _wizErr(d.error); return; }
         _wizardState.log = (d.log || []);
         _wizardState.createStep = 'mailboxes';
@@ -2008,6 +2012,10 @@ function _wizardCreateGroup() {
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ letter: _wizardState.letter, domains: domains })
     }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.already_used) {
+            _wizErr('These domains already have mailboxes: ' + d.already_used.join(', ') + '. Remove them from your list.');
+            return;
+        }
         if (d.error) { _wizErr(d.error); return; }
         _wizardState.log = (d.log || []);
         if (d.domain_checks) {
