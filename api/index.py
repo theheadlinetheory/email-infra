@@ -1715,7 +1715,7 @@ def group_setup_domain():
 
         result["checks"].append(f"existing_mailboxes: {len(existing_mb)} found, creating new")
 
-        # Step 3: Ensure enough mailbox slots before creating
+        # Step 3: Buy mailbox slots if needed
         needed = 3 - len(existing_mb)
         try:
             ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
@@ -1730,15 +1730,17 @@ def group_setup_domain():
                 if buy_r.status_code == 200:
                     result["checks"].append(f"buy_slots: OK (bought {to_buy}, had {free_slots} free)")
                 else:
-                    result["checks"].append(f"buy_slots: FAILED — HTTP {buy_r.status_code}: {buy_r.text[:80]}")
-                    result["error"] = f"Not enough mailbox slots and purchase failed: {buy_r.text[:100]}"
-                    return _cors(jsonify(result))
+                    buy_msg = buy_r.text[:120]
+                    result["checks"].append(f"buy_slots: FAILED — HTTP {buy_r.status_code}: {buy_msg}")
+                    if "Insufficient wallet balance" in buy_msg:
+                        result["error"] = f"Zapmail wallet balance too low — add funds at zapmail.ai"
+                        return _cors(jsonify(result))
             else:
                 result["checks"].append(f"slot_check: OK ({free_slots} free, need {needed})")
         except Exception as e:
             result["checks"].append(f"slot_check: WARN — {str(e)[:60]}")
 
-        # Step 4: Create mailboxes
+        # Step 4: Create mailboxes with retry (slots take time to propagate after purchase)
         SPECS = [
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
@@ -1746,21 +1748,37 @@ def group_setup_domain():
         ]
         mailboxes = [{**s, "domainName": domain} for s in SPECS]
         payload = {zapmail_id: mailboxes}
-        try:
-            r = req.post(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json=payload, timeout=60)
-            mb_data = r.json()
-            mb_ids = mb_data.get("data", [])
-            if isinstance(mb_ids, list) and len(mb_ids) > 0:
-                result["mb_ids"] = mb_ids
-                result["mailboxes_created"] = len(mb_ids)
-                result["checks"].append(f"create_mailboxes: OK ({len(mb_ids)} created)")
-            else:
-                result["error"] = f"Mailbox creation failed: {mb_data.get('message', str(mb_data)[:150])}"
-                result["checks"].append(f"create_mailboxes: FAILED — {mb_data.get('message', 'unknown')[:80]}")
-                return _cors(jsonify(result))
-        except Exception as e:
-            result["error"] = f"Mailbox creation failed: {str(e)[:150]}"
-            result["checks"].append(f"create_mailboxes: FAILED — {str(e)[:80]}")
+        MAX_RETRIES = 5
+        RETRY_DELAY = 15
+        created = False
+        last_err = ""
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                r = req.post(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json=payload, timeout=60)
+                mb_data = r.json()
+                mb_ids = mb_data.get("data", [])
+                if isinstance(mb_ids, list) and len(mb_ids) > 0:
+                    result["mb_ids"] = mb_ids
+                    result["mailboxes_created"] = len(mb_ids)
+                    result["checks"].append(f"create_mailboxes: OK ({len(mb_ids)} created, attempt {attempt})")
+                    created = True
+                    break
+                else:
+                    last_err = mb_data.get("message", str(mb_data)[:150])
+                    if attempt < MAX_RETRIES and ("enough mailboxes" in last_err.lower() or "can't be assigned" in last_err.lower()):
+                        result["checks"].append(f"create_attempt_{attempt}: slots not ready — retrying in {RETRY_DELAY}s")
+                        _time.sleep(RETRY_DELAY)
+                    elif attempt < MAX_RETRIES:
+                        result["checks"].append(f"create_attempt_{attempt}: {last_err[:60]} — retrying in {RETRY_DELAY}s")
+                        _time.sleep(RETRY_DELAY)
+            except Exception as e:
+                last_err = str(e)[:150]
+                if attempt < MAX_RETRIES:
+                    result["checks"].append(f"create_attempt_{attempt}: error — retrying in {RETRY_DELAY}s")
+                    _time.sleep(RETRY_DELAY)
+        if not created:
+            result["error"] = f"Mailbox creation failed after {MAX_RETRIES} attempts: {last_err}"
+            result["checks"].append(f"create_mailboxes: FAILED after {MAX_RETRIES} attempts — {last_err[:80]}")
             return _cors(jsonify(result))
 
         # Step 5: Verify mailboxes exist by re-fetching

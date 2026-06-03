@@ -1877,12 +1877,13 @@ function _wizSetupNext(idx) {
         }
         if (!okDomains.length) { _wizErr('No mailboxes were created on any domain.'); return; }
 
-        // If ANY domains failed, do NOT advance — show retry
+        // If ANY domains failed — check if auto-retry is possible
         if (failedDomains.length > 0) {
             var reasons = {};
+            var isWalletIssue = false;
             for (var fi = 0; fi < failedDomains.length; fi++) {
                 var err = failedDomains[fi].error || 'unknown';
-                if (err.indexOf('wallet') >= 0 || err.indexOf('Wallet') >= 0 || err.indexOf('balance') >= 0) err = 'Insufficient Zapmail wallet balance';
+                if (err.indexOf('wallet') >= 0 || err.indexOf('Wallet') >= 0 || err.indexOf('balance') >= 0) { isWalletIssue = true; err = 'Insufficient Zapmail wallet balance'; }
                 else if (err.indexOf('not found') >= 0 || err.indexOf('propagat') >= 0) err = 'DNS not propagated';
                 else if (err.indexOf('enough mailboxes') >= 0) err = 'Not enough mailbox slots';
                 reasons[err] = (reasons[err] || 0) + 1;
@@ -1890,12 +1891,33 @@ function _wizSetupNext(idx) {
             var reasonParts = [];
             for (var r in reasons) reasonParts.push(reasons[r] + 'x ' + r);
             var failMsg = okDomains.length + '/' + cp.length + ' succeeded, ' + failedDomains.length + ' failed: ' + reasonParts.join(', ');
+
+            // Auto-retry up to 2 rounds (unless wallet issue — need manual intervention)
+            var retryRound = _wizardState._retryRound || 0;
+            if (!isWalletIssue && retryRound < 2) {
+                _wizardState._retryRound = retryRound + 1;
+                var waitSec = 30;
+                _pipeUpsert(_wizardState.letter, 'creating', { logMsg: failMsg + ' — auto-retrying in ' + waitSec + 's (round ' + (retryRound + 1) + '/2)' });
+                renderCreateGroupWizard();
+                setTimeout(function() {
+                    for (var ri = 0; ri < cp.length; ri++) {
+                        if (cp[ri].status === 'error') { cp[ri].status = 'pending'; cp[ri].error = null; }
+                    }
+                    _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Auto-retry round ' + (retryRound + 1) + ': retrying ' + failedDomains.length + ' failed domains...' });
+                    _wizSetupNext(0);
+                }, waitSec * 1000);
+                return;
+            }
+
+            // Exhausted auto-retries or wallet issue — stop and show retry UI
+            _wizardState._retryRound = 0;
             _wizardState.phase = 'creating_partial';
             _wizardState.createStep = 'retry_needed';
             _pipeUpsert(_wizardState.letter, 'creating', { detail: okDomains.length + '/' + cp.length + ' domains done', logMsg: failMsg });
             renderCreateGroupWizard();
             return;
         }
+        _wizardState._retryRound = 0;
 
         fetch('/api/group/save-state' + _authQs(), {
             method: 'POST',
