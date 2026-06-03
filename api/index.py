@@ -2407,7 +2407,7 @@ def group_finalize_account():
 
 @app.route("/api/finalize-generic-group", methods=["POST", "OPTIONS"])
 def finalize_generic_group():
-    """Phase 2: Export to SmartLead, tag with Zapmail + Generic letter + date, enable warmup."""
+    """Phase 2: Export to SmartLead, tag, enable warmup — runs entirely server-side."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
@@ -2422,8 +2422,13 @@ def finalize_generic_group():
 
         import db as store
         state = store.get_state(f"generic_group_wizard_{letter}")
-        if not state or state.get("phase") != "mailboxes_created":
+        if not state:
             return _cors(jsonify({"error": f"No pending group {letter} — run Phase 1 first"})), 400
+        if state.get("phase") not in ("mailboxes_created", "export_failed", "finalizing"):
+            if state.get("phase") == "complete" and state.get("accounts_found", 0) == 0:
+                pass  # allow re-run if complete but 0 accounts
+            else:
+                return _cors(jsonify({"error": f"Group {letter} phase is '{state.get('phase')}' — expected mailboxes_created"})), 400
 
         ZAPMAIL_API = "https://api.zapmail.ai/api"
         ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
@@ -2438,11 +2443,19 @@ def finalize_generic_group():
         def sl_h():
             return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
 
-        log_lines = []
+        log_lines = state.get("finalize_log", [])
         def _log(msg):
             log_lines.append(msg)
 
-        # Export to SmartLead
+        def _save_progress(step, detail=""):
+            state["phase"] = "finalizing"
+            state["finalize_step"] = step
+            state["finalize_detail"] = detail
+            state["finalize_log"] = log_lines
+            store.set_state(f"generic_group_wizard_{letter}", state)
+
+        # --- Step 1: Export to SmartLead ---
+        _save_progress("export", "Exporting mailboxes...")
         mb_ids = state.get("all_mb_ids", [])
         if mb_ids:
             _log(f"Exporting {len(mb_ids)} mailboxes to SmartLead...")
@@ -2456,41 +2469,66 @@ def finalize_generic_group():
                              json={"apps": ["SMARTLEAD"], "contains": dd["domain"]}, timeout=30)
                 _time.sleep(2)
 
-        _log("Waiting 90s for SmartLead to process...")
-        _time.sleep(90)
-
-        # Find new accounts in SmartLead
+        # --- Step 2: Poll for accounts (instead of fixed wait) ---
         our_domains = {dd["domain"] for dd in state.get("domains", [])}
-        found_ids = []
-        offset = 0
-        for _ in range(20):
-            url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
-            r = req.get(url, timeout=30)
-            accts = r.json() if r.status_code == 200 else []
-            if not isinstance(accts, list) or not accts:
+        expected = len(our_domains) * 3
+        found = []
+        MAX_POLLS = 12  # 12 x 15s = 3 min max wait
+        for poll in range(MAX_POLLS):
+            wait_sec = 15 if poll > 0 else 30  # first wait 30s, then 15s
+            _save_progress("waiting", f"Waiting for SmartLead ({poll + 1}/{MAX_POLLS})...")
+            _time.sleep(wait_sec)
+
+            found = []
+            offset = 0
+            for _ in range(30):
+                url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
+                r = req.get(url, timeout=30)
+                if r.status_code == 429:
+                    _time.sleep(10)
+                    r = req.get(url, timeout=30)
+                accts = r.json() if r.status_code == 200 else []
+                if not isinstance(accts, list) or not accts:
+                    break
+                for a in accts:
+                    email = a.get("from_email", a.get("email", ""))
+                    domain = email.split("@")[-1] if "@" in email else ""
+                    if domain in our_domains:
+                        found.append({"id": a.get("id"), "email": email})
+                if len(accts) < 100:
+                    break
+                offset += 100
+                _time.sleep(0.5)
+
+            _log(f"Poll {poll + 1}: found {len(found)}/{expected} accounts")
+            _save_progress("finding", f"Found {len(found)}/{expected} accounts")
+
+            if len(found) >= expected:
                 break
-            for a in accts:
-                email = a.get("from_email", a.get("email", ""))
-                domain = email.split("@")[-1] if "@" in email else ""
-                if domain in our_domains:
-                    found_ids.append(a.get("id"))
-            offset += 100
-            _time.sleep(0.5)
 
-        _log(f"Found {len(found_ids)} accounts in SmartLead")
+            # Re-export if 0 found after 2 polls
+            if len(found) == 0 and poll == 2 and mb_ids:
+                _log("Re-exporting — 0 accounts after 2 polls...")
+                req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                         json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
 
-        if not found_ids:
+        if not found:
             state["phase"] = "export_failed"
+            state["finalize_log"] = log_lines
             store.set_state(f"generic_group_wizard_{letter}", state)
-            return _cors(jsonify({"ok": False, "error": "No accounts found in SmartLead after export. Try again in a few minutes.",
+            return _cors(jsonify({"ok": False, "error": "No accounts found in SmartLead after polling. Try re-running.",
                                   "log": log_lines, "retry": True}))
 
-        # Get/create tags via GQL
+        found_ids = [a["id"] for a in found]
+        _log(f"Found {len(found_ids)} accounts — proceeding to tag + warmup")
+
+        # --- Step 3: Get/create tags via GQL ---
+        _save_progress("tags", "Creating tags...")
         def _gql(query, variables=None):
-            body = {"query": query}
+            b = {"query": query}
             if variables:
-                body["variables"] = variables
-            r = req.post(SMARTLEAD_GQL, headers=sl_h(), json=body, timeout=30)
+                b["variables"] = variables
+            r = req.post(SMARTLEAD_GQL, headers=sl_h(), json=b, timeout=30)
             return r.json()
 
         tags_result = _gql("{ tags { id name color } }")
@@ -2500,7 +2538,6 @@ def finalize_generic_group():
         tag_name = f"Generic {letter}"
         today_str = _time.strftime("%-m/%-d/%y")
 
-        # Find or create group tag
         group_tag_id = None
         if tag_name in all_tags:
             group_tag_id = all_tags[tag_name]["id"]
@@ -2515,7 +2552,6 @@ def finalize_generic_group():
             group_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
             _log(f"Created tag: {tag_name} (ID: {group_tag_id})")
 
-        # Find or create date tag
         date_tag_id = None
         if today_str in all_tags:
             date_tag_id = all_tags[today_str]["id"]
@@ -2528,30 +2564,50 @@ def finalize_generic_group():
         if not group_tag_id or not date_tag_id:
             return _cors(jsonify({"error": "Failed to create tags", "log": log_lines})), 500
 
-        # Tag all accounts
         tag_ids = [ZAPMAIL_TAG_ID, group_tag_id, date_tag_id]
+        _log(f"Tags ready: Zapmail ({ZAPMAIL_TAG_ID}), {tag_name} ({group_tag_id}), {today_str} ({date_tag_id})")
+
+        # --- Step 4: Tag + warmup each account ---
         tagged = 0
-        for acc_id in found_ids:
+        warmed = 0
+        warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
+                       "daily_rampup": 5, "reply_rate_percentage": 40}
+
+        for i, acc_id in enumerate(found_ids):
+            _save_progress("accounts", f"Configuring account {i + 1}/{len(found_ids)}")
+
+            # Tag
             tag_body = {"id": acc_id, "tags": tag_ids, "clientId": None}
             r = req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-management-details",
                          headers=sl_h(), json=tag_body, timeout=30)
             if r.status_code == 200:
                 tagged += 1
-            _time.sleep(0.3)
-        _log(f"Tagged {tagged}/{len(found_ids)} accounts")
+            elif r.status_code == 429:
+                _time.sleep(10)
+                r = req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-management-details",
+                             headers=sl_h(), json=tag_body, timeout=30)
+                if r.status_code == 200:
+                    tagged += 1
 
-        # Enable warmup
-        warmed = 0
-        warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
-                       "daily_rampup": 5, "reply_rate_percentage": 40}
-        for acc_id in found_ids:
-            r = req.post(f"{SMARTLEAD_API}/email-accounts/{acc_id}/warmup?api_key={SMARTLEAD_KEY}",
-                         json=warmup_body, timeout=30)
-            if r.status_code == 200:
+            # Warmup — verify + retry
+            acct_warmed = False
+            for warmup_attempt in range(3):
+                wr = req.post(f"{SMARTLEAD_API}/email-accounts/{acc_id}/warmup?api_key={SMARTLEAD_KEY}",
+                              json=warmup_body, timeout=30)
+                if wr.status_code == 429:
+                    _time.sleep(10)
+                    continue
+                _time.sleep(1)
+                vr = req.get(f"{SMARTLEAD_API}/email-accounts/{acc_id}?api_key={SMARTLEAD_KEY}", timeout=15)
+                if vr.status_code == 200 and vr.json().get("warmup_enabled"):
+                    acct_warmed = True
+                    break
+                _time.sleep(2)
+
+            if acct_warmed:
                 warmed += 1
-            _time.sleep(0.3)
 
-            # Full warmup config via internal API
+            # Full warmup config
             wd = req.get(f"{SMARTLEAD_INTERNAL}/email-account/fetch-warmup-details-by-email-account-id/{acc_id}",
                          headers=sl_h(), timeout=30)
             warmup_key = ""
@@ -2568,15 +2624,26 @@ def finalize_generic_group():
                 }
                 req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-warmup",
                          headers=sl_h(), json=full_body, timeout=30)
+
+            # time_to_wait setting
+            try:
+                req.post(f"{SMARTLEAD_API}/email-accounts/{acc_id}/settings?api_key={SMARTLEAD_KEY}",
+                         json={"time_to_wait_in_mins": 5}, timeout=15)
+            except Exception:
+                pass
+
             _time.sleep(0.3)
 
-        _log(f"Warmup enabled on {warmed}/{len(found_ids)} accounts")
+        _log(f"Tagged {tagged}/{len(found_ids)}, warmup {warmed}/{len(found_ids)}")
 
-        # Update state
+        # --- Done ---
         state["phase"] = "complete"
         state["accounts_found"] = len(found_ids)
         state["accounts_tagged"] = tagged
         state["accounts_warmed"] = warmed
+        state["finalize_step"] = "done"
+        state["finalize_detail"] = f"{tagged} tagged, {warmed} warmup"
+        state["finalize_log"] = log_lines
         store.set_state(f"generic_group_wizard_{letter}", state)
 
         return _cors(jsonify({"ok": True, "letter": letter,
@@ -2587,6 +2654,31 @@ def finalize_generic_group():
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/group/wizard-state")
+def group_wizard_state():
+    """Return current wizard state from Supabase (for polling during server-side finalize)."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import db as store
+        letter = request.args.get("letter", "").strip().upper()
+        if not letter:
+            return _cors(jsonify({"error": "letter required"})), 400
+        state = store.get_state(f"generic_group_wizard_{letter}")
+        if not state:
+            return _cors(jsonify({"state": None}))
+        return _cors(jsonify({"state": {
+            "phase": state.get("phase"),
+            "finalize_step": state.get("finalize_step"),
+            "finalize_detail": state.get("finalize_detail"),
+            "accounts_found": state.get("accounts_found", 0),
+            "accounts_tagged": state.get("accounts_tagged", 0),
+            "accounts_warmed": state.get("accounts_warmed", 0),
+        }}))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
 
 
 @app.route("/api/<path:path>", methods=["GET", "OPTIONS"])

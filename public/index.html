@@ -906,21 +906,20 @@ function _pipeRefinalize(letter, runId) {
     run.stepIdx = 3;
     run.stepStatuses[3] = 'active';
     _pipeSave(runs);
-    var domains = run.domains || [];
     _wizardState.phase = 'finalizing';
     _wizardState.letter = letter;
-    _wizardState.purchasedDomains = domains;
-    _wizardState._allDomains = domains;
+    _wizardState.purchasedDomains = run.domains || [];
+    _wizardState._allDomains = run.domains || [];
     _wizardState._allMbIds = [];
     _wizardState._slAccounts = null;
     _wizardState._tagIds = null;
     _wizardState.finalizeProgress = {};
-    _wizardState.log = ['Re-running finalize for Generic ' + letter + '...'];
+    _wizardState.log = ['Re-running finalize for Generic ' + letter + ' (server-side)...'];
     _wizardState.error = '';
     _wizSave();
-    _pipeUpsert(letter, 'finalizing', { detail: 'Re-exporting...', logMsg: 'Re-running finalize: export + find + tag + warmup' });
+    _pipeUpsert(letter, 'finalizing', { detail: 'Running on server...', logMsg: 'Re-running finalize on server: export + find + tag + warmup' });
     _wizFinalizeSetStep('provision', 'done');
-    _wizFinalizeExport();
+    _wizFinalizeServerSide();
 }
 
 function renderPipelineRuns() {
@@ -1074,9 +1073,9 @@ function _pipeLiveStatus(run) {
         if (fp.tags === 'active') return { text: 'Setting up SmartLead tags', sub: null };
         if (fp.find === 'active') return { text: 'Searching for accounts in SmartLead', sub: fp.foundCount != null ? fp.foundCount + ' found' : null };
         if (fp.wait === 'active') return { text: 'Waiting for SmartLead to process export', sub: fp.waitSec != null ? fp.waitSec + 's remaining' : null };
-        if (fp.export === 'active') return { text: 'Exporting mailboxes to SmartLead', sub: null };
+        if (fp.export === 'active') return { text: 'Running on server — export + find + tag + warmup', sub: 'Safe to close browser' };
         if (fp.provision === 'active') return { text: 'Waiting for mailboxes to finish provisioning', sub: fp.provisionStatus || 'checking...' };
-        return { text: 'Finalizing...', sub: null };
+        return { text: 'Running on server...', sub: 'Safe to close browser' };
     }
     if (phase === 'complete') {
         return { text: 'Complete', sub: null };
@@ -2189,46 +2188,17 @@ function _wizFinalizeResume() {
     if (s.phase !== 'finalizing' || !s.finalizeProgress) return;
     var fp = s.finalizeProgress;
     var domains = s._allDomains || s.purchasedDomains || [];
-    var accounts = s._slAccounts || [];
-    var tagIds = s._tagIds || [];
 
-    s.log.push('Resuming finalize from saved progress...');
-    _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Resumed finalize after page reload' });
+    s.log.push('Resuming finalize — checking server state...');
+    _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Resumed — checking if server is still running' });
 
-    var steps = ['provision', 'export', 'wait', 'find', 'tags', 'accounts'];
-    var resumeIdx = 0;
-    for (var i = 0; i < steps.length; i++) {
-        if (fp[steps[i]] === 'done') resumeIdx = i + 1;
-        else if (fp[steps[i]] === 'active' || fp[steps[i]] === 'error') { resumeIdx = i; break; }
-    }
-    if (resumeIdx >= steps.length) {
-        s.phase = 'complete';
-        renderCreateGroupWizard();
+    if (fp.provision !== 'done') {
+        _wizFinalizeProvisionPoll(domains, 0);
         return;
     }
-
-    var step = steps[resumeIdx];
-    switch (step) {
-        case 'provision': _wizFinalizeProvisionPoll(domains, 0); break;
-        case 'export': _wizFinalizeExport(); break;
-        case 'wait':
-            var remaining = 180;
-            if (fp._waitTarget) remaining = Math.max(0, Math.ceil((fp._waitTarget - Date.now()) / 1000));
-            _wizFinalizeWait(remaining, domains);
-            break;
-        case 'find': _wizFinalizeFind(domains, 0); break;
-        case 'tags': _wizFinalizeTags(accounts); break;
-        case 'accounts':
-            var startIdx = fp.accountsDone || 0;
-            if (accounts.length && tagIds.length) {
-                _wizFinalizeAccounts(accounts, tagIds, startIdx);
-            } else if (!accounts.length) {
-                _wizFinalizeFind(domains, 0);
-            } else {
-                _wizFinalizeTags(accounts);
-            }
-            break;
-    }
+    // Everything after provision runs server-side — poll for status
+    _wizPollServerProgress();
+    _wizFinalizeServerSide();
 }
 
 function _wizardFinalize() {
@@ -2268,17 +2238,17 @@ function _wizFinalizeProvisionPoll(domains, poll) {
         _pipeUpsert(_wizardState.letter, 'finalizing', { detail: msg });
 
         if (d.all_ready) {
-            _wizardState.log.push('All mailboxes ACTIVE — proceeding to export');
-            _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'All ' + d.active + ' mailboxes ACTIVE' });
+            _wizardState.log.push('All mailboxes ACTIVE — handing off to server');
+            _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'All ' + d.active + ' mailboxes ACTIVE — running finalize on server' });
             _wizFinalizeSetStep('provision', 'done');
-            _wizFinalizeExport();
+            _wizFinalizeServerSide();
             return;
         }
         if (poll >= MAX_POLLS) {
             _wizardState.log.push('Mailboxes still provisioning after ' + (MAX_POLLS * 30) + 's — proceeding anyway');
-            _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'Timeout: ' + msg + ' — proceeding to export' });
+            _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'Timeout: ' + msg + ' — running finalize on server' });
             _wizFinalizeSetStep('provision', 'done');
-            _wizFinalizeExport();
+            _wizFinalizeServerSide();
             return;
         }
         _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: 'Poll ' + (poll + 1) + ': ' + msg + ' — checking again in 30s' });
@@ -2288,10 +2258,86 @@ function _wizFinalizeProvisionPoll(domains, poll) {
             setTimeout(function() { _wizFinalizeProvisionPoll(domains, poll + 1); }, 10000);
         } else {
             _wizFinalizeSetStep('provision', 'done');
-            _wizFinalizeExport();
+            _wizFinalizeServerSide();
         }
     });
 }
+function _wizFinalizeServerSide() {
+    var s = _wizardState;
+    _wizFinalizeSetStep('export', 'active');
+    _pipeUpsert(s.letter, 'finalizing', { detail: 'Running on server...', logMsg: 'Server-side finalize started — export + find + tag + warmup' });
+    s.log.push('Server-side finalize started — you can close this tab safely');
+    renderCreateGroupWizard();
+
+    fetch('/api/finalize-generic-group' + _authQs(), {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+        body: JSON.stringify({ letter: s.letter })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) {
+            s.log.push('Server finalize error: ' + d.error);
+            _wizFinalizeSetStep('find', 'error');
+            _pipeUpsert(s.letter, 'error', { detail: d.error, logMsg: 'Server error: ' + d.error });
+            if (d.retry) {
+                s.log.push('Retry available — click Re-run Export + Tag + Warmup');
+            }
+            _wizErr(d.error);
+            return;
+        }
+        s.log.push('Server finalize complete: ' + d.accounts_found + ' found, ' + d.accounts_tagged + ' tagged, ' + d.accounts_warmed + ' warmup');
+        if (d.log) { for (var li = 0; li < d.log.length; li++) s.log.push('  ' + d.log[li]); }
+        s._slAccounts = [];
+        s.phase = 'complete';
+        _wizFinalizeSetStep('accounts', 'done', { accountsDone: d.accounts_tagged, accountsTotal: d.accounts_found });
+        _wizFinalizeSetStep('export', 'done');
+        _wizFinalizeSetStep('wait', 'done');
+        _wizFinalizeSetStep('find', 'done', { foundCount: d.accounts_found });
+        _wizFinalizeSetStep('tags', 'done');
+        _pipeUpsert(s.letter, 'complete', { detail: d.accounts_found + ' accounts configured', logMsg: 'Complete! ' + d.accounts_tagged + ' tagged + ' + d.accounts_warmed + ' warmup enabled' });
+        renderCreateGroupWizard();
+        if (s.bulkQueue) {
+            var remaining = s.bulkQueue.filter(function(g) { return g.status === 'queued'; }).length;
+            if (remaining > 0) {
+                s.log.push('Bulk queue: ' + remaining + ' group(s) remaining — starting next in 5s...');
+                setTimeout(_wizBulkRunNext, 5000);
+            } else {
+                s.bulkQueue = null;
+                _wizSave();
+            }
+        }
+    }).catch(function(e) {
+        s.log.push('Server finalize network error: ' + e.message);
+        _wizErr('Network error — the server may still be running. Check back in a few minutes.');
+    });
+}
+var _wizServerPollTimer = null;
+function _wizPollServerProgress() {
+    if (_wizServerPollTimer) clearTimeout(_wizServerPollTimer);
+    var s = _wizardState;
+    if (!s.letter || s.phase === 'complete') return;
+    fetch('/api/group/wizard-state' + _authQs() + '&letter=' + s.letter, { headers: _authHeaders() })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.state) return;
+            var st = d.state;
+            if (st.finalize_step) {
+                var stepMap = { export: 'export', waiting: 'wait', finding: 'find', tags: 'tags', accounts: 'accounts' };
+                var stepKey = stepMap[st.finalize_step] || st.finalize_step;
+                _pipeUpsert(s.letter, 'finalizing', { detail: st.finalize_detail || stepKey });
+            }
+            if (st.phase === 'complete') {
+                s.phase = 'complete';
+                s.log.push('Server finalize complete: ' + (st.accounts_found || 0) + ' accounts');
+                _pipeUpsert(s.letter, 'complete', { detail: (st.accounts_found || 0) + ' accounts configured' });
+                renderCreateGroupWizard();
+                return;
+            }
+            _wizServerPollTimer = setTimeout(_wizPollServerProgress, 5000);
+        }).catch(function() {
+            _wizServerPollTimer = setTimeout(_wizPollServerProgress, 10000);
+        });
+}
+
 function _wizFinalizeExport() {
     var s = _wizardState;
     var allMbIds = s._allMbIds || [];
