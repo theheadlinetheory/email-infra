@@ -506,17 +506,19 @@ function renderGeneric() {
         if (badgeText) badges += '<span class="acq-badge" style="background:#dbeafe;color:#1d4ed8;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(badgeText) + '</span>';
         else if (!oversized) badges += '<span class="acq-badge" style="background:#fef3c7;color:#92400e;">Reserve</span>';
         var warmupBar = '';
-        if (g.warmup_days != null) {
-            var pct = Math.min(100, Math.round(g.warmup_days / 14 * 100));
-            var remaining = Math.max(0, 14 - g.warmup_days);
-            var barColor = pct >= 100 ? '#22c55e' : '#f59e0b';
-            var label = pct >= 100 ? 'Warmup Complete' : 'Day ' + g.warmup_days + '/14 (' + remaining + ' left)';
-            warmupBar = '<div style="margin-top:8px;padding:0 4px;">' +
-                '<div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-bottom:3px;">' +
-                    '<span>' + label + '</span><span>' + pct + '%</span></div>' +
-                '<div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;">' +
-                    '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:3px;transition:width 0.3s;"></div>' +
-                '</div></div>';
+        if (g.warmup_days != null && g.warmup_days < 16) {
+            if (g.warmup_days < 14) {
+                var pct = Math.round(g.warmup_days / 14 * 100);
+                var remaining = 14 - g.warmup_days;
+                warmupBar = '<div style="margin-top:8px;padding:0 4px;">' +
+                    '<div style="display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-bottom:3px;">' +
+                        '<span>Day ' + g.warmup_days + '/14 (' + remaining + ' left)</span><span>' + pct + '%</span></div>' +
+                    '<div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;">' +
+                        '<div style="height:100%;width:' + pct + '%;background:#f59e0b;border-radius:3px;transition:width 0.3s;"></div>' +
+                    '</div></div>';
+            } else {
+                warmupBar = '<div style="margin-top:8px;padding:0 4px;font-size:10px;color:#22c55e;">✓ Warmup done</div>';
+            }
         }
         var repBar = '';
         if (g.avg_warmup_reputation != null) {
