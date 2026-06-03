@@ -1230,7 +1230,9 @@ function _wizRestore() {
         if (saved) {
             var s = JSON.parse(saved);
             if (s && s.phase && s.phase !== 'idle') {
-                if (s.phase === 'finalizing') {
+                if (s.phase === 'finalizing' && s.finalizeProgress) {
+                    // Keep finalize progress intact — will resume after render
+                } else if (s.phase === 'finalizing') {
                     s.phase = 'mailboxes_done';
                     s.finalizeProgress = null;
                 }
@@ -1269,6 +1271,9 @@ function _wizRestore() {
                     }
                 }
                 _wizardState = s;
+                if (_wizardState.phase === 'finalizing') {
+                    setTimeout(_wizFinalizeResume, 500);
+                }
             }
         }
     } catch(e) {}
@@ -1987,6 +1992,53 @@ function _wizFinalizeSetStep(key, status, extra) {
     renderCreateGroupWizard();
 }
 
+function _wizFinalizeResume() {
+    var s = _wizardState;
+    if (s.phase !== 'finalizing' || !s.finalizeProgress) return;
+    var fp = s.finalizeProgress;
+    var domains = s._allDomains || s.purchasedDomains || [];
+    var accounts = s._slAccounts || [];
+    var tagIds = s._tagIds || [];
+
+    s.log.push('Resuming finalize from saved progress...');
+    _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Resumed finalize after page reload' });
+
+    var steps = ['provision', 'export', 'wait', 'find', 'tags', 'accounts'];
+    var resumeIdx = 0;
+    for (var i = 0; i < steps.length; i++) {
+        if (fp[steps[i]] === 'done') resumeIdx = i + 1;
+        else if (fp[steps[i]] === 'active' || fp[steps[i]] === 'error') { resumeIdx = i; break; }
+    }
+    if (resumeIdx >= steps.length) {
+        s.phase = 'complete';
+        renderCreateGroupWizard();
+        return;
+    }
+
+    var step = steps[resumeIdx];
+    switch (step) {
+        case 'provision': _wizFinalizeProvisionPoll(domains, 0); break;
+        case 'export': _wizFinalizeExport(); break;
+        case 'wait':
+            var remaining = 180;
+            if (fp._waitTarget) remaining = Math.max(0, Math.ceil((fp._waitTarget - Date.now()) / 1000));
+            _wizFinalizeWait(remaining, domains);
+            break;
+        case 'find': _wizFinalizeFind(domains, 0); break;
+        case 'tags': _wizFinalizeTags(accounts); break;
+        case 'accounts':
+            var startIdx = fp.accountsDone || 0;
+            if (accounts.length && tagIds.length) {
+                _wizFinalizeAccounts(accounts, tagIds, startIdx);
+            } else if (!accounts.length) {
+                _wizFinalizeFind(domains, 0);
+            } else {
+                _wizFinalizeTags(accounts);
+            }
+            break;
+    }
+}
+
 function _wizardFinalize() {
     var s = _wizardState;
     s.phase = 'finalizing';
@@ -2075,6 +2127,8 @@ function _wizFinalizeExport() {
 }
 
 function _wizFinalizeWait(sec, domains) {
+    var fp = _wizardState.finalizeProgress || {};
+    if (!fp._waitTarget) _wizardState.finalizeProgress._waitTarget = Date.now() + sec * 1000;
     _wizFinalizeSetStep('wait', 'active', { waitSec: sec });
     var logExtra = (sec === 180 || sec === 120 || sec === 60 || sec === 30 || sec === 0) ? { logMsg: 'Waiting for SmartLead (' + sec + 's remaining)' } : {};
     _pipeUpsert(_wizardState.letter, 'finalizing', Object.assign({ detail: 'Waiting ' + sec + 's...' }, logExtra));
@@ -2136,6 +2190,7 @@ function _wizFinalizeTags(accounts) {
         if (d.checks && d.checks.length) tagMsg += ' [' + d.checks.join(', ') + ']';
         _wizardState.log.push(tagMsg);
         _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: tagMsg });
+        _wizardState._tagIds = d.tag_ids;
         _wizFinalizeSetStep('tags', 'done');
         _wizFinalizeAccounts(accounts, d.tag_ids, 0);
     }).catch(function(e) {
