@@ -1192,6 +1192,9 @@ function _wizRenderPicking() {
         for (var vi = 0; vi < d.length; vi++) { if (s.selected[d[vi].domain]) visibleSelected++; }
         var allVisibleSelected = visibleSelected === d.length && d.length > 0;
         html += '<button onclick="_wizardSelectFiltered()" style="padding:4px 12px;font-size:11px;background:transparent;color:#3b82f6;border:1px solid #3b82f6;border-radius:4px;cursor:pointer;">' + (allVisibleSelected ? 'Deselect Shown' : 'Select Shown (' + d.length + ')') + '</button>';
+        if (selCount > 0) {
+            html += '<button onclick="_wizardState.selected={};renderCreateGroupWizard();" style="padding:4px 12px;font-size:11px;background:transparent;color:#ef4444;border:1px solid #ef4444;border-radius:4px;cursor:pointer;">Deselect All</button>';
+        }
         if (selCount > 0 && s.letter) {
             html += '<button onclick="_wizardCreateGroup()" style="padding:6px 16px;font-size:12px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Create Group ' + esc(s.letter) + ' (' + selCount + ' domains)</button>';
         }
