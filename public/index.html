@@ -812,17 +812,20 @@ function _pipeUpsert(letter, phase, extra) {
         run = {
             id: Date.now(), letter: letter, status: 'active',
             stepIdx: 0, stepStatuses: ['pending','pending','pending','pending'],
-            domains: [], started: new Date().toISOString(), updated: new Date().toISOString(),
+            stepDetails: {}, domains: [],
+            started: new Date().toISOString(), updated: new Date().toISOString(),
             error: null, niche: _wizardState.niche || 'generic',
             tld: _wizardState.tld || '.info', registrar: _wizardState.registrar || 'spaceship'
         };
         runs.unshift(run);
     }
+    if (!run.stepDetails) run.stepDetails = {};
     var si = _PHASE_TO_STEP[phase] || 0;
     run.stepIdx = si;
     run.updated = new Date().toISOString();
     if (extra) {
         if (extra.domains) run.domains = extra.domains;
+        if (extra.detail) run.stepDetails[si] = extra.detail;
         if (extra.error) { run.error = extra.error; run.status = 'error'; run.stepStatuses[si] = 'error'; }
     }
     if (phase === 'error') {
@@ -913,36 +916,61 @@ function renderPipelineRuns() {
 }
 
 function _pipeRenderRow(run) {
-    var html = '<div style="background:#0f1219;border-radius:8px;padding:12px 16px;margin-bottom:8px;border-left:3px solid ' +
-        (run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#3b82f6') + ';">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    var borderCol = run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#3b82f6';
+    var html = '<details style="background:#0f1219;border-radius:8px;margin-bottom:8px;border-left:3px solid ' + borderCol + ';">';
+    html += '<summary style="padding:12px 16px;cursor:pointer;list-style:none;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
     html += '<div style="display:flex;gap:10px;align-items:center;">';
     html += '<span style="font-size:14px;font-weight:600;color:#f1f5f9;">Generic ' + esc(run.letter) + '</span>';
-    html += '<span style="font-size:11px;color:#64748b;">' + (run.domains.length || 0) + ' domains · ' + esc(run.tld || '.info') + '</span>';
+    var domCount = (run.domains && run.domains.length) || 0;
+    html += '<span style="font-size:11px;color:#64748b;">' + domCount + ' domains · ' + esc(run.tld || '.info') + '</span>';
+    var detail = run.stepDetails || {};
+    var activeDetail = detail[run.stepIdx];
+    if (activeDetail && run.status === 'active') {
+        html += '<span style="font-size:11px;color:#3b82f6;">' + esc(activeDetail) + '</span>';
+    }
     html += '</div>';
     html += '<div style="display:flex;gap:6px;align-items:center;">';
     var ts = run.updated ? new Date(run.updated) : null;
     if (ts) html += '<span style="font-size:10px;color:#475569;">' + ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '</span>';
     if (run.status === 'error') {
-        html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
+        html += '<button onclick="event.stopPropagation();_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
     }
-    html += '<button onclick="_pipeRemove(' + run.id + ')" style="padding:3px 8px;font-size:10px;background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;cursor:pointer;">&times;</button>';
     html += '</div></div>';
-    html += '<div style="display:flex;gap:4px;align-items:center;">';
+    // Step progress bar
+    html += '<div style="display:flex;gap:4px;align-items:center;margin-top:8px;">';
     for (var i = 0; i < 4; i++) {
         var st = run.stepStatuses[i];
-        var col = st === 'done' ? '#22c55e' : st === 'active' ? '#3b82f6' : st === 'error' ? '#ef4444' : '#334155';
+        var col = st === 'done' ? '#22c55e' : st === 'active' ? '#3b82f6' : st === 'error' ? '#ef4444' : '#475569';
         var icon = st === 'done' ? '✓' : st === 'active' ? '●' : st === 'error' ? '✕' : '·';
-        html += '<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:' + col + ';">';
-        html += '<span style="font-size:10px;">' + icon + '</span>' + _PIPE_STEPS[i];
+        html += '<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:' + col + ';">';
+        html += '<span style="font-size:9px;">' + icon + '</span>' + _PIPE_STEPS[i];
+        var sd = detail[i];
+        if (sd) html += ' <span style="color:#64748b;font-size:10px;">(' + esc(sd) + ')</span>';
         html += '</div>';
         if (i < 3) html += '<span style="color:#334155;font-size:10px;margin:0 2px;">→</span>';
     }
     html += '</div>';
     if (run.error) {
-        html += '<div style="margin-top:6px;font-size:11px;color:#ef4444;background:#ef444415;padding:4px 8px;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(run.error) + '">' + esc(run.error) + '</div>';
+        html += '<div style="margin-top:6px;font-size:11px;color:#ef4444;background:#ef444415;padding:4px 8px;border-radius:4px;">' + esc(run.error) + '</div>';
     }
+    html += '</summary>';
+    // Expanded detail section
+    html += '<div style="padding:0 16px 12px 16px;border-top:1px solid #1e293b;margin-top:4px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;margin-bottom:8px;">';
+    html += '<span style="font-size:11px;color:#64748b;">Started: ' + (run.started ? new Date(run.started).toLocaleString() : '—') + '</span>';
+    html += '<button onclick="event.stopPropagation();if(confirm(\'Remove this pipeline run?\'))_pipeRemove(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:transparent;color:#ef4444;border:1px solid #ef444440;border-radius:4px;cursor:pointer;">Remove Run</button>';
     html += '</div>';
+    if (domCount > 0) {
+        html += '<div style="font-size:11px;color:#64748b;margin-bottom:4px;">Domains:</div>';
+        html += '<div style="font-size:10px;color:#94a3b8;font-family:monospace;max-height:100px;overflow-y:auto;">';
+        for (var di = 0; di < run.domains.length; di++) {
+            html += esc(run.domains[di]);
+            if (di < run.domains.length - 1) html += ', ';
+        }
+        html += '</div>';
+    }
+    html += '</div></details>';
     return html;
 }
 
@@ -1352,7 +1380,7 @@ function _wizPurchaseNext(idx) {
         _wizardState.purchasedDomains = pp.filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
         if (_wizardState.purchasedDomains.length) {
             _wizardState.phase = 'purchased';
-            _pipeUpsert(_wizardState.letter || '?', 'purchased', { domains: _wizardState.purchasedDomains });
+            _pipeUpsert(_wizardState.letter || '?', 'purchased', { domains: _wizardState.purchasedDomains, detail: _wizardState.purchasedDomains.length + ' purchased' });
         } else {
             _wizErr('No domains were purchased.');
         }
@@ -1457,7 +1485,7 @@ function _wizardCreateGroup() {
         return { domain: d, status: 'pending', zapmail: false, mailboxes: 0, photos: false, mb_ids: [], error: null };
     });
     _wizardState.log = [];
-    _pipeUpsert(_wizardState.letter, 'creating', { domains: domains });
+    _pipeUpsert(_wizardState.letter, 'creating', { domains: domains, detail: '0/' + domains.length + ' domains' });
     renderCreateGroupWizard();
 
     fetch('/api/group/connect-domains' + _authQs(), {
@@ -1488,7 +1516,7 @@ function _wizSetupNext(idx) {
         }).then(function() {
             _wizardState.phase = 'mailboxes_done';
             _wizardState.log.push('Phase 1 complete: ' + allMbIds.length + ' mailboxes across ' + okDomains.length + ' domains.');
-            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: okDomains });
+            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: okDomains, detail: allMbIds.length + ' mailboxes on ' + okDomains.length + ' domains' });
             renderCreateGroupWizard();
         }).catch(function(e) { _wizErr(e.message); });
         return;
@@ -1506,6 +1534,8 @@ function _wizSetupNext(idx) {
         cp[idx].mb_ids = d.mb_ids || [];
         cp[idx].error = d.error || null;
         cp[idx].status = d.error && !d.zapmail_connected ? 'error' : 'done';
+        var doneCount = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
+        _pipeUpsert(_wizardState.letter, 'creating', { detail: doneCount + '/' + cp.length + ' domains' });
         renderCreateGroupWizard();
         _wizSetupNext(idx + 1);
     }).catch(function(e) {
