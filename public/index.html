@@ -1063,6 +1063,15 @@ function _pipeRenderRow(run) {
                 html += pIcon + ' <span style="font-family:monospace;">' + esc(p.domain) + '</span>';
                 if (pDetail) html += ' <span style="color:#64748b;">— ' + esc(pDetail) + '</span>';
                 html += '</div>';
+                if (p.checks && p.checks.length) {
+                    html += '<div style="padding-left:22px;font-size:9px;color:#475569;font-family:monospace;margin-bottom:2px;">';
+                    for (var ci = 0; ci < p.checks.length; ci++) {
+                        var chk = p.checks[ci];
+                        var chkCol = chk.indexOf('OK') >= 0 ? '#22c55e' : chk.indexOf('FAILED') >= 0 ? '#ef4444' : chk.indexOf('WARN') >= 0 ? '#f59e0b' : '#64748b';
+                        html += '<div style="color:' + chkCol + ';">' + esc(chk) + '</div>';
+                    }
+                    html += '</div>';
+                }
             }
             html += '</div>';
         }
@@ -1605,10 +1614,13 @@ function _wizPurchaseNext(idx) {
     }).then(function(r) { return r.json(); }).then(function(d) {
         pp[idx].purchased = !!d.purchased;
         pp[idx].ns_set = !!d.ns_set;
+        pp[idx].ns_verified = !!d.ns_verified;
         pp[idx].autorenew_off = !!d.autorenew_off;
         pp[idx].error = d.error || null;
+        pp[idx].checks = d.checks || [];
         pp[idx].status = 'done';
         var logSuffix = d.purchased ? ' — purchased + NS set' : ' — FAILED: ' + (d.error || 'unknown');
+        if (d.checks && d.checks.length) logSuffix += ' [' + d.checks.join(', ') + ']';
         _pipeUpsert(_wizardState.letter || '?', 'purchasing', { detail: (idx + 1) + '/' + pp.length + ' domains', logMsg: pp[idx].domain + logSuffix });
         renderCreateGroupWizard();
         _wizPurchaseNext(idx + 1);
@@ -1707,8 +1719,16 @@ function _wizardCreateGroup() {
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) { _wizErr(d.error); return; }
         _wizardState.log = (d.log || []);
+        if (d.domain_checks) {
+            var checkSummary = Object.keys(d.domain_checks).map(function(dn) {
+                return dn + ': ' + d.domain_checks[dn].join(', ');
+            });
+            for (var ci = 0; ci < checkSummary.length; ci++) _wizardState.log.push(checkSummary[ci]);
+        }
         _wizardState.createStep = 'mailboxes';
-        _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Zapmail connected — starting mailbox creation' });
+        var connectMsg = d.connected + '/' + (_wizardState.createProgress ? _wizardState.createProgress.length : '?') + ' connected';
+        if (d.domain_checks) connectMsg += ' — verified in Zapmail';
+        _pipeUpsert(_wizardState.letter, 'creating', { logMsg: 'Zapmail: ' + connectMsg + ' — starting mailbox creation' });
         renderCreateGroupWizard();
         _wizSetupNext(0);
     }).catch(function(e) { _wizErr(e.message); });
@@ -1747,20 +1767,22 @@ function _wizSetupNext(idx) {
         cp[idx].photos = !!d.photos_set;
         cp[idx].mb_ids = d.mb_ids || [];
         cp[idx].error = d.error || null;
+        cp[idx].checks = d.checks || [];
 
         // Checkpoint: only mark done if mailboxes were actually created
+        var checksStr = (d.checks && d.checks.length) ? ' [' + d.checks.join(', ') + ']' : '';
         if (cp[idx].mailboxes >= 3) {
             cp[idx].status = 'done';
             var logSuffix = (d.skipped ? ' — already had ' : ' — ') + cp[idx].mailboxes + ' mailboxes' + (cp[idx].photos ? ' + photos' : '');
             if (d.verified) logSuffix += ' (verified)';
-            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + logSuffix });
+            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + logSuffix + checksStr });
         } else if (cp[idx].zapmail && cp[idx].mailboxes === 0) {
             cp[idx].status = 'error';
             cp[idx].error = cp[idx].error || 'Mailbox creation returned 0 — check Zapmail manually';
-            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — FAILED: no mailboxes created' });
+            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — FAILED: no mailboxes created' + checksStr });
         } else {
             cp[idx].status = 'error';
-            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — error: ' + (cp[idx].error || 'unknown') });
+            _pipeUpsert(_wizardState.letter, 'creating', { logMsg: cp[idx].domain + ' — error: ' + (cp[idx].error || 'unknown') + checksStr });
         }
 
         var doneCount = cp.filter(function(p) { return p.status === 'done' || p.status === 'error'; }).length;
@@ -1790,9 +1812,6 @@ function _wizardFinalize() {
     var s = _wizardState;
     s.phase = 'finalizing';
     s.finalizeProgress = {};
-    s.log.push('Starting Phase 2: Export + Tag + Warmup...');
-    _pipeUpsert(s.letter, 'finalizing', { detail: 'Exporting...', logMsg: 'Exporting ' + allMbIds.length + ' mailboxes to SmartLead via Zapmail' });
-    _wizFinalizeSetStep('export', 'active');
 
     var allMbIds = [];
     var allDomains = [];
@@ -1805,13 +1824,20 @@ function _wizardFinalize() {
     }
     if (!allDomains.length && s.purchasedDomains) allDomains = s.purchasedDomains;
 
+    s.log.push('Starting Phase 2: Export + Tag + Warmup...');
+    _pipeUpsert(s.letter, 'finalizing', { detail: 'Exporting...', logMsg: 'Exporting ' + allMbIds.length + ' mailboxes to SmartLead via Zapmail' });
+    _wizFinalizeSetStep('export', 'active');
+
     fetch('/api/group/export-smartlead' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ letter: s.letter, mb_ids: allMbIds, domains: allDomains })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) throw new Error(d.error);
-        s.log.push('Export: ' + (d.message || 'done'));
+        var exportMsg = 'Export: ' + (d.message || 'done');
+        if (d.checks && d.checks.length) exportMsg += ' [' + d.checks.join(', ') + ']';
+        s.log.push(exportMsg);
+        _pipeUpsert(s.letter, 'finalizing', { logMsg: exportMsg });
         _wizFinalizeSetStep('export', 'done');
         _wizFinalizeWait(90, allDomains);
     }).catch(function(e) {
@@ -1844,14 +1870,17 @@ function _wizFinalizeFind(domains, attempt) {
         body: JSON.stringify({ domains: domains })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) throw new Error(d.error);
-        var expected = domains.length * 3;
+        var expected = d.expected || domains.length * 3;
         _wizFinalizeSetStep('find', 'active', { foundCount: d.count });
-        _wizardState.log.push('Found ' + d.count + '/' + expected + ' accounts');
+        var findMsg = 'Found ' + d.count + '/' + expected + ' accounts';
+        if (d.checks && d.checks.length) findMsg += ' [' + d.checks.join(', ') + ']';
+        if (d.missing_domains && d.missing_domains.length) findMsg += ' — missing: ' + d.missing_domains.join(', ');
+        _wizardState.log.push(findMsg);
 
         if (d.count < expected && attempt < 3) {
             _wizardState.log.push('Not all accounts yet — waiting 30s and retrying...');
             _wizFinalizeSetStep('find', 'active', { foundCount: d.count + ' (retry in 30s)' });
-            _pipeUpsert(_wizardState.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...', logMsg: 'Found ' + d.count + '/' + expected + ' — retrying in 30s' });
+            _pipeUpsert(_wizardState.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...', logMsg: findMsg + ' — retrying in 30s' });
             setTimeout(function() { _wizFinalizeFind(domains, attempt + 1); }, 30000);
             return;
         }
@@ -1875,7 +1904,10 @@ function _wizFinalizeTags(accounts) {
         body: JSON.stringify({ letter: _wizardState.letter })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) throw new Error(d.error);
-        _wizardState.log.push('Tags ready: ' + (d.tag_names || []).join(', '));
+        var tagMsg = 'Tags ready: ' + (d.tag_names || []).join(', ');
+        if (d.checks && d.checks.length) tagMsg += ' [' + d.checks.join(', ') + ']';
+        _wizardState.log.push(tagMsg);
+        _pipeUpsert(_wizardState.letter, 'finalizing', { logMsg: tagMsg });
         _wizFinalizeSetStep('tags', 'done');
         _wizFinalizeAccounts(accounts, d.tag_ids, 0);
     }).catch(function(e) {
@@ -1904,9 +1936,15 @@ function _wizFinalizeAccounts(accounts, tagIds, idx) {
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
         body: JSON.stringify({ account_id: acct.id, tag_ids: tagIds })
     }).then(function(r) { return r.json(); }).then(function(d) {
+        var acctMsg = (acct.email || acct.id) + ': ';
         if (d.error) {
-            _wizardState.log.push('Account ' + (acct.email || acct.id) + ': error — ' + d.error);
+            acctMsg += 'error — ' + d.error;
+        } else {
+            acctMsg += (d.tagged ? 'tagged' : 'tag FAILED') + ', ' + (d.warmed ? 'warmup ON' : 'warmup FAILED');
         }
+        if (d.checks && d.checks.length) acctMsg += ' [' + d.checks.join(', ') + ']';
+        _wizardState.log.push(acctMsg);
+        _pipeUpsert(_wizardState.letter, 'finalizing', { detail: (idx + 1) + '/' + accounts.length + ' accounts', logMsg: acctMsg });
         _wizFinalizeAccounts(accounts, tagIds, idx + 1);
     }).catch(function(e) {
         _wizardState.log.push('Account ' + (acct.email || acct.id) + ': ' + e.message);

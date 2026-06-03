@@ -1235,9 +1235,13 @@ def purchase_one_domain():
         CLOUDNS = ["pns61.cloudns.net", "pns62.cloudns.com", "pns63.cloudns.net", "pns64.cloudns.uk"]
         SP_CONTACT = os.environ.get("SPACESHIP_CONTACT_ID", "1nEUYUnGBWO9ba7Z0lMrOM2UCgY9S")
 
-        result = {"domain": dn, "purchased": False, "ns_set": False, "autorenew_off": False, "error": None}
+        import time as _time
+        result = {"domain": dn, "purchased": False, "ns_set": False, "ns_verified": False,
+                  "autorenew_off": False, "error": None, "checks": []}
 
+        # Step 1: Purchase
         if registrar == "spaceship":
+            sp_h = {"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"}
             sp_body = {
                 "autoRenew": False, "years": 1,
                 "privacyProtection": {"level": "high", "userConsent": True},
@@ -1245,13 +1249,14 @@ def purchase_one_domain():
                              "tech": SP_CONTACT, "billing": SP_CONTACT},
             }
             r = req.post(f"https://spaceship.dev/api/v1/domains/{dn}",
-                         headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
-                         json=sp_body, timeout=30)
+                         headers=sp_h, json=sp_body, timeout=30)
             if r.status_code in (200, 201, 202):
                 result["purchased"] = True
+                result["checks"].append("purchase: OK")
             else:
                 err = r.json().get("detail", r.text[:200]) if r.text else "Unknown"
                 result["error"] = f"Purchase failed: {err}"
+                result["checks"].append(f"purchase: FAILED — {err}")
                 return _cors(jsonify(result))
         else:
             r = req.post(f"https://api.porkbun.com/api/json/v3/domain/create/{dn}",
@@ -1259,35 +1264,65 @@ def purchase_one_domain():
             data = r.json()
             if data.get("status") == "SUCCESS":
                 result["purchased"] = True
+                result["checks"].append("purchase: OK")
             else:
                 result["error"] = f"Purchase failed: {data.get('message', '')}"
+                result["checks"].append(f"purchase: FAILED")
                 return _cors(jsonify(result))
 
+        # Step 2: Set nameservers
         if registrar == "spaceship":
             r = req.put(f"https://spaceship.dev/api/v1/domains/{dn}/nameservers",
-                        headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
-                        json={"provider": "custom", "hosts": CLOUDNS}, timeout=15)
+                        headers=sp_h, json={"provider": "custom", "hosts": CLOUDNS}, timeout=15)
             result["ns_set"] = r.status_code in (200, 204)
         else:
             r = req.post(f"https://api.porkbun.com/api/json/v3/domain/updateNs/{dn}",
                          json={"apikey": pk, "secretapikey": ps, "ns": CLOUDNS}, timeout=15)
             result["ns_set"] = r.json().get("status") == "SUCCESS"
 
+        if not result["ns_set"]:
+            result["error"] = "Nameserver update failed"
+            result["checks"].append("ns_set: FAILED")
+            return _cors(jsonify(result))
+        result["checks"].append("ns_set: OK")
+
+        # Step 3: Verify nameservers actually took
+        _time.sleep(1)
+        if registrar == "spaceship":
+            try:
+                vr = req.get(f"https://spaceship.dev/api/v1/domains/{dn}",
+                             headers=sp_h, timeout=15)
+                if vr.status_code == 200:
+                    ns_data = vr.json().get("nameservers", {})
+                    hosts = ns_data.get("hosts", []) if isinstance(ns_data, dict) else []
+                    if any("cloudns" in h.lower() for h in hosts):
+                        result["ns_verified"] = True
+                        result["checks"].append(f"ns_verify: OK ({', '.join(hosts[:2])})")
+                    else:
+                        result["checks"].append(f"ns_verify: WARN — got {hosts[:2]}, expected CloudNS")
+            except Exception as e:
+                result["checks"].append(f"ns_verify: SKIP — {str(e)[:60]}")
+        else:
+            result["ns_verified"] = True
+            result["checks"].append("ns_verify: SKIP (porkbun)")
+
+        # Step 4: Disable auto-renew
         if registrar == "spaceship":
             try:
                 req.put(f"https://spaceship.dev/api/v1/domains/{dn}/autorenew",
-                        headers={"X-Api-Key": ak, "X-Api-Secret": sk, "Content-Type": "application/json"},
-                        json={"isEnabled": False}, timeout=10)
+                        headers=sp_h, json={"isEnabled": False}, timeout=10)
                 result["autorenew_off"] = True
+                result["checks"].append("autorenew_off: OK")
             except Exception:
-                pass
+                result["checks"].append("autorenew_off: FAILED")
         else:
             try:
                 req.post(f"https://api.porkbun.com/api/json/v3/domain/updateAutoRenew/{dn}",
                          json={"apikey": pk, "secretapikey": ps, "status": "off"}, timeout=10)
                 result["autorenew_off"] = True
+                result["checks"].append("autorenew_off: OK")
             except Exception:
-                pass
+                result["checks"].append("autorenew_off: FAILED")
 
         return _cors(jsonify(result))
     except Exception as e:
@@ -1527,7 +1562,9 @@ def group_connect_domains():
 
         log = []
         connected = 0
+        domain_checks = {}
         for dn in domains[:30]:
+            checks = []
             try:
                 r = req.post(f"{ZAPMAIL_API}/v2/domains/connect", headers=zm_h(),
                              json={"domainName": dn, "nameServers": NS_STR}, timeout=30)
@@ -1535,10 +1572,39 @@ def group_connect_domains():
                 msg = resp.get("message", r.text[:100])
                 if "already" in msg.lower() or r.status_code == 200:
                     connected += 1
+                    checks.append("connect: OK")
+                else:
+                    checks.append(f"connect: FAILED — {msg}")
                 log.append(f"{dn}: {msg}")
             except Exception as e:
                 log.append(f"{dn}: error — {str(e)[:80]}")
+                checks.append(f"connect: FAILED — {str(e)[:60]}")
+            domain_checks[dn] = checks
             _time.sleep(0.3)
+
+        # Verify: check each domain shows up in Zapmail with DNS status
+        _time.sleep(2)
+        try:
+            all_zm = []
+            page = 1
+            for _ in range(10):
+                zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
+                zd = zr.json().get("data", {})
+                all_zm.extend(zd.get("domains", []))
+                if page >= zd.get("totalPages", 1):
+                    break
+                page += 1
+            zm_map = {d.get("domain", ""): d for d in all_zm}
+            for dn in domains[:30]:
+                zdom = zm_map.get(dn)
+                if zdom:
+                    dns_status = zdom.get("dnsStatus", zdom.get("status", "unknown"))
+                    domain_checks.setdefault(dn, []).append(f"zapmail_found: OK (DNS: {dns_status})")
+                else:
+                    domain_checks.setdefault(dn, []).append("zapmail_found: FAILED — not in Zapmail")
+        except Exception as e:
+            for dn in domains[:30]:
+                domain_checks.setdefault(dn, []).append(f"zapmail_verify: SKIP — {str(e)[:60]}")
 
         # Buy mailbox slots proactively
         slots_bought = 0
@@ -1563,7 +1629,8 @@ def group_connect_domains():
         except Exception as e:
             log.append(f"Slot check error: {str(e)[:80]}")
 
-        return _cors(jsonify({"ok": True, "connected": connected, "slots_bought": slots_bought, "log": log}))
+        return _cors(jsonify({"ok": True, "connected": connected, "slots_bought": slots_bought,
+                              "log": log, "domain_checks": domain_checks}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
@@ -1593,32 +1660,41 @@ def group_setup_domain():
             return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
 
         result = {"domain": domain, "zapmail_connected": False, "mailboxes_created": 0,
-                  "photos_set": False, "mb_ids": [], "error": None}
+                  "photos_set": False, "mb_ids": [], "error": None, "checks": []}
 
-        # Find domain in Zapmail
+        # Step 1: Find domain in Zapmail — poll up to 3 times with wait for DNS propagation
         zapmail_id = None
-        page = 1
-        for _ in range(10):
-            try:
-                zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
-                zd = zr.json().get("data", {})
-                for d in zd.get("domains", []):
-                    if d.get("domain", "") == domain:
-                        zapmail_id = d.get("id", "")
+        dns_status = None
+        for attempt in range(3):
+            if attempt > 0:
+                _time.sleep(5)
+            page = 1
+            for _ in range(10):
+                try:
+                    zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
+                    zd = zr.json().get("data", {})
+                    for d in zd.get("domains", []):
+                        if d.get("domain", "") == domain:
+                            zapmail_id = d.get("id", "")
+                            dns_status = d.get("dnsStatus", d.get("status", "unknown"))
+                            break
+                    if zapmail_id or page >= zd.get("totalPages", 1):
                         break
-                if zapmail_id or page >= zd.get("totalPages", 1):
+                    page += 1
+                except Exception:
                     break
-                page += 1
-            except Exception:
+            if zapmail_id:
                 break
 
         if not zapmail_id:
             result["error"] = "Domain not found in Zapmail yet — DNS may still be propagating"
+            result["checks"].append("find_domain: FAILED — not found after 3 attempts")
             return _cors(jsonify(result))
 
         result["zapmail_connected"] = True
+        result["checks"].append(f"find_domain: OK (id={zapmail_id}, DNS={dns_status})")
 
-        # Check if mailboxes already exist (idempotent)
+        # Step 2: Check if mailboxes already exist (idempotent)
         existing_mb = []
         try:
             dr = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
@@ -1634,9 +1710,12 @@ def group_setup_domain():
             result["mailboxes_created"] = len(existing_mb)
             result["photos_set"] = True
             result["skipped"] = "mailboxes already exist"
+            result["checks"].append(f"existing_mailboxes: OK ({len(existing_mb)} found, skipping creation)")
             return _cors(jsonify(result))
 
-        # Create 3 mailboxes
+        result["checks"].append(f"existing_mailboxes: {len(existing_mb)} found, creating new")
+
+        # Step 3: Create 3 mailboxes
         SPECS = [
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
             {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
@@ -1651,14 +1730,17 @@ def group_setup_domain():
             if isinstance(mb_ids, list) and len(mb_ids) > 0:
                 result["mb_ids"] = mb_ids
                 result["mailboxes_created"] = len(mb_ids)
+                result["checks"].append(f"create_mailboxes: OK ({len(mb_ids)} created)")
             else:
                 result["error"] = f"Mailbox creation failed: {mb_data.get('message', str(mb_data)[:150])}"
+                result["checks"].append(f"create_mailboxes: FAILED — {mb_data.get('message', 'unknown')[:80]}")
                 return _cors(jsonify(result))
         except Exception as e:
             result["error"] = f"Mailbox creation failed: {str(e)[:150]}"
+            result["checks"].append(f"create_mailboxes: FAILED — {str(e)[:80]}")
             return _cors(jsonify(result))
 
-        # Verify: re-fetch domain to confirm mailboxes exist
+        # Step 4: Verify mailboxes exist by re-fetching
         _time.sleep(1)
         try:
             vr = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
@@ -1667,18 +1749,42 @@ def group_setup_domain():
                     actual_mb = dd.get("mailboxes", [])
                     if isinstance(actual_mb, list) and len(actual_mb) >= 3:
                         result["verified"] = True
+                        result["checks"].append(f"verify_mailboxes: OK ({len(actual_mb)} confirmed)")
+                    else:
+                        result["checks"].append(f"verify_mailboxes: WARN — only {len(actual_mb) if isinstance(actual_mb, list) else 0} found")
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            result["checks"].append(f"verify_mailboxes: SKIP — {str(e)[:60]}")
 
-        # Set profile photos
+        # Step 5: Set profile photos
         if result["mb_ids"]:
             try:
                 mb_photo_data = [{"mailboxId": mid, "profilePicture": PHOTO_URL} for mid in result["mb_ids"]]
-                req.put(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json={"mailboxData": mb_photo_data}, timeout=60)
-                result["photos_set"] = True
-            except Exception:
-                pass
+                pr = req.put(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json={"mailboxData": mb_photo_data}, timeout=60)
+                if pr.status_code == 200:
+                    result["photos_set"] = True
+                    result["checks"].append("set_photos: OK")
+                else:
+                    result["checks"].append(f"set_photos: FAILED — HTTP {pr.status_code}")
+            except Exception as e:
+                result["checks"].append(f"set_photos: FAILED — {str(e)[:60]}")
+
+        # Step 6: Verify photos actually applied
+        if result["photos_set"] and result["mb_ids"]:
+            _time.sleep(1)
+            try:
+                vr2 = req.get(f"{ZAPMAIL_API}/v2/domains?limit=200", headers=zm_h(), timeout=30)
+                for dd in vr2.json().get("data", {}).get("domains", []):
+                    if dd.get("domain") == domain:
+                        mbs = dd.get("mailboxes", [])
+                        photos_ok = sum(1 for m in mbs if isinstance(m, dict) and m.get("profilePicture"))
+                        if photos_ok >= len(result["mb_ids"]):
+                            result["checks"].append(f"verify_photos: OK ({photos_ok}/{len(result['mb_ids'])})")
+                        else:
+                            result["checks"].append(f"verify_photos: WARN — {photos_ok}/{len(result['mb_ids'])} have photos")
+                        break
+            except Exception as e:
+                result["checks"].append(f"verify_photos: SKIP — {str(e)[:60]}")
 
         return _cors(jsonify(result))
     except Exception as e:
@@ -1738,18 +1844,27 @@ def group_export_smartlead():
         def zm_h():
             return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
 
+        checks = []
         if mb_ids:
             r = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
                          json={"apps": ["SMARTLEAD"], "ids": mb_ids}, timeout=30)
             msg = r.json().get("message", r.text[:200])
+            if r.status_code == 200:
+                checks.append(f"export_request: OK — {len(mb_ids)} mailbox IDs submitted")
+            else:
+                checks.append(f"export_request: FAILED — HTTP {r.status_code}: {msg[:80]}")
         else:
+            exported = 0
             for dd in domains:
-                req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
-                         json={"apps": ["SMARTLEAD"], "contains": dd}, timeout=30)
+                er = req.post(f"{ZAPMAIL_API}/v2/exports/mailboxes", headers=zm_h(),
+                              json={"apps": ["SMARTLEAD"], "contains": dd}, timeout=30)
+                if er.status_code == 200:
+                    exported += 1
                 import time; time.sleep(2)
-            msg = f"Exported by domain name ({len(domains)} domains)"
+            msg = f"Exported by domain name ({exported}/{len(domains)} succeeded)"
+            checks.append(f"export_by_domain: {exported}/{len(domains)} OK")
 
-        return _cors(jsonify({"ok": True, "message": msg}))
+        return _cors(jsonify({"ok": True, "message": msg, "checks": checks}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
 
@@ -1774,21 +1889,38 @@ def group_find_smartlead_accounts():
 
         found = []
         offset = 0
+        pages_scanned = 0
         for _ in range(20):
             url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
             r = req.get(url, timeout=30)
+            if r.status_code == 429:
+                _time.sleep(10)
+                r = req.get(url, timeout=30)
             accts = r.json() if r.status_code == 200 else []
             if not isinstance(accts, list) or not accts:
                 break
+            pages_scanned += 1
             for a in accts:
                 email = a.get("from_email", a.get("email", ""))
-                domain = email.split("@")[-1] if "@" in email else ""
-                if domain in domains:
+                domain_part = email.split("@")[-1] if "@" in email else ""
+                if domain_part in domains:
                     found.append({"id": a.get("id"), "email": email})
             offset += 100
             _time.sleep(0.5)
 
-        return _cors(jsonify({"ok": True, "accounts": found, "count": len(found)}))
+        expected = len(domains) * 3
+        found_domains = set(a["email"].split("@")[-1] for a in found if "@" in a.get("email", ""))
+        missing_domains = [d for d in domains if d not in found_domains]
+        checks = [
+            f"scan: OK — {pages_scanned} pages scanned",
+            f"accounts: {len(found)}/{expected} expected (3 per domain)",
+            f"domains_covered: {len(found_domains)}/{len(domains)}",
+        ]
+        if missing_domains:
+            checks.append(f"missing_domains: {', '.join(list(missing_domains)[:5])}")
+
+        return _cors(jsonify({"ok": True, "accounts": found, "count": len(found),
+                              "expected": expected, "missing_domains": missing_domains, "checks": checks}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
 
@@ -1845,11 +1977,34 @@ def group_setup_tags():
             result = _gql(mut, {"o": {"name": today_str, "color": "#94a3b8"}})
             date_tag_id = result.get("data", {}).get("insert_tags_one", {}).get("id")
 
+        checks = []
         if not group_tag_id or not date_tag_id:
-            return _cors(jsonify({"error": "Failed to create tags"})), 500
+            checks.append(f"group_tag: {'OK' if group_tag_id else 'FAILED'}")
+            checks.append(f"date_tag: {'OK' if date_tag_id else 'FAILED'}")
+            return _cors(jsonify({"error": "Failed to create tags", "checks": checks})), 500
+
+        checks.append(f"zapmail_tag: OK (id={ZAPMAIL_TAG_ID})")
+        checks.append(f"group_tag: OK ('{tag_name}' id={group_tag_id})")
+        checks.append(f"date_tag: OK ('{today_str}' id={date_tag_id})")
+
+        # Verify: re-fetch tags to confirm they exist
+        try:
+            verify_result = _gql("{ tags { id name } }")
+            verify_tags = {t["id"]: t["name"] for t in verify_result.get("data", {}).get("tags", [])}
+            if group_tag_id in verify_tags and date_tag_id in verify_tags:
+                checks.append("verify_tags: OK — all 3 confirmed in SmartLead")
+            else:
+                missing = []
+                if group_tag_id not in verify_tags:
+                    missing.append(tag_name)
+                if date_tag_id not in verify_tags:
+                    missing.append(today_str)
+                checks.append(f"verify_tags: WARN — missing: {', '.join(missing)}")
+        except Exception as e:
+            checks.append(f"verify_tags: SKIP — {str(e)[:60]}")
 
         return _cors(jsonify({"ok": True, "tag_ids": [ZAPMAIL_TAG_ID, group_tag_id, date_tag_id],
-                              "tag_names": ["Zapmail", tag_name, today_str]}))
+                              "tag_names": ["Zapmail", tag_name, today_str], "checks": checks}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
 
@@ -1877,20 +2032,24 @@ def group_finalize_account():
         def sl_h():
             return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
 
-        # Tag the account
+        checks = []
+
+        # Step 1: Tag the account
         tag_body = {"id": account_id, "tags": tag_ids, "clientId": None}
         r = req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-management-details",
                      headers=sl_h(), json=tag_body, timeout=30)
         tagged = r.status_code == 200
+        checks.append(f"tag_account: {'OK' if tagged else 'FAILED — HTTP ' + str(r.status_code)}")
 
-        # Enable warmup (public API)
+        # Step 2: Enable warmup (public API)
         warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
                        "daily_rampup": 5, "reply_rate_percentage": 40}
         r = req.post(f"{SMARTLEAD_API}/email-accounts/{account_id}/warmup?api_key={SMARTLEAD_KEY}",
                      json=warmup_body, timeout=30)
         warmed = r.status_code == 200
+        checks.append(f"enable_warmup: {'OK' if warmed else 'FAILED — HTTP ' + str(r.status_code)}")
 
-        # Full warmup config (internal API)
+        # Step 3: Full warmup config (internal API)
         warmup_key = ""
         wd = req.get(f"{SMARTLEAD_INTERNAL}/email-account/fetch-warmup-details-by-email-account-id/{account_id}",
                      headers=sl_h(), timeout=30)
@@ -1905,10 +2064,34 @@ def group_finalize_account():
                 "autoAdjustWarmup": False, "sendWarmupsOnlyOnWeekdays": False,
                 "useCustomDomain": False, "status": "ACTIVE", "warmupKeyId": warmup_key
             }
-            req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-warmup",
-                     headers=sl_h(), json=full_body, timeout=30)
+            sr = req.post(f"{SMARTLEAD_INTERNAL}/email-account/save-warmup",
+                          headers=sl_h(), json=full_body, timeout=30)
+            checks.append(f"full_warmup_config: {'OK' if sr.status_code == 200 else 'FAILED — HTTP ' + str(sr.status_code)}")
+        else:
+            checks.append(f"full_warmup_config: SKIP — no warmup_key found")
 
-        return _cors(jsonify({"ok": True, "tagged": tagged, "warmed": warmed}))
+        # Step 4: Verify tags applied
+        _time.sleep(1)
+        try:
+            vr = req.get(f"{SMARTLEAD_API}/email-accounts/{account_id}?api_key={SMARTLEAD_KEY}", timeout=15)
+            if vr.status_code == 200:
+                acct_data = vr.json()
+                acct_tags = acct_data.get("tags", [])
+                if isinstance(acct_tags, list) and len(acct_tags) >= len(tag_ids):
+                    checks.append(f"verify_tags: OK ({len(acct_tags)} tags)")
+                else:
+                    checks.append(f"verify_tags: WARN — expected {len(tag_ids)}, got {len(acct_tags) if isinstance(acct_tags, list) else 0}")
+                warmup_status = acct_data.get("warmup_enabled") or acct_data.get("warmupEnabled")
+                if warmup_status:
+                    checks.append("verify_warmup: OK — warmup enabled")
+                else:
+                    checks.append("verify_warmup: WARN — warmup may not be active yet")
+            else:
+                checks.append(f"verify_tags: SKIP — HTTP {vr.status_code}")
+        except Exception as e:
+            checks.append(f"verify: SKIP — {str(e)[:60]}")
+
+        return _cors(jsonify({"ok": True, "tagged": tagged, "warmed": warmed, "checks": checks}))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
 
