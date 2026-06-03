@@ -238,6 +238,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 <div id="maintenance-tab" style="display:none;">
     <div id="maint-filters"></div>
     <div id="replacement-tracker"></div>
+    <div id="pipeline-runs"></div>
     <div id="create-group-wizard"></div>
     <div id="available-pool"></div>
     <div id="maint-domain-health"></div>
@@ -774,10 +775,167 @@ function renderMaintenance() {
     renderMaintFilters();
     renderReplacementTracker();
     if (!_wizRestored) { _wizRestore(); _wizRestored = true; }
+    renderPipelineRuns();
     renderCreateGroupWizard();
     renderAvailablePool();
     renderDomainHealth();
     renderSubscriptions();
+}
+
+/* ─── Pipeline Runs Tracker ─── */
+var _PIPE_STEPS = ['Find Domains', 'Purchase & DNS', 'Zapmail + Mailboxes', 'SmartLead + Warmup'];
+var _PHASE_TO_STEP = {
+    idle: -1, searching: 0, found: 0, replacing: 0,
+    purchasing: 1, purchased: 1,
+    picking: 1, creating: 2, mailboxes_done: 2,
+    finalizing: 3, complete: 3
+};
+
+function _pipeGet() {
+    try { return JSON.parse(localStorage.getItem('_pipeRuns') || '[]'); } catch(e) { return []; }
+}
+function _pipeSave(runs) {
+    try { localStorage.setItem('_pipeRuns', JSON.stringify(runs)); } catch(e) {}
+}
+function _pipeUpsert(letter, phase, extra) {
+    var runs = _pipeGet();
+    var run = null;
+    for (var i = 0; i < runs.length; i++) {
+        if (runs[i].letter === letter && runs[i].status === 'active') { run = runs[i]; break; }
+    }
+    if (!run && letter !== '?') {
+        for (var j = 0; j < runs.length; j++) {
+            if (runs[j].letter === '?' && runs[j].status === 'active') { run = runs[j]; run.letter = letter; break; }
+        }
+    }
+    if (!run) {
+        run = {
+            id: Date.now(), letter: letter, status: 'active',
+            stepIdx: 0, stepStatuses: ['pending','pending','pending','pending'],
+            domains: [], started: new Date().toISOString(), updated: new Date().toISOString(),
+            error: null, niche: _wizardState.niche || 'generic',
+            tld: _wizardState.tld || '.info', registrar: _wizardState.registrar || 'spaceship'
+        };
+        runs.unshift(run);
+    }
+    var si = _PHASE_TO_STEP[phase] || 0;
+    run.stepIdx = si;
+    run.updated = new Date().toISOString();
+    if (extra) {
+        if (extra.domains) run.domains = extra.domains;
+        if (extra.error) { run.error = extra.error; run.status = 'error'; run.stepStatuses[si] = 'error'; }
+    }
+    if (phase === 'error') {
+        run.status = 'error';
+        run.error = extra && extra.error ? extra.error : _wizardState.error || 'Unknown';
+        run.stepStatuses[run.stepIdx] = 'error';
+    } else if (phase === 'complete') {
+        run.status = 'completed';
+        for (var j = 0; j < 4; j++) run.stepStatuses[j] = 'done';
+    } else {
+        for (var k = 0; k < si; k++) { if (run.stepStatuses[k] !== 'error') run.stepStatuses[k] = 'done'; }
+        run.stepStatuses[si] = 'active';
+    }
+    _pipeSave(runs);
+    renderPipelineRuns();
+}
+function _pipeResume(id) {
+    var runs = _pipeGet();
+    var run = null;
+    for (var i = 0; i < runs.length; i++) { if (runs[i].id === id) { run = runs[i]; break; } }
+    if (!run) return;
+    run.status = 'active';
+    if (run.stepStatuses[run.stepIdx] === 'error') run.stepStatuses[run.stepIdx] = 'pending';
+    run.error = null;
+    _pipeSave(runs);
+    _wizardState.letter = run.letter;
+    _wizardState.niche = run.niche || 'generic';
+    _wizardState.tld = run.tld || '.info';
+    _wizardState.registrar = run.registrar || 'spaceship';
+    _wizardState.purchasedDomains = run.domains || [];
+    var si = run.stepIdx;
+    if (si <= 0) { _wizardState.phase = 'idle'; }
+    else if (si === 1) { _wizardState.phase = 'picking'; _wizardState.selected = {}; _wizardLoadDomains(); }
+    else if (si === 2) { _wizardState.phase = 'mailboxes_done'; }
+    else if (si === 3) { _wizardState.phase = 'mailboxes_done'; }
+    renderPipelineRuns();
+    renderCreateGroupWizard();
+}
+function _pipeRemove(id) {
+    var runs = _pipeGet().filter(function(r) { return r.id !== id; });
+    _pipeSave(runs);
+    renderPipelineRuns();
+}
+
+function renderPipelineRuns() {
+    var el = document.getElementById('pipeline-runs');
+    if (!el) return;
+    var runs = _pipeGet();
+    if (!runs.length) { el.innerHTML = ''; return; }
+    var box = 'margin:16px 24px;background:#1a1d28;border-radius:10px;border:1px solid #2a2d38;padding:20px 24px;';
+    var active = [], completed = [], errored = [];
+    for (var i = 0; i < runs.length; i++) {
+        if (runs[i].status === 'active') active.push(runs[i]);
+        else if (runs[i].status === 'completed') completed.push(runs[i]);
+        else errored.push(runs[i]);
+    }
+    var html = '<div style="' + box + '">';
+    html += '<div style="font-size:15px;font-weight:600;color:#f1f5f9;margin-bottom:16px;">Group Setup Pipeline</div>';
+
+    if (active.length) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-size:12px;color:#3b82f6;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Active (' + active.length + ')</div>';
+        for (var a = 0; a < active.length; a++) html += _pipeRenderRow(active[a]);
+        html += '</div>';
+    }
+    if (errored.length) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-size:12px;color:#ef4444;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Error (' + errored.length + ')</div>';
+        for (var e = 0; e < errored.length; e++) html += _pipeRenderRow(errored[e]);
+        html += '</div>';
+    }
+    if (completed.length) {
+        html += '<details style="margin-bottom:4px;"><summary style="font-size:12px;color:#22c55e;font-weight:600;cursor:pointer;text-transform:uppercase;letter-spacing:0.5px;">Completed (' + completed.length + ')</summary>';
+        html += '<div style="margin-top:8px;">';
+        for (var c = 0; c < completed.length; c++) html += _pipeRenderRow(completed[c]);
+        html += '</div></details>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function _pipeRenderRow(run) {
+    var html = '<div style="background:#0f1219;border-radius:8px;padding:12px 16px;margin-bottom:8px;border-left:3px solid ' +
+        (run.status === 'completed' ? '#22c55e' : run.status === 'error' ? '#ef4444' : '#3b82f6') + ';">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    html += '<div style="display:flex;gap:10px;align-items:center;">';
+    html += '<span style="font-size:14px;font-weight:600;color:#f1f5f9;">Generic ' + esc(run.letter) + '</span>';
+    html += '<span style="font-size:11px;color:#64748b;">' + (run.domains.length || 0) + ' domains · ' + esc(run.tld || '.info') + '</span>';
+    html += '</div>';
+    html += '<div style="display:flex;gap:6px;align-items:center;">';
+    var ts = run.updated ? new Date(run.updated) : null;
+    if (ts) html += '<span style="font-size:10px;color:#475569;">' + ts.toLocaleDateString() + ' ' + ts.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + '</span>';
+    if (run.status === 'error') {
+        html += '<button onclick="_pipeResume(' + run.id + ')" style="padding:3px 10px;font-size:10px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;">Resume</button>';
+    }
+    html += '<button onclick="_pipeRemove(' + run.id + ')" style="padding:3px 8px;font-size:10px;background:transparent;color:#64748b;border:1px solid #334155;border-radius:4px;cursor:pointer;">&times;</button>';
+    html += '</div></div>';
+    html += '<div style="display:flex;gap:4px;align-items:center;">';
+    for (var i = 0; i < 4; i++) {
+        var st = run.stepStatuses[i];
+        var col = st === 'done' ? '#22c55e' : st === 'active' ? '#3b82f6' : st === 'error' ? '#ef4444' : '#334155';
+        var icon = st === 'done' ? '✓' : st === 'active' ? '●' : st === 'error' ? '✕' : '·';
+        html += '<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:' + col + ';">';
+        html += '<span style="font-size:10px;">' + icon + '</span>' + _PIPE_STEPS[i];
+        html += '</div>';
+        if (i < 3) html += '<span style="color:#334155;font-size:10px;margin:0 2px;">→</span>';
+    }
+    html += '</div>';
+    if (run.error) {
+        html += '<div style="margin-top:6px;font-size:11px;color:#ef4444;background:#ef444415;padding:4px 8px;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(run.error) + '">' + esc(run.error) + '</div>';
+    }
+    html += '</div>';
+    return html;
 }
 
 /* ─── Create Generic Group Wizard ─── */
@@ -831,7 +989,11 @@ function _wizReset() {
     renderCreateGroupWizard();
 }
 function _wizLog(msg) { _wizardState.log.push(msg); }
-function _wizErr(msg) { _wizardState.phase = 'error'; _wizardState.error = msg; renderCreateGroupWizard(); }
+function _wizErr(msg) {
+    _wizardState.phase = 'error'; _wizardState.error = msg;
+    if (_wizardState.letter) _pipeUpsert(_wizardState.letter, 'error', { error: msg, domains: _wizardState.purchasedDomains || [] });
+    renderCreateGroupWizard();
+}
 
 var _wizNiches = {
     generic: { label: 'Generic Service' },
@@ -1102,6 +1264,7 @@ function _wizPurchaseNext(idx) {
         _wizardState.purchasedDomains = pp.filter(function(p) { return p.purchased; }).map(function(p) { return p.domain; });
         if (_wizardState.purchasedDomains.length) {
             _wizardState.phase = 'purchased';
+            _pipeUpsert(_wizardState.letter || '?', 'purchased', { domains: _wizardState.purchasedDomains });
         } else {
             _wizErr('No domains were purchased.');
         }
@@ -1180,6 +1343,7 @@ function _wizardCreateGroup() {
     if (!domains.length || !_wizardState.letter) return;
     _wizardState.phase = 'creating';
     _wizardState.log = ['Starting Phase 1: Create mailboxes for Generic ' + _wizardState.letter + '...'];
+    _pipeUpsert(_wizardState.letter, 'creating', { domains: domains });
     renderCreateGroupWizard();
     fetch('/api/create-generic-group' + _authQs(), {
         method: 'POST',
@@ -1190,6 +1354,7 @@ function _wizardCreateGroup() {
             _wizardState.phase = 'mailboxes_done';
             _wizardState.log = _wizardState.log.concat(d.log || []);
             _wizardState.log.push('Phase 1 complete: ' + (d.mailboxes_count || 0) + ' mailboxes created.');
+            _pipeUpsert(_wizardState.letter, 'mailboxes_done', { domains: domains });
         } else {
             _wizErr(d.error || 'Unknown error');
             _wizardState.log = _wizardState.log.concat(d.log || []);
@@ -1202,6 +1367,7 @@ function _wizardCreateGroup() {
 function _wizardFinalize() {
     _wizardState.phase = 'finalizing';
     _wizardState.log.push('Starting Phase 2: Export + Tag + Warmup...');
+    _pipeUpsert(_wizardState.letter, 'finalizing');
     renderCreateGroupWizard();
     fetch('/api/finalize-generic-group' + _authQs(), {
         method: 'POST',
@@ -1212,6 +1378,7 @@ function _wizardFinalize() {
             _wizardState.phase = 'complete';
             _wizardState.log = _wizardState.log.concat(d.log || []);
             _wizardState.log.push('Done! ' + (d.accounts_found || 0) + ' accounts tagged + warmup enabled.');
+            _pipeUpsert(_wizardState.letter, 'complete');
         } else if (d.retry) {
             _wizardState.phase = 'mailboxes_done';
             _wizardState.log = _wizardState.log.concat(d.log || []);
