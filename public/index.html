@@ -2143,8 +2143,12 @@ function _wizFinalizeWait(sec, domains) {
 }
 
 function _wizFinalizeFind(domains, attempt) {
+    var MAX_FIND_ATTEMPTS = 10;
+    var MAX_REEXPORTS = 5;
+    var s = _wizardState;
+    var exportAttempts = s.finalizeProgress._reexportCount || 0;
     _wizFinalizeSetStep('find', 'active', { foundCount: null });
-    _pipeUpsert(_wizardState.letter, 'finalizing', { detail: 'Searching SmartLead...', logMsg: 'Searching SmartLead for accounts on ' + domains.length + ' domains (attempt ' + (attempt + 1) + ')' });
+    _pipeUpsert(s.letter, 'finalizing', { detail: 'Searching SmartLead...', logMsg: 'Searching SmartLead for accounts on ' + domains.length + ' domains (attempt ' + (attempt + 1) + ')' });
 
     fetch('/api/group/find-smartlead-accounts' + _authQs(), {
         method: 'POST',
@@ -2157,18 +2161,46 @@ function _wizFinalizeFind(domains, attempt) {
         var findMsg = 'Found ' + d.count + '/' + expected + ' accounts';
         if (d.checks && d.checks.length) findMsg += ' [' + d.checks.join(', ') + ']';
         if (d.missing_domains && d.missing_domains.length) findMsg += ' — missing: ' + d.missing_domains.join(', ');
-        _wizardState.log.push(findMsg);
+        s.log.push(findMsg);
 
-        if (d.count < expected && attempt < 3) {
-            _wizardState.log.push('Not all accounts yet — waiting 30s and retrying...');
+        if (d.count < expected && attempt < MAX_FIND_ATTEMPTS) {
+            s.log.push('Not all accounts yet — waiting 30s and retrying...');
             _wizFinalizeSetStep('find', 'active', { foundCount: d.count + ' (retry in 30s)' });
-            _pipeUpsert(_wizardState.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...', logMsg: findMsg + ' — retrying in 30s' });
+            _pipeUpsert(s.letter, 'finalizing', { detail: d.count + '/' + expected + ' found, retrying...', logMsg: findMsg + ' — retrying in 30s' });
             setTimeout(function() { _wizFinalizeFind(domains, attempt + 1); }, 30000);
             return;
         }
 
+        if (d.count === 0 && exportAttempts < MAX_REEXPORTS) {
+            s.finalizeProgress._reexportCount = exportAttempts + 1;
+            s.log.push('0 accounts found — re-exporting and retrying (attempt ' + (exportAttempts + 1) + '/' + MAX_REEXPORTS + ')');
+            _pipeUpsert(s.letter, 'finalizing', { logMsg: 'Re-exporting to SmartLead (attempt ' + (exportAttempts + 1) + ')' });
+            _wizFinalizeSetStep('export', 'active');
+            s.finalizeProgress._waitTarget = null;
+            fetch('/api/group/export-smartlead' + _authQs(), {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
+                body: JSON.stringify({ letter: s.letter, mb_ids: s._allMbIds || [], domains: domains })
+            }).then(function(r) { return r.json(); }).then(function(ed) {
+                s.log.push('Re-export: ' + (ed.message || 'done'));
+                _wizFinalizeSetStep('export', 'done');
+                _wizFinalizeWait(120, domains);
+            }).catch(function(e) {
+                s.log.push('Re-export failed: ' + e.message + ' — retrying find anyway');
+                _wizFinalizeSetStep('export', 'done');
+                _wizFinalizeWait(120, domains);
+            });
+            return;
+        }
+
+        if (d.count === 0) {
+            _wizFinalizeSetStep('find', 'error');
+            _wizErr('No accounts found in SmartLead after ' + MAX_REEXPORTS + ' export attempts. Check Zapmail export manually.');
+            return;
+        }
+
         _wizFinalizeSetStep('find', 'done', { foundCount: d.count });
-        _wizardState._slAccounts = d.accounts;
+        s._slAccounts = d.accounts;
         _wizFinalizeTags(d.accounts);
     }).catch(function(e) {
         _wizFinalizeSetStep('find', 'error');

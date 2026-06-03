@@ -1998,7 +1998,7 @@ def group_find_smartlead_accounts():
         found = []
         offset = 0
         pages_scanned = 0
-        for _ in range(20):
+        while True:
             url = f"{SMARTLEAD_API}/email-accounts/?api_key={SMARTLEAD_KEY}&offset={offset}&limit=100"
             r = req.get(url, timeout=30)
             if r.status_code == 429:
@@ -2013,6 +2013,8 @@ def group_find_smartlead_accounts():
                 domain_part = email.split("@")[-1] if "@" in email else ""
                 if domain_part in domains:
                     found.append({"id": a.get("id"), "email": email})
+            if len(accts) < 100:
+                break
             offset += 100
             _time.sleep(0.5)
 
