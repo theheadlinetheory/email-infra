@@ -672,17 +672,18 @@ function renderAcquisition() {
         var owner = isLars ? 'Lars' : 'Aidan';
         var ownerClass = isLars ? 'acq-lars' : 'acq-aidan';
         var rr = g.avg_reply_rate;
-        var hasMeaningfulVolume = (g.total_sent || 0) >= 100;
         var replyBadge = '';
-        if (hasMeaningfulVolume && rr != null && rr >= 5) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#34d399;margin-left:6px">' + rr + '% REPLY</span>';
-        else if (hasMeaningfulVolume && rr != null && rr > 0 && rr < 1) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">LOW REPLY</span>';
+        if ((g.in_campaign || 0) > 0 && (g.total_sent || 0) >= 100) {
+            if (rr != null && rr >= 5) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#34d399;margin-left:6px">' + rr + '% REPLY</span>';
+            else if (rr != null && rr > 0 && rr < 1) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">LOW REPLY</span>';
+        }
         return '<div class="acq-card" onclick="openModal(\'acq\',' + i + ')">' +
             '<div class="acq-header"><span class="acq-name">' + esc(g.name) + replyBadge + '</span><span class="acq-badge ' + ownerClass + '">' + owner + '</span></div>' +
             '<div class="card-stats">' +
                 cardStat('Accounts', g.accounts) +
                 cardStat('Domains', g.total_domains || 0) +
                 cardStat('In Campaign', g.in_campaign || 0, g.in_campaign > 0 ? 'good' : '') +
-                cardStat('Reply Rate', fmtRate(g.avg_reply_rate), rateClassAsc(g.avg_reply_rate, 2, 1)) +
+                cardStat('Reply Rate', (g.in_campaign || 0) > 0 ? fmtRate(g.avg_reply_rate) : '—', (g.in_campaign || 0) > 0 ? rateClassAsc(g.avg_reply_rate, 2, 1) : '') +
                 cardStat('Sent (wk)', g.total_sent || 0) +
             '</div>' +
         '</div>';
