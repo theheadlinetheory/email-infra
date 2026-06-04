@@ -466,9 +466,10 @@ function renderClients() {
         var hasB = c.group_b_count > 0;
         var s = c.group_a || c;
         var cRr = s.avg_reply_rate;
+        var cHasVolume = (s.total_sent || 0) >= 100;
         var cReplyBadge = '';
-        if (cRr != null && cRr >= 5) cReplyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#34d399;margin-left:6px">' + cRr + '% REPLY</span>';
-        else if (cRr != null && cRr > 0 && cRr < 1) cReplyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">LOW REPLY</span>';
+        if (cHasVolume && cRr != null && cRr >= 5) cReplyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#34d399;margin-left:6px">' + cRr + '% REPLY</span>';
+        else if (cHasVolume && cRr != null && cRr > 0 && cRr < 1) cReplyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">LOW REPLY</span>';
         return '<div class="client-card" id="card-' + i + '" onclick="openModal(\'client\',' + i + ')">' +
             '<div class="card-header"><div class="card-name">' + esc(c.name) + cReplyBadge + '</div><div class="card-count">' + c.accounts + ' accounts</div></div>' +
             (hasB ?
@@ -671,9 +672,10 @@ function renderAcquisition() {
         var owner = isLars ? 'Lars' : 'Aidan';
         var ownerClass = isLars ? 'acq-lars' : 'acq-aidan';
         var rr = g.avg_reply_rate;
+        var hasMeaningfulVolume = (g.total_sent || 0) >= 100;
         var replyBadge = '';
-        if (rr != null && rr >= 5) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#34d399;margin-left:6px">' + rr + '% REPLY</span>';
-        else if (rr != null && rr > 0 && rr < 1) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">LOW REPLY</span>';
+        if (hasMeaningfulVolume && rr != null && rr >= 5) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#064e3b;color:#34d399;margin-left:6px">' + rr + '% REPLY</span>';
+        else if (hasMeaningfulVolume && rr != null && rr > 0 && rr < 1) replyBadge = '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#78350f;color:#fbbf24;margin-left:6px">LOW REPLY</span>';
         return '<div class="acq-card" onclick="openModal(\'acq\',' + i + ')">' +
             '<div class="acq-header"><span class="acq-name">' + esc(g.name) + replyBadge + '</span><span class="acq-badge ' + ownerClass + '">' + owner + '</span></div>' +
             '<div class="card-stats">' +
