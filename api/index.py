@@ -290,14 +290,34 @@ def _refresh_campaigns(data, req, _time):
             for em in acct_emails:
                 email_to_camps.setdefault(em, []).append(camp_info)
 
-            # Fetch campaign analytics for progress bar
+            # Fetch campaign analytics + lead counts for progress bar
             cr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics?api_key={SMARTLEAD_KEY}", timeout=10)
             if cr.status_code == 200:
                 ad = cr.json()
                 sent_count = int(ad.get("sent_count", 0))
-                total_count = int(ad.get("total_count", 0))
-                unique_sent = int(ad.get("unique_sent_count", 0))
-                total_emails = total_count * 2
+
+                # Get active lead count (COMPLETED + INPROGRESS + STARTED) — excludes bounced/unsub
+                active_leads = 0
+                started = 0
+                for sk in ("COMPLETED", "INPROGRESS", "STARTED"):
+                    lr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
+                                 params={"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": sk}, timeout=10)
+                    if lr.status_code == 200:
+                        cnt = int(lr.json().get("total_leads", 0))
+                        active_leads += cnt
+                        if sk == "STARTED":
+                            started = cnt
+                    elif lr.status_code == 429:
+                        _time.sleep(5)
+                        lr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
+                                     params={"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": sk}, timeout=10)
+                        if lr.status_code == 200:
+                            cnt = int(lr.json().get("total_leads", 0))
+                            active_leads += cnt
+                            if sk == "STARTED":
+                                started = cnt
+
+                total_emails = active_leads * 2
                 stat = {
                     "id": cid, "name": camp["name"], "status": "ACTIVE",
                     "accounts": len(acct_emails),
@@ -307,7 +327,7 @@ def _refresh_campaigns(data, req, _time):
                     "total_bounced": int(ad.get("bounce_count", 0)),
                     "total_leads": total_emails,
                     "completed": sent_count,
-                    "remaining": total_count - unique_sent,
+                    "remaining": started,
                 }
                 stats_updates[cid] = stat
         except Exception:
