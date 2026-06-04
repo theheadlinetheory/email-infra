@@ -3466,7 +3466,7 @@ function drawProjectionChart(camp, totalAccts) {
     var remaining = camp.remaining || 0;
     var points = [];
     var today = new Date();
-    for (var day = 0; day <= 60; day++) {
+    for (var day = 0; day <= 21; day++) {
         var d = new Date(today);
         d.setDate(d.getDate() + day);
         var dateStr = (d.getMonth() + 1) + '/' + d.getDate();
