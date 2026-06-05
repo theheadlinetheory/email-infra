@@ -3165,7 +3165,7 @@ function renderKanban() {
         if (c.status !== 'ACTIVE') return false;
         var st = campStatsById[c.id];
         if (st && c.groups.length === 0) {
-            var pct = st.total_leads > 0 ? Math.round(st.completed / st.total_leads * 100) : 0;
+            var pct = st.total_leads > 0 ? Math.min(100, Math.round(st.completed / st.total_leads * 100)) : 0;
             if (pct >= 95) return false;
         }
         return true;
@@ -3192,7 +3192,7 @@ function renderKanban() {
             var ts = st.total_sent || 0;
             var tl = st.total_leads || 0;
             var comp = st.completed || 0;
-            pct = tl > 0 ? Math.round(comp / tl * 100) : 0;
+            pct = tl > 0 ? Math.min(100, Math.round(comp / tl * 100)) : 0;
             var pColor = pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#22c55e';
             var replyRate = ts > 0 ? Math.round((st.total_replied || 0) / ts * 1000) / 10 : 0;
             var bounceRate = ts > 0 ? Math.round((st.total_bounced || 0) / ts * 1000) / 10 : 0;
@@ -3418,7 +3418,7 @@ function renderCampaignModal() {
         '<div class="modal-meta">' + totalAccts + ' accounts across ' + campGroups.length + ' group' + (campGroups.length !== 1 ? 's' : '') + '</div></div></div>';
 
     if (camp) {
-        var pct = camp.total_leads > 0 ? Math.round((camp.completed / camp.total_leads) * 100) : 0;
+        var pct = camp.total_leads > 0 ? Math.min(100, Math.round((camp.completed / camp.total_leads) * 100)) : 0;
         var pctColor = pct >= 90 ? '#f59e0b' : '#22c55e';
 
         html += '<div class="camp-stats-grid">' +
