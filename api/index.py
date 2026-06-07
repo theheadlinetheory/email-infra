@@ -296,28 +296,19 @@ def _refresh_campaigns(data, req, _time):
                 ad = cr.json()
                 sent_count = int(ad.get("sent_count", 0))
 
-                # Get active lead count (COMPLETED + INPROGRESS + STARTED) — excludes bounced/unsub
-                active_leads = 0
-                started = 0
+                # Get lead counts by status — contacted vs queued
+                lead_counts = {}
                 for sk in ("COMPLETED", "INPROGRESS", "STARTED"):
                     lr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
                                  params={"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": sk}, timeout=10)
-                    if lr.status_code == 200:
-                        cnt = int(lr.json().get("total_leads", 0))
-                        active_leads += cnt
-                        if sk == "STARTED":
-                            started = cnt
-                    elif lr.status_code == 429:
+                    if lr.status_code == 429:
                         _time.sleep(5)
                         lr = req.get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
                                      params={"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": sk}, timeout=10)
-                        if lr.status_code == 200:
-                            cnt = int(lr.json().get("total_leads", 0))
-                            active_leads += cnt
-                            if sk == "STARTED":
-                                started = cnt
+                    lead_counts[sk] = int(lr.json().get("total_leads", 0)) if lr.status_code == 200 else 0
 
-                total_emails = active_leads * 2
+                contacted = lead_counts["COMPLETED"] + lead_counts["INPROGRESS"]
+                active_leads = contacted + lead_counts["STARTED"]
                 stat = {
                     "id": cid, "name": camp["name"], "status": "ACTIVE",
                     "accounts": len(acct_emails),
@@ -325,9 +316,9 @@ def _refresh_campaigns(data, req, _time):
                     "total_opened": int(ad.get("unique_open_count", 0)),
                     "total_replied": int(ad.get("reply_count", 0)),
                     "total_bounced": int(ad.get("bounce_count", 0)),
-                    "total_leads": total_emails,
-                    "completed": sent_count,
-                    "remaining": started,
+                    "total_leads": active_leads,
+                    "completed": contacted,
+                    "remaining": lead_counts["STARTED"],
                 }
                 stats_updates[cid] = stat
         except Exception:
