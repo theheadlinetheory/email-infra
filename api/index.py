@@ -180,12 +180,18 @@ def health_fleet():
     return _cors(jsonify(data))
 
 
-@app.route("/api/health-snapshot", methods=["POST", "OPTIONS"])
+def _is_vercel_cron():
+    """Vercel sends cron requests with Authorization: Bearer $CRON_SECRET."""
+    secret = os.environ.get("CRON_SECRET", "")
+    return bool(secret) and request.headers.get("Authorization", "") == f"Bearer {secret}"
+
+
+@app.route("/api/health-snapshot", methods=["GET", "POST", "OPTIONS"])
 def health_snapshot():
-    """Run today's snapshot: pull SmartLead metrics, score, persist. (~cron/daily)"""
+    """Run today's snapshot: score the fleet from the cache, persist. Daily cron (GET)."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
-    if not _check_auth():
+    if not (_check_auth() or _is_vercel_cron()):
         return _cors(jsonify({"error": "Unauthorized"})), 401
     import db as store
     store._CACHE_WRITE_ENABLED = True
