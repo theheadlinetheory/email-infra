@@ -242,6 +242,22 @@ def health_replace():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-renewals")
+def health_renewals():
+    """Per-inbox renewal dates + renew/drop decisions. ?refresh=1 re-pulls Zapmail."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_renewals as hrn
+        refresh = request.args.get("refresh") == "1"
+        return _cors(jsonify(hrn.build_tracking(refresh=refresh)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-replace/advance", methods=["POST", "OPTIONS"])
 def health_replace_advance():
     """Move a replacement forward. Body: {id, action: warm|swap|cancel, new_domain?}."""

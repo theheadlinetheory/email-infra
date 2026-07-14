@@ -59,6 +59,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 .pill.warming{background:var(--info-bg);color:var(--info)}.pill.warming .g{background:var(--info)}
 .pill.insufficient{background:var(--mut-bg);color:var(--mut)}.pill.insufficient .g{background:var(--mut)}
 .pill.idle{background:var(--mut-bg);color:var(--mut)}.pill.idle .g{background:var(--mut)}
+.pill.unknown{background:var(--mut-bg);color:var(--mut)}.pill.unknown .g{background:var(--mut)}
 .score{font-family:var(--mono);font-weight:700}
 .reasons{font-family:var(--mono);font-size:10.5px;color:var(--mut)}
 .chk{width:16px;height:16px;accent-color:var(--crit);cursor:pointer}
@@ -137,6 +138,23 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   </table></div></div>
   <div id="planmsg"></div>
 
+  <div class="sect"><h2>Renewals &amp; decisions</h2><span class="eye" id="rensub">loading…</span></div>
+  <div class="note">Renewal ≈ the monthly anniversary of each inbox's Zapmail creation date. <b>Cancel burned/idle inboxes before they renew</b> so you stop paying for dead infrastructure. Healthy inboxes renew as normal.</div>
+  <div class="panel costbar" id="renbar" style="display:none"></div>
+  <div class="toolbar" id="renfilters">
+    <button class="chip" data-rf="urgent" aria-pressed="true">Renewing ≤7d</button>
+    <button class="chip" data-rf="burned" aria-pressed="false">Burned</button>
+    <button class="chip" data-rf="idle" aria-pressed="false">Idle</button>
+    <button class="chip" data-rf="all" aria-pressed="false">All</button>
+    <button class="btn sm" id="renrefresh" style="margin-left:auto">Re-pull Zapmail</button>
+  </div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th>Inbox / Domain</th><th>Client</th><th>Status</th><th class="num">Renews</th><th class="num">$/mo</th><th>Decision</th>
+    </tr></thead>
+    <tbody id="renrows"><tr><td colspan="6" class="empty">Loading renewals…</td></tr></tbody>
+  </table></div>
+
   <div class="sect"><h2>All inboxes</h2><span class="eye" id="allsub"></span></div>
   <div class="toolbar" id="filters">
     <button class="chip" data-f="all" aria-pressed="true">All</button>
@@ -202,6 +220,38 @@ function render(fleet, counts){
   bindChecks(); updateSel();
 }
 
+let RENEWALS=null, renFilter='urgent';
+async function loadRenewals(refresh){
+  const sub=document.getElementById('rensub'); sub.textContent = refresh?'re-pulling Zapmail…':'loading…';
+  try{
+    const r=await fetch(api('/api/health-renewals'+(refresh?'?refresh=1':'')),{credentials:'include'});
+    const d=await r.json();
+    if(d.error){ sub.textContent='error: '+d.error; return; }
+    RENEWALS=d; renderRenewals();
+  }catch(e){ sub.textContent='error: '+e; }
+}
+function renderRenewals(){
+  if(!RENEWALS) return;
+  const rows=RENEWALS.rows||[];
+  const rb=document.getElementById('renbar'); rb.style.display='flex';
+  rb.innerHTML=`
+    <div class="ci"><span class="l">Tracked inboxes</span><span class="v">${RENEWALS.count}</span></div>
+    <div class="ci"><span class="l">Burned/idle renewing ≤7d</span><span class="v crit">$${(RENEWALS.renewing_waste_7d||0).toLocaleString()}/mo</span></div>
+    <div class="ci big"><span class="l">Action</span><span class="v" style="font-size:15px;color:var(--crit)">cancel before they charge</span></div>`;
+  let f=rows;
+  if(renFilter==='urgent') f=rows.filter(r=>['burned','idle'].includes(r.status)&&r.days_until!=null&&r.days_until<=7);
+  else if(renFilter!=='all') f=rows.filter(r=>r.status===renFilter);
+  document.getElementById('rensub').textContent=`${f.length} shown${RENEWALS.fetched_at?' · pulled '+RENEWALS.fetched_at.slice(0,10):''}`;
+  document.getElementById('renrows').innerHTML = f.length? f.slice(0,400).map(r=>`
+    <tr>
+      <td><div class="em">${r.email}</div><div class="dom">${r.domain||''}</div></td>
+      <td>${r.client||'<span class="dom">—</span>'}</td>
+      <td><span class="pill ${r.status}"><span class="g"></span>${LABEL[r.status]||r.status}</span></td>
+      <td class="num">${r.renewal_date||'—'}<div class="dom">${r.days_until!=null?'in '+r.days_until+'d':''}</div></td>
+      <td class="num">$${r.cost}</td>
+      <td><span class="vpill ${r.decision_class}">${r.decision}</span></td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">none in this filter</td></tr>';
+}
 const SENDS_PER_INBOX_DAY = 15;   // Zapmail message_per_day
 const DAILY_FLOOR = 500;          // target minimum sends/day per client
 function renderClients(){
@@ -353,7 +403,13 @@ document.getElementById('filters').onclick = e=>{
   document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed','false'));
   b.setAttribute('aria-pressed','true'); filter=b.dataset.f; render(FLEET,{});
 };
-document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); };
+document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); loadRenewals(); };
+document.getElementById('renfilters').onclick = e=>{
+  const b=e.target.closest('.chip'); if(!b)return;
+  document.querySelectorAll('#renfilters .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
+  b.setAttribute('aria-pressed','true'); renFilter=b.dataset.rf; renderRenewals();
+};
+document.getElementById('renrefresh').onclick = ()=>loadRenewals(true);
 
 document.getElementById('snap').onclick = async ()=>{
   const el=document.getElementById('planmsg'); el.className='msg'; el.textContent='Running snapshot (pulling SmartLead)…';
@@ -385,6 +441,7 @@ document.getElementById('confirmbtn').onclick = ()=>{
 
 load();
 loadReplacements();
+loadRenewals();
 </script>
 </body>
 </html>
