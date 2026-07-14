@@ -614,6 +614,15 @@ def sync(progress_cb=None):
     store.cache_set("health_history", history)
     print(f"  Health snapshot saved ({len(history)} days in history)")
 
+    # Health V1 — per-inbox daily snapshot + scoring (reads the fresh overview
+    # we just built; writes health_fleet cache). No SmartLead/JWT call.
+    try:
+        import health_snapshot
+        hres = health_snapshot.snapshot_daily(overview=overview)
+        print(f"  Health V1: {hres.get('inboxes', 0)} inboxes scored — {hres.get('counts')}")
+    except Exception as e:
+        print(f"  Health V1 snapshot failed (non-fatal): {e}")
+
     _report(99, "Verifying cache...")
     cached, ts = store.cache_get("overview_v2")
     verified = len((cached or {}).get("clients", []))
