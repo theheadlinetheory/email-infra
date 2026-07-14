@@ -231,7 +231,7 @@ def health_replace():
     try:
         import health_replace as hr
         if request.method == "GET":
-            return _cors(jsonify({"jobs": hr.list_jobs()}))
+            return _cors(jsonify({"jobs": hr.list_jobs(), "reserve": hr.reserve_summary()}))
         emails = (request.get_json(silent=True) or {}).get("emails") or []
         if not emails:
             return _cors(jsonify({"error": "emails required"})), 400

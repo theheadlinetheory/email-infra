@@ -23,7 +23,7 @@ import db as store
 
 WARMUP_DAYS = 14
 STATE_KEY = "health_replacements"
-_ACTIVE = ("flagged", "warming", "ready")
+_ACTIVE = ("flagged", "warming", "ready", "reserved")
 
 
 def _load() -> dict:
@@ -51,6 +51,23 @@ def _annotate(j: dict) -> dict:
 
 def list_jobs() -> list[dict]:
     return [_annotate(j) for j in _load().get("jobs", [])]
+
+
+def reserve_summary() -> dict:
+    """How many warmed reserve inboxes are ready to deploy right now.
+    Reads generic groups from the overview cache; 'ready' = warmed >= WARMUP_DAYS.
+    'available' subtracts inboxes already claimed by active reserved jobs."""
+    ov, _ = store.cache_get("overview_v2")
+    ready, groups = 0, []
+    for g in (ov or {}).get("generic_groups", []):
+        n = len(g.get("account_details", []))
+        wd = g.get("warmup_days")
+        if n and wd is not None and wd >= WARMUP_DAYS:
+            ready += n
+            groups.append({"name": g.get("name"), "count": n})
+    claimed = sum(1 for j in _load().get("jobs", []) if j["status"] == "reserved")
+    return {"ready": ready, "claimed": claimed,
+            "available": max(0, ready - claimed), "groups": groups}
 
 
 def create_jobs(emails: list[str]) -> dict:
@@ -95,9 +112,17 @@ def advance(job_id: int, action: str, new_domain: str | None = None) -> dict:
         job["warming_started_at"] = datetime.now().isoformat()
         if new_domain:
             job["new_domain"] = new_domain
+    elif action == "reserve":
+        # instant path: draw a pre-warmed inbox from the generic reserve
+        rs = reserve_summary()
+        if rs["available"] <= 0:
+            return {"error": "no ready reserve inboxes available - warm a new one instead"}
+        job["status"] = "reserved"
+        job["reserve_source"] = rs["groups"][0]["name"] if rs["groups"] else "reserve"
+        job["reserved_at"] = datetime.now().strftime("%Y-%m-%d")
     elif action == "swap":
         _annotate(job)
-        if not job.get("is_ready"):
+        if job["status"] != "reserved" and not job.get("is_ready"):
             return {"error": f"not warmed yet - {job.get('days_left')} day(s) left of the {WARMUP_DAYS}-day warmup"}
         job["status"] = "swapped"
         job["swapped_at"] = datetime.now().strftime("%Y-%m-%d")

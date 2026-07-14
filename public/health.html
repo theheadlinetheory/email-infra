@@ -128,7 +128,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 
   <div id="planmsg2"></div>
   <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
-  <div class="note">A flagged inbox gets a fresh replacement that <b>warms for 14 days and cannot send</b>. "Mark swapped" stays locked until the warmup is done — then assign it and cancel the old one. Nothing gets started and forgotten.</div>
+  <div class="note"><b>Reserve-first:</b> when you flag a burned inbox, assign a <b>pre-warmed reserve inbox instantly (0-day)</b> if any are ready — no waiting. Only <b>warm a new one (14 days, cannot send)</b> when the reserve runs low; that path stays locked until warmed. Either way, after swapping, cancel the old inbox. Nothing gets started and forgotten.</div>
   <div class="panel tablewrap"><table>
     <thead><tr>
       <th>Old inbox / domain</th><th>Client</th><th>Status</th><th>Warmup</th><th>Flagged</th><th>Action</th>
@@ -278,19 +278,34 @@ function row(x){
 }
 
 async function loadReplacements(){
-  try{ const r=await fetch(api('/api/health-replace'),{credentials:'include'}); if(!r.ok)return; const d=await r.json(); renderReplacements(d.jobs||[]); }catch(e){}
+  try{ const r=await fetch(api('/api/health-replace'),{credentials:'include'}); if(!r.ok)return; const d=await r.json(); renderReplacements(d.jobs||[], d.reserve||{}); }catch(e){}
 }
-function renderReplacements(jobs){
+function renderReplacements(jobs, reserve){
   const active=jobs.filter(j=>j.status!=='cancelled');
-  document.getElementById('repsub').textContent = active.length? active.length+' in flight' : 'none';
-  const order={flagged:0,warming:1,ready:2,swapped:3};
+  const avail=reserve.available??0;
+  const rcol = avail<20?'var(--crit)':avail<50?'var(--serious)':'var(--good)';
+  document.getElementById('repsub').innerHTML = `${active.length} in flight · <span style="color:${rcol}">${avail} ready reserve</span>`;
+  const order={flagged:0,reserved:1,warming:2,ready:3,swapped:4};
+  const btnC=`<button class="btn sm" onclick="adv(EMAIL_ID,'cancel')">Cancel</button>`;
   const body = active.length ? active.sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)).map(j=>{
-    let warm='—', action='';
-    if(j.status==='flagged'){ warm='<span class="dom">not started</span>'; action=`<button class="btn sm" onclick="adv(${j.id},'warm')">Start warming</button> <button class="btn sm" onclick="adv(${j.id},'cancel')">Cancel</button>`; }
-    else if(j.status==='warming'){ warm=`<span style="color:var(--info)">ready in ${j.days_left}d</span>`; action=`<button class="btn sm" disabled title="warming ${j.days_left}d left">Swap 🔒</button> <button class="btn sm" onclick="adv(${j.id},'cancel')">Cancel</button>`; }
-    else if(j.status==='ready'){ warm='<span style="color:var(--good)">✓ warmed</span>'; action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Mark swapped</button> <button class="btn sm" onclick="adv(${j.id},'cancel')">Cancel</button>`; }
-    else if(j.status==='swapped'){ warm=`<span style="color:var(--good)">✓ ${j.swapped_at}</span>`; action='<span class="eye">now cancel the old inbox ↑</span>'; }
-    const stcls={flagged:'insufficient',warming:'warming',ready:'healthy',swapped:'healthy'}[j.status]||'insufficient';
+    const C=btnC.replace('EMAIL_ID',j.id);
+    let warm='—', action='', stcls='insufficient';
+    if(j.status==='flagged'){
+      warm='<span class="dom">choose source</span>';
+      action=`<button class="btn pri sm" onclick="adv(${j.id},'reserve')" ${avail<=0?'disabled title="no reserve left"':''}>Assign reserve (0d)</button> <button class="btn sm" onclick="adv(${j.id},'warm')">Warm new (14d)</button> ${C}`;
+    } else if(j.status==='reserved'){
+      warm=`<span style="color:var(--good)">✓ reserve · ${j.reserve_source||''}</span>`; stcls='healthy';
+      action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Swap now</button> ${C}`;
+    } else if(j.status==='warming'){
+      warm=`<span style="color:var(--info)">ready in ${j.days_left}d</span>`; stcls='warming';
+      action=`<button class="btn sm" disabled title="warming ${j.days_left}d left">Swap 🔒</button> ${C}`;
+    } else if(j.status==='ready'){
+      warm='<span style="color:var(--good)">✓ warmed</span>'; stcls='healthy';
+      action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Mark swapped</button> ${C}`;
+    } else if(j.status==='swapped'){
+      warm=`<span style="color:var(--good)">✓ ${j.swapped_at}</span>`; stcls='healthy';
+      action='<span class="eye">now cancel the old inbox ↑</span>';
+    }
     return `<tr>
       <td><div class="em">${j.old_email}</div><div class="dom">${j.old_domain}</div></td>
       <td>${j.client||'—'}</td>
