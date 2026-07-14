@@ -366,14 +366,33 @@ function renderReplacements(jobs, reserve){
   }).join('') : '<tr><td colspan="6" class="empty">No replacements in flight. Select burned inboxes above and "Flag for replacement".</td></tr>';
   document.getElementById('reprows').innerHTML = body;
 }
+async function advPost(body){
+  const r=await fetch(api('/api/health-replace/advance'),{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return r.json();
+}
 window.adv = async (id,action)=>{
+  const el=document.getElementById('planmsg2'); el.className='msg';
   try{
-    const r=await fetch(api('/api/health-replace/advance'),{method:'POST',credentials:'include',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({id,action})});
-    const d=await r.json();
-    if(d.error){ const el=document.getElementById('planmsg2'); el.className='msg'; el.textContent=d.error; }
+    if(action==='swap'){
+      const plan=await advPost({id,action:'swap',confirm:false});   // dry-run first
+      if(plan.error){ el.textContent=plan.error; loadReplacements(); return; }
+      const rt=plan.retag;
+      if(rt && !rt.error){
+        if(!confirm(`Re-tag ${rt.email}\n  ${(rt.current_tags||[]).join(', ')}  ->  ${rt.target}\nin SmartLead?\n\nAfter this you must hit "Reallocate" on the campaign in SmartLead (no API for that step).`)){
+          el.textContent='swap cancelled'; loadReplacements(); return;
+        }
+      }
+      const done=await advPost({id,action:'swap',confirm:true});
+      el.textContent = done.error ? done.error
+        : (done.retag ? `Swapped — re-tagged to ${done.retag.target} (HTTP ${done.retag.http}). Now Reallocate in SmartLead.`
+                      : 'Swapped.');
+      loadReplacements(); return;
+    }
+    const d=await advPost({id,action});
+    if(d.error){ el.textContent=d.error; }
     loadReplacements();
-  }catch(e){}
+  }catch(e){ el.textContent='Error: '+e; }
 };
 async function flagReplace(){
   const emails=[...selected]; if(!emails.length) return;

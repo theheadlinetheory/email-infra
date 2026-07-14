@@ -70,6 +70,22 @@ def reserve_summary() -> dict:
             "available": max(0, ready - claimed), "groups": groups}
 
 
+def pick_reserve_inbox(exclude=None) -> dict | None:
+    """Pick a specific warmed reserve inbox (email + SmartLead account id) that
+    isn't already claimed by another active job."""
+    exclude = exclude or set()
+    ov, _ = store.cache_get("overview_v2")
+    for g in (ov or {}).get("generic_groups", []):
+        wd = g.get("warmup_days")
+        if wd is None or wd < WARMUP_DAYS:
+            continue
+        for ad in g.get("account_details", []):
+            em = ad.get("email")
+            if em and em not in exclude and ad.get("id"):
+                return {"email": em, "account_id": ad["id"], "group": g.get("name")}
+    return None
+
+
 def create_jobs(emails: list[str]) -> dict:
     """Flag burned inboxes for replacement (idempotent on active jobs)."""
     st = _load()
@@ -88,6 +104,7 @@ def create_jobs(emails: list[str]) -> dict:
             "old_email": email,
             "old_domain": r.get("domain", email.split("@")[-1] if "@" in email else ""),
             "client": r.get("client"),
+            "group_letter": r.get("group_letter"),
             "campaigns": r.get("campaigns") or [],
             "reason": "; ".join(r.get("reasons") or []) or f"score {r.get('score')}",
             "status": "flagged",
@@ -101,31 +118,52 @@ def create_jobs(emails: list[str]) -> dict:
     return {"created": made, "skipped": len(emails) - made}
 
 
-def advance(job_id: int, action: str, new_domain: str | None = None) -> dict:
-    """Move a job forward. action: warm | swap | cancel."""
+def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bool = False) -> dict:
+    """Move a job forward. action: warm | reserve | swap | cancel.
+    For swap on a reserved job, dry_run (confirm=False) returns the SmartLead
+    re-tag plan; confirm=True executes the re-tag and finalizes the swap."""
     st = _load()
     job = next((j for j in st["jobs"] if j.get("id") == job_id), None)
     if not job:
         return {"error": "job not found"}
+
     if action == "warm":
         job["status"] = "warming"
         job["warming_started_at"] = datetime.now().isoformat()
         if new_domain:
             job["new_domain"] = new_domain
     elif action == "reserve":
-        # instant path: draw a pre-warmed inbox from the generic reserve
-        rs = reserve_summary()
-        if rs["available"] <= 0:
+        # instant path: draw a specific pre-warmed inbox from the generic reserve
+        if reserve_summary()["available"] <= 0:
             return {"error": "no ready reserve inboxes available - warm a new one instead"}
+        used = {j.get("reserve_email") for j in st["jobs"] if j.get("reserve_email")}
+        pick = pick_reserve_inbox(used)
+        if not pick:
+            return {"error": "could not pick a reserve inbox"}
         job["status"] = "reserved"
-        job["reserve_source"] = rs["groups"][0]["name"] if rs["groups"] else "reserve"
+        job["reserve_email"] = pick["email"]
+        job["reserve_account_id"] = pick["account_id"]
+        job["reserve_source"] = pick["group"]
         job["reserved_at"] = datetime.now().strftime("%Y-%m-%d")
     elif action == "swap":
         _annotate(job)
         if job["status"] != "reserved" and not job.get("is_ready"):
             return {"error": f"not warmed yet - {job.get('days_left')} day(s) left of the {WARMUP_DAYS}-day warmup"}
+        retag = None
+        if job.get("reserve_account_id") and job.get("client"):
+            import health_smartlead as hsl
+            retag = hsl.reassign(job["reserve_account_id"], job.get("reserve_email"),
+                                 job["client"], job.get("group_letter") or "A",
+                                 dry_run=not confirm)
+            job["retag"] = retag
+        # dry-run: show the re-tag plan, don't finalize the swap yet
+        if not confirm and retag is not None and not retag.get("error"):
+            _save(st)
+            return {"ok": True, "dry_run": True, "job": _annotate(job), "retag": retag}
         job["status"] = "swapped"
         job["swapped_at"] = datetime.now().strftime("%Y-%m-%d")
+        _save(st)
+        return {"ok": True, "job": _annotate(job), "retag": retag}
     elif action == "cancel":
         job["status"] = "cancelled"
     else:

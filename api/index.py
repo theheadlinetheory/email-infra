@@ -270,7 +270,8 @@ def health_replace_advance():
     body = request.get_json(silent=True) or {}
     try:
         import health_replace as hr
-        res = hr.advance(int(body.get("id")), body.get("action", ""), body.get("new_domain"))
+        res = hr.advance(int(body.get("id")), body.get("action", ""),
+                         body.get("new_domain"), confirm=bool(body.get("confirm")))
         code = 400 if res.get("error") else 200
         return _cors(jsonify(res)), code
     except Exception as e:
