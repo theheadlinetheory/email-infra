@@ -691,8 +691,17 @@ def upsert_health_status(rows: list[dict]) -> None:
 
 
 def get_health_status_all() -> list[dict]:
-    """All current inbox statuses (what the dashboard reads)."""
-    rows = _request("GET", "/inbox_health_status", params={"select": "*"})
+    """All current inbox statuses — paginated past PostgREST's 1000-row cap."""
+    rows, offset = [], 0
+    while True:
+        page = _request("GET", "/inbox_health_status", params={
+            "select": "*", "order": "email.asc",
+            "limit": "1000", "offset": str(offset),
+        })
+        rows.extend(page)
+        if len(page) < 1000:
+            break
+        offset += 1000
     for r in rows:
         for col in ("reasons", "subscores"):
             if isinstance(r.get(col), str):
