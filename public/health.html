@@ -71,6 +71,12 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 .costbar .big .l{color:var(--good)}
 .costbar .big .v{font-size:23px;color:var(--good)}
 .costbar .hint{font-family:var(--mono);font-size:11px;color:var(--mut)}
+.vpill{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.vpill.good{background:var(--good-bg);color:var(--good)}
+.vpill.serious{background:var(--serious-bg);color:var(--serious)}
+.vpill.crit{background:var(--crit-bg);color:var(--crit)}
+.vpill.mut{background:var(--mut-bg);color:var(--mut)}
+.capbad{color:var(--crit)} .arrowto{color:var(--mut);font-family:var(--mono)}
 .cqbar{display:flex;align-items:center;gap:16px;padding:13px 16px}
 .cqbar .l{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:var(--mut)}
 .cqbar .v{font-family:var(--mono);font-weight:700;font-size:16px}
@@ -96,6 +102,16 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   <div class="kpis" id="kpis"></div>
 
   <div class="panel costbar" id="costbar" style="display:none"></div>
+
+  <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
+  <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th>Client</th><th class="num">Sending</th><th class="num">Burned</th><th class="num">Warming</th>
+      <th class="num">Est/day now</th><th class="num">after delete</th><th>If you delete burned</th>
+    </tr></thead>
+    <tbody id="clientrows"></tbody>
+  </table></div>
 
   <div class="sect"><h2>Burned — cancel queue</h2><span class="eye" id="burnedsub"></span></div>
   <div class="note">Burned inboxes can't be recovered by warm-up. Select and schedule <b>remove-on-renewal</b> (Zapmail) — you stop paying with zero wasted days. <b>At-risk</b> inboxes below are recovered, not cancelled.</div>
@@ -165,6 +181,7 @@ function render(fleet, counts){
   document.getElementById('burnedcount').textContent = burned.length;
   document.getElementById('burnedsub').textContent = burned.length ? burned.length+' to review' : 'none 🎉';
   renderCost({burned: c('burned'), idle: c('idle')});
+  renderClients();
 
   const shown = fleet.filter(x=> filter==='all' ? true : x.status===filter)
                      .sort((a,b)=>(RANK[b.status]||0)-(RANK[a.status]||0) || (a.score??999)-(b.score??999));
@@ -172,6 +189,38 @@ function render(fleet, counts){
   document.getElementById('rows').innerHTML = shown.length ? shown.map(row).join('')
     : '<tr><td colspan=12 class=empty>none</td></tr>';
   bindChecks(); updateSel();
+}
+
+const SENDS_PER_INBOX_DAY = 15;   // Zapmail message_per_day
+const DAILY_FLOOR = 500;          // target minimum sends/day per client
+function renderClients(){
+  const g={};
+  FLEET.forEach(x=>{
+    const c=x.client||'(none)';
+    (g[c]=g[c]||{healthy:0,watch:0,at_risk:0,burned:0,warming:0,idle:0,insufficient:0})[x.status]++;
+  });
+  const rows=Object.entries(g).map(([c,s])=>{
+    const sending=s.healthy+s.watch+s.at_risk+s.burned;
+    const afterDel=s.healthy+s.watch+s.at_risk;
+    const capNow=sending*SENDS_PER_INBOX_DAY, capAfter=afterDel*SENDS_PER_INBOX_DAY;
+    let verdict,vc,sev;
+    if(s.burned===0){ verdict='no burned'; vc='mut'; sev=0; }
+    else if(capAfter<DAILY_FLOOR && s.warming<s.burned){ verdict='⚠ warm replacements first'; vc='crit'; sev=3; }
+    else if(capAfter<DAILY_FLOOR){ verdict='low — replacements warming'; vc='serious'; sev=2; }
+    else { verdict='safe to delete burned'; vc='good'; sev=1; }
+    return {c,s,sending,afterDel,capNow,capAfter,verdict,vc,sev};
+  }).filter(r=>r.sending>0)
+    .sort((a,b)=> b.sev-a.sev || b.s.burned-a.s.burned);
+  document.getElementById('clientrows').innerHTML = rows.map(r=>`
+    <tr>
+      <td>${r.c}</td>
+      <td class="num">${r.sending}</td>
+      <td class="num" style="color:${r.s.burned?'var(--crit)':'inherit'}">${r.s.burned||'—'}</td>
+      <td class="num" style="color:${r.s.warming?'var(--info)':'inherit'}">${r.s.warming||'—'}</td>
+      <td class="num">${r.capNow.toLocaleString()}</td>
+      <td class="num"><span class="${r.capAfter<DAILY_FLOOR&&r.s.burned?'capbad':''}">${r.capAfter.toLocaleString()}</span></td>
+      <td><span class="vpill ${r.vc}">${r.verdict}</span></td>
+    </tr>`).join('') || '<tr><td colspan=7 class=empty>no clients</td></tr>';
 }
 
 let SUBS=null;
