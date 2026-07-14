@@ -127,6 +127,14 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     </div>
   </div>
 
+  <div class="panel tablewrap" style="margin-top:10px"><table>
+    <thead><tr>
+      <th style="width:36px"></th><th>Burned inbox / domain</th><th>Client</th>
+      <th class="num">Bounce</th><th class="num">Reply</th><th class="num">Renews</th><th class="num">$/mo</th>
+    </tr></thead>
+    <tbody id="burnedlist"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+  </table></div>
+
   <div id="planmsg2"></div>
   <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
   <div class="note"><b>Reserve-first:</b> when you flag a burned inbox, assign a <b>pre-warmed reserve inbox instantly (0-day)</b> if any are ready — no waiting. Only <b>warm a new one (14 days, cannot send)</b> when the reserve runs low; that path stays locked until warmed. Either way, after swapping, cancel the old inbox. Nothing gets started and forgotten.</div>
@@ -210,6 +218,7 @@ function render(fleet, counts){
   document.getElementById('burnedcount').textContent = burned.length;
   document.getElementById('burnedsub').textContent = burned.length ? burned.length+' to review' : 'none 🎉';
   // aux sections must never break the core table + selection below
+  try { renderBurnedList(); } catch(e){ console.error('renderBurnedList', e); }
   try { renderCost({burned: c('burned'), idle: c('idle')}); } catch(e){ console.error('renderCost', e); }
   try { renderClients(); } catch(e){ console.error('renderClients', e); }
 
@@ -228,7 +237,7 @@ async function loadRenewals(refresh){
     const r=await fetch(api('/api/health-renewals'+(refresh?'?refresh=1':'')),{credentials:'include'});
     const d=await r.json();
     if(d.error){ sub.textContent='error: '+d.error; return; }
-    RENEWALS=d; renderRenewals();
+    RENEWALS=d; renderRenewals(); try{ renderBurnedList(); }catch(e){}
   }catch(e){ sub.textContent='error: '+e; }
 }
 function renderRenewals(){
@@ -408,16 +417,38 @@ async function flagReplace(){
 }
 function bindChecks(){ /* selection now handled by delegation in setupSelection() */ }
 function setupSelection(){
-  // one delegated listener on the stable tbody — survives every table re-render
-  const tb=document.getElementById('rows');
-  if(!tb) return;
-  tb.addEventListener('change', e=>{
+  // one delegated listener on the whole document — catches every .chk checkbox
+  // (burned list AND the all-inboxes table), survives every re-render
+  document.addEventListener('change', e=>{
     const t=e.target;
     if(!t.classList || !t.classList.contains('chk')) return;
     const em=t.dataset.e;
     t.checked ? selected.add(em) : selected.delete(em);
+    // keep the twin checkbox (same email in both tables) in sync
+    document.querySelectorAll(`.chk[data-e="${CSS.escape(em)}"]`).forEach(c=>{ c.checked=t.checked; });
     updateSel();
   });
+}
+function renderBurnedList(){
+  const burned=(FLEET||[]).filter(x=>x.status==='burned');
+  const ren={}; if(RENEWALS&&RENEWALS.rows) RENEWALS.rows.forEach(r=>ren[r.email]=r.days_until);
+  const tb=document.getElementById('burnedlist'); if(!tb) return;
+  document.getElementById('burnedcount').textContent = burned.length;
+  tb.innerHTML = burned.length ? burned
+    .sort((a,b)=>(ren[a.email]??999)-(ren[b.email]??999))
+    .map(x=>{
+      const d=ren[x.email];
+      const rcell = d==null?'—':(d<=5?`<span style="color:var(--crit)">in ${d}d</span>`:'in '+d+'d');
+      return `<tr>
+        <td><input type="checkbox" class="chk" data-e="${x.email}" ${selected.has(x.email)?'checked':''}></td>
+        <td><div class="em">${x.email}</div><div class="dom">${x.domain||''}</div></td>
+        <td>${x.client||'<span class="dom">—</span>'}</td>
+        <td class="num" style="color:var(--crit)">${x.bounce_3d==null?'—':x.bounce_3d+'%'}</td>
+        <td class="num">${x.reply_3d==null?'—':x.reply_3d+'%'}</td>
+        <td class="num">${rcell}</td>
+        <td class="num">$3</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty">no burned inboxes 🎉</td></tr>';
 }
 function updateSel(){
   const sc=document.getElementById('selcount'); if(sc) sc.textContent=selected.size;
