@@ -16,28 +16,33 @@ import zapmail_ops as zm
 
 
 def _mailbox_index() -> dict:
-    """email(lower) -> {mailbox_id, subscription_id} from Zapmail subscriptions.
+    """email(lower) -> {mailbox_id, domain} for every Zapmail mailbox.
 
-    Mailbox object keys vary by Zapmail API version — we try the common ones.
-    Confirm against one live record and pin the key (HEALTH_V1.md, step 6)."""
+    Zapmail nests mailboxes under domains: GET /v2/domains returns each domain
+    with a `mailboxes` array of {id, username, ...}; the address is
+    username@domain. (Verified against the live API 2026-07-14.)"""
+    import os
+    import requests
+    key = os.environ.get("ZAPMAIL_API_KEY", "").strip()
+    headers = {"Content-Type": "application/json",
+               "x-auth-zapmail": key, "x-service-provider": "GOOGLE"}
     idx: dict[str, dict] = {}
-    subs = zm.zm_get_subscriptions()
-    sub_list = subs if isinstance(subs, list) else subs.get("data", []) if isinstance(subs, dict) else []
-    for s in sub_list:
-        sub_id = s.get("id") or s.get("subscriptionId")
-        try:
-            mbs = zm.zm_get_subscription_mailboxes(sub_id)
-        except Exception:
-            continue
-        mb_list = mbs if isinstance(mbs, list) else mbs.get("data", []) if isinstance(mbs, dict) else []
-        for mb in mb_list:
-            email = (mb.get("email") or mb.get("emailAddress")
-                     or mb.get("username") or mb.get("mailbox") or "")
-            if email:
-                idx[email.lower()] = {
-                    "mailbox_id": mb.get("id") or mb.get("mailboxId"),
-                    "subscription_id": sub_id,
-                }
+    page = 1
+    while True:
+        r = requests.get(f"https://api.zapmail.ai/api/v2/domains?page={page}&limit=100",
+                         headers=headers, timeout=30)
+        if r.status_code != 200:
+            break
+        data = r.json().get("data", {})
+        for dom in data.get("domains", []):
+            dname = dom.get("domain", "")
+            for mb in (dom.get("mailboxes") or []):
+                u, mid = mb.get("username"), mb.get("id")
+                if u and mid and dname:
+                    idx[f"{u}@{dname}".lower()] = {"mailbox_id": mid, "domain": dname}
+        if page >= data.get("totalPages", 1):
+            break
+        page += 1
     return idx
 
 
