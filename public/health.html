@@ -209,15 +209,16 @@ function render(fleet, counts){
   const burned = fleet.filter(x=>x.status==='burned');
   document.getElementById('burnedcount').textContent = burned.length;
   document.getElementById('burnedsub').textContent = burned.length ? burned.length+' to review' : 'none 🎉';
-  renderCost({burned: c('burned'), idle: c('idle')});
-  renderClients();
+  // aux sections must never break the core table + selection below
+  try { renderCost({burned: c('burned'), idle: c('idle')}); } catch(e){ console.error('renderCost', e); }
+  try { renderClients(); } catch(e){ console.error('renderClients', e); }
 
   const shown = fleet.filter(x=> filter==='all' ? true : x.status===filter)
                      .sort((a,b)=>(RANK[b.status]||0)-(RANK[a.status]||0) || (a.score??999)-(b.score??999));
   document.getElementById('allsub').textContent = shown.length+' of '+fleet.length;
   document.getElementById('rows').innerHTML = shown.length ? shown.map(row).join('')
     : '<tr><td colspan=12 class=empty>none</td></tr>';
-  bindChecks(); updateSel();
+  updateSel();
 }
 
 let RENEWALS=null, renFilter='urgent';
@@ -405,16 +406,24 @@ async function flagReplace(){
     selected.clear(); load(); loadReplacements();
   }catch(e){ el.textContent='Error: '+e; }
 }
-function bindChecks(){
-  document.querySelectorAll('.chk').forEach(c=>c.onchange=()=>{
-    c.checked?selected.add(c.dataset.e):selected.delete(c.dataset.e); updateSel();
+function bindChecks(){ /* selection now handled by delegation in setupSelection() */ }
+function setupSelection(){
+  // one delegated listener on the stable tbody — survives every table re-render
+  const tb=document.getElementById('rows');
+  if(!tb) return;
+  tb.addEventListener('change', e=>{
+    const t=e.target;
+    if(!t.classList || !t.classList.contains('chk')) return;
+    const em=t.dataset.e;
+    t.checked ? selected.add(em) : selected.delete(em);
+    updateSel();
   });
 }
 function updateSel(){
-  document.getElementById('selcount').textContent = selected.size;
-  document.getElementById('planbtn').disabled = selected.size===0;
-  document.getElementById('confirmbtn').disabled = selected.size===0;
-  document.getElementById('replacebtn').disabled = selected.size===0;
+  const sc=document.getElementById('selcount'); if(sc) sc.textContent=selected.size;
+  ['planbtn','confirmbtn','replacebtn'].forEach(id=>{
+    const b=document.getElementById(id); if(b) b.disabled = selected.size===0;
+  });
 }
 
 document.getElementById('filters').onclick = e=>{
@@ -452,12 +461,19 @@ async function burn(confirm){
     else{ el.textContent=`Scheduled removal-on-renewal for ${d.removed} mailbox(es).`; selected.clear(); load(); }
   }catch(e){ el.textContent='Error: '+e; }
 }
+document.getElementById('selall').onclick = ()=>{
+  const burned=(FLEET||[]).filter(x=>x.status==='burned');
+  const allSel = burned.length && burned.every(x=>selected.has(x.email));
+  burned.forEach(x=> allSel ? selected.delete(x.email) : selected.add(x.email));  // toggle
+  render(FLEET||[], {});
+};
 document.getElementById('replacebtn').onclick = flagReplace;
 document.getElementById('planbtn').onclick = ()=>burn(false);
 document.getElementById('confirmbtn').onclick = ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
 };
 
+setupSelection();
 load();
 loadReplacements();
 loadRenewals();
