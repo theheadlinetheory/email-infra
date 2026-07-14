@@ -219,6 +219,49 @@ def health_burn():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-replace", methods=["GET", "POST", "OPTIONS"])
+def health_replace():
+    """GET: list replacement jobs. POST {emails:[...]}: flag burned inboxes for replacement."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_replace as hr
+        if request.method == "GET":
+            return _cors(jsonify({"jobs": hr.list_jobs()}))
+        emails = (request.get_json(silent=True) or {}).get("emails") or []
+        if not emails:
+            return _cors(jsonify({"error": "emails required"})), 400
+        res = hr.create_jobs(emails)
+        return _cors(jsonify({**res, "jobs": hr.list_jobs()}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-replace/advance", methods=["POST", "OPTIONS"])
+def health_replace_advance():
+    """Move a replacement forward. Body: {id, action: warm|swap|cancel, new_domain?}."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    try:
+        import health_replace as hr
+        res = hr.advance(int(body.get("id")), body.get("action", ""), body.get("new_domain"))
+        code = 400 if res.get("error") else 200
+        return _cors(jsonify(res)), code
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/sync", methods=["POST", "OPTIONS"])
 def trigger_sync():
     if request.method == "OPTIONS":

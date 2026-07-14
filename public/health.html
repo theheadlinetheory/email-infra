@@ -120,10 +120,21 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <div><div class="l">Selected</div><div class="v" id="selcount">0</div></div>
     <div class="act">
       <button class="btn sm" id="selall">Select all</button>
+      <button class="btn sm" id="replacebtn" disabled>Flag for replacement</button>
       <button class="btn danger sm" id="planbtn" disabled>Plan removal</button>
       <button class="btn danger sm" id="confirmbtn" disabled>Confirm remove-on-renewal</button>
     </div>
-  </div></div>
+  </div>
+
+  <div id="planmsg2"></div>
+  <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
+  <div class="note">A flagged inbox gets a fresh replacement that <b>warms for 14 days and cannot send</b>. "Mark swapped" stays locked until the warmup is done — then assign it and cancel the old one. Nothing gets started and forgotten.</div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th>Old inbox / domain</th><th>Client</th><th>Status</th><th>Warmup</th><th>Flagged</th><th>Action</th>
+    </tr></thead>
+    <tbody id="reprows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+  </table></div></div>
   <div id="planmsg"></div>
 
   <div class="sect"><h2>All inboxes</h2><span class="eye" id="allsub"></span></div>
@@ -266,6 +277,50 @@ function row(x){
   </tr>`;
 }
 
+async function loadReplacements(){
+  try{ const r=await fetch(api('/api/health-replace'),{credentials:'include'}); if(!r.ok)return; const d=await r.json(); renderReplacements(d.jobs||[]); }catch(e){}
+}
+function renderReplacements(jobs){
+  const active=jobs.filter(j=>j.status!=='cancelled');
+  document.getElementById('repsub').textContent = active.length? active.length+' in flight' : 'none';
+  const order={flagged:0,warming:1,ready:2,swapped:3};
+  const body = active.length ? active.sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)).map(j=>{
+    let warm='—', action='';
+    if(j.status==='flagged'){ warm='<span class="dom">not started</span>'; action=`<button class="btn sm" onclick="adv(${j.id},'warm')">Start warming</button> <button class="btn sm" onclick="adv(${j.id},'cancel')">Cancel</button>`; }
+    else if(j.status==='warming'){ warm=`<span style="color:var(--info)">ready in ${j.days_left}d</span>`; action=`<button class="btn sm" disabled title="warming ${j.days_left}d left">Swap 🔒</button> <button class="btn sm" onclick="adv(${j.id},'cancel')">Cancel</button>`; }
+    else if(j.status==='ready'){ warm='<span style="color:var(--good)">✓ warmed</span>'; action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Mark swapped</button> <button class="btn sm" onclick="adv(${j.id},'cancel')">Cancel</button>`; }
+    else if(j.status==='swapped'){ warm=`<span style="color:var(--good)">✓ ${j.swapped_at}</span>`; action='<span class="eye">now cancel the old inbox ↑</span>'; }
+    const stcls={flagged:'insufficient',warming:'warming',ready:'healthy',swapped:'healthy'}[j.status]||'insufficient';
+    return `<tr>
+      <td><div class="em">${j.old_email}</div><div class="dom">${j.old_domain}</div></td>
+      <td>${j.client||'—'}</td>
+      <td><span class="pill ${stcls}"><span class="g"></span>${j.status}</span></td>
+      <td style="font-family:var(--mono);font-size:12px">${warm}</td>
+      <td class="dom">${j.flagged_at}</td>
+      <td>${action}</td></tr>`;
+  }).join('') : '<tr><td colspan="6" class="empty">No replacements in flight. Select burned inboxes above and "Flag for replacement".</td></tr>';
+  document.getElementById('reprows').innerHTML = body;
+}
+window.adv = async (id,action)=>{
+  try{
+    const r=await fetch(api('/api/health-replace/advance'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({id,action})});
+    const d=await r.json();
+    if(d.error){ const el=document.getElementById('planmsg2'); el.className='msg'; el.textContent=d.error; }
+    loadReplacements();
+  }catch(e){}
+};
+async function flagReplace(){
+  const emails=[...selected]; if(!emails.length) return;
+  const el=document.getElementById('planmsg2'); el.className='msg'; el.textContent='Flagging…';
+  try{
+    const r=await fetch(api('/api/health-replace'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({emails})});
+    const d=await r.json();
+    el.textContent = d.error ? ('Error: '+d.error) : `Flagged ${d.created} for replacement`+(d.skipped?` (${d.skipped} already active)`:'');
+    selected.clear(); load(); loadReplacements();
+  }catch(e){ el.textContent='Error: '+e; }
+}
 function bindChecks(){
   document.querySelectorAll('.chk').forEach(c=>c.onchange=()=>{
     c.checked?selected.add(c.dataset.e):selected.delete(c.dataset.e); updateSel();
@@ -275,6 +330,7 @@ function updateSel(){
   document.getElementById('selcount').textContent = selected.size;
   document.getElementById('planbtn').disabled = selected.size===0;
   document.getElementById('confirmbtn').disabled = selected.size===0;
+  document.getElementById('replacebtn').disabled = selected.size===0;
 }
 
 document.getElementById('filters').onclick = e=>{
@@ -282,7 +338,7 @@ document.getElementById('filters').onclick = e=>{
   document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed','false'));
   b.setAttribute('aria-pressed','true'); filter=b.dataset.f; render(FLEET,{});
 };
-document.getElementById('refresh').onclick = load;
+document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); };
 
 document.getElementById('snap').onclick = async ()=>{
   const el=document.getElementById('planmsg'); el.className='msg'; el.textContent='Running snapshot (pulling SmartLead)…';
@@ -306,12 +362,14 @@ async function burn(confirm){
     else{ el.textContent=`Scheduled removal-on-renewal for ${d.removed} mailbox(es).`; selected.clear(); load(); }
   }catch(e){ el.textContent='Error: '+e; }
 }
+document.getElementById('replacebtn').onclick = flagReplace;
 document.getElementById('planbtn').onclick = ()=>burn(false);
 document.getElementById('confirmbtn').onclick = ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
 };
 
 load();
+loadReplacements();
 </script>
 </body>
 </html>
