@@ -27,9 +27,64 @@ ZAPMAIL_TAG_ID = 262254
 _DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
 
 
+_LOGIN_URL = "https://server.smartlead.ai/api/auth/login"
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+_token_cache = {"jwt": "", "ts": 0}
+
+
+def _mint_jwt() -> str:
+    """Log into SmartLead and return a fresh JWT (auto-refresh).
+    Needs SMARTLEAD_LOGIN_EMAIL / SMARTLEAD_LOGIN_PASSWORD env vars."""
+    email = os.environ.get("SMARTLEAD_LOGIN_EMAIL", "").strip()
+    pw = os.environ.get("SMARTLEAD_LOGIN_PASSWORD", "").strip()
+    if not email or not pw:
+        return ""
+    import requests
+    try:
+        r = requests.post(_LOGIN_URL, json={"email": email, "password": pw}, timeout=30)
+    except Exception:
+        return ""
+    if r.status_code != 200:
+        return ""
+    # token may sit under any field name / in a header — grab it by JWT shape
+    hay = r.text + " " + " ".join(str(v) for v in r.headers.values())
+    m = _JWT_RE.search(hay)
+    return m.group(0) if m else ""
+
+
+def get_jwt(force: bool = False) -> str:
+    """Current JWT. Prefers a freshly-minted token (login creds) so it never
+    goes stale; falls back to the static SMARTLEAD_JWT env var."""
+    import time
+    if os.environ.get("SMARTLEAD_LOGIN_EMAIL") and os.environ.get("SMARTLEAD_LOGIN_PASSWORD"):
+        if force or not _token_cache["jwt"] or (time.time() - _token_cache["ts"] > 3600):
+            fresh = _mint_jwt()
+            if fresh:
+                _token_cache["jwt"] = fresh
+                _token_cache["ts"] = time.time()
+        if _token_cache["jwt"]:
+            return _token_cache["jwt"]
+    return os.environ.get("SMARTLEAD_JWT", "").strip()
+
+
+def login_diag() -> dict:
+    """Safe diagnostic for the status endpoint — no token or password exposed."""
+    email = os.environ.get("SMARTLEAD_LOGIN_EMAIL", "").strip()
+    pw = os.environ.get("SMARTLEAD_LOGIN_PASSWORD", "").strip()
+    if not (email and pw):
+        return {"has_login_creds": False}
+    import requests
+    try:
+        r = requests.post(_LOGIN_URL, json={"email": email, "password": pw}, timeout=30)
+    except Exception as e:
+        return {"has_login_creds": True, "error": str(e)[:120]}
+    hay = r.text + " " + " ".join(str(v) for v in r.headers.values())
+    return {"has_login_creds": True, "login_http": r.status_code,
+            "token_found": bool(_JWT_RE.search(hay))}
+
+
 def _headers():
-    return {"Authorization": f"Bearer {os.environ.get('SMARTLEAD_JWT', '').strip()}",
-            "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {get_jwt()}", "Content-Type": "application/json"}
 
 
 def _gql(query, variables=None):
@@ -89,8 +144,8 @@ def _create_tag(name, existing):
 
 def reassign(account_id, email, client, ab="A", dry_run=True) -> dict:
     """Re-tag one inbox to <client> Group <ab>, preserving Zapmail + date tags."""
-    if not os.environ.get("SMARTLEAD_JWT", "").strip():
-        return {"error": "SMARTLEAD_JWT not set — needed for SmartLead re-tag"}
+    if not get_jwt():
+        return {"error": "no SmartLead token — set SMARTLEAD_JWT, or SMARTLEAD_LOGIN_EMAIL/PASSWORD for auto-refresh"}
     tag_id, tag_name, all_tags = _find_client_tag(client, ab)
     cur = _account_tags(account_id)
     date_tag = next((t["id"] for t in cur if _DATE_RE.match(t.get("name", ""))), None)
@@ -110,8 +165,13 @@ def reassign(account_id, email, client, ab="A", dry_run=True) -> dict:
     tag_ids = [ZAPMAIL_TAG_ID, tag_id] + ([date_tag] if date_tag else [])
 
     import requests
-    r = requests.post(f"{SL_INTERNAL}/email-account/save-management-details",
-                      headers=_headers(), json={"id": int(account_id), "tags": tag_ids}, timeout=30)
+    def _post():
+        return requests.post(f"{SL_INTERNAL}/email-account/save-management-details",
+                             headers=_headers(), json={"id": int(account_id), "tags": tag_ids}, timeout=30)
+    r = _post()
+    if r.status_code in (401, 403):
+        get_jwt(force=True)   # token went stale — mint a fresh one and retry once
+        r = _post()
     ok = r.status_code == 200
     try:
         store.log_monitor_event("smartlead_retag", {

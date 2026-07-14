@@ -248,6 +248,22 @@ def health_replace():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/smartlead-jwt-status")
+def smartlead_jwt_status():
+    """Diagnostic for the SmartLead token / auto-refresh. Booleans only."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import os
+        import health_smartlead as hsl
+        out = {"has_env_jwt": bool(os.environ.get("SMARTLEAD_JWT", "").strip()),
+               "current_token_valid": hsl.jwt_ok()}
+        out.update(hsl.login_diag())
+        return _cors(jsonify(out))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/health-renewals")
 def health_renewals():
     """Per-inbox renewal dates + renew/drop decisions. ?refresh=1 re-pulls Zapmail."""
