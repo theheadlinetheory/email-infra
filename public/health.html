@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox Health — THT</title>
+<style>
+:root{
+  --plane:#0b0e13;--surface:#141922;--surface2:#1a2029;--line:#252c38;--line2:#333c4a;
+  --ink:#eef2f8;--ink2:#aab4c4;--mut:#6f7a8c;--accent:#4c93e8;
+  --good:#3cc23c;--good-bg:#12240f;--warn:#e5ad2b;--warn-bg:#2a2109;
+  --serious:#ec835a;--serious-bg:#2c1810;--crit:#e5595a;--crit-bg:#2c1112;
+  --info:#9085e9;--info-bg:#1a1830;--mut-bg:#1c222b;
+  --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);font-family:var(--sans);font-size:14px}
+.wrap{max-width:1200px;margin:0 auto;padding:0 22px 60px}
+header{position:sticky;top:0;z-index:10;background:rgba(11,14,19,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.hbar{max-width:1200px;margin:0 auto;padding:14px 22px;display:flex;align-items:center;gap:12px}
+.logo{width:28px;height:28px;border-radius:7px;background:linear-gradient(140deg,var(--accent),#1b5bb0);display:grid;place-items:center;color:#fff;font-family:var(--mono);font-weight:700}
+.hbar b{font-size:15px;letter-spacing:-.01em}
+.hbar .sub{font-family:var(--mono);font-size:11px;color:var(--mut)}
+.hbar .right{margin-left:auto;display:flex;gap:8px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--ink2)}
+.btn{appearance:none;border:1px solid var(--line2);background:var(--surface2);color:var(--ink);font-family:var(--sans);font-weight:600;font-size:12.5px;padding:7px 13px;border-radius:8px;cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.sm{padding:5px 10px;font-size:11.5px}
+.btn.danger{background:var(--crit);border-color:var(--crit);color:#fff}
+.btn.danger:disabled{opacity:.4;cursor:not-allowed}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:10px;margin-top:20px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:13px 14px}
+.kpi .l{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut)}
+.kpi .v{font-size:25px;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums}
+.sect{display:flex;align-items:center;gap:10px;margin:26px 2px 12px}
+.sect h2{font-size:16px;margin:0}
+.sect .eye{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--mut)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.toolbar{display:flex;flex-wrap:wrap;gap:7px;margin:4px 2px 12px}
+.chip{border:1px solid var(--line2);background:var(--surface);color:var(--ink2);font-family:var(--mono);font-size:11.5px;padding:6px 11px;border-radius:20px;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--ink);color:var(--plane);border-color:var(--ink)}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+th.num{text-align:right}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tr:hover td{background:var(--surface2)}
+td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12.5px}
+.em{font-family:var(--mono);font-size:12.5px}
+.dom{font-family:var(--mono);font-size:11px;color:var(--mut)}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;background:var(--surface2);border:1px solid var(--line);color:var(--ink2)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10.5px;font-weight:600;text-transform:uppercase;padding:3px 8px 3px 6px;border-radius:20px}
+.pill .g{width:6px;height:6px;border-radius:50%}
+.pill.healthy{background:var(--good-bg);color:var(--good)}.pill.healthy .g{background:var(--good)}
+.pill.watch{background:var(--warn-bg);color:var(--warn)}.pill.watch .g{background:var(--warn)}
+.pill.at_risk{background:var(--serious-bg);color:var(--serious)}.pill.at_risk .g{background:var(--serious)}
+.pill.burned{background:var(--crit-bg);color:var(--crit)}.pill.burned .g{background:var(--crit)}
+.pill.warming{background:var(--info-bg);color:var(--info)}.pill.warming .g{background:var(--info)}
+.pill.insufficient{background:var(--mut-bg);color:var(--mut)}.pill.insufficient .g{background:var(--mut)}
+.pill.idle{background:var(--mut-bg);color:var(--mut)}.pill.idle .g{background:var(--mut)}
+.pill.unknown{background:var(--mut-bg);color:var(--mut)}.pill.unknown .g{background:var(--mut)}
+.score{font-family:var(--mono);font-weight:700}
+.reasons{font-family:var(--mono);font-size:10.5px;color:var(--mut)}
+.chk{width:16px;height:16px;accent-color:var(--crit);cursor:pointer}
+.costbar{display:flex;flex-wrap:wrap;align-items:center;gap:22px;padding:14px 18px;margin-top:14px}
+.costbar .ci{display:flex;flex-direction:column}
+.costbar .ci .l{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut)}
+.costbar .ci .v{font-family:var(--mono);font-weight:700;font-size:17px}
+.costbar .ci .v.crit{color:var(--crit)}
+.costbar .big{margin-left:auto;text-align:right}
+.costbar .big .l{color:var(--good)}
+.costbar .big .v{font-size:23px;color:var(--good)}
+.costbar .hint{font-family:var(--mono);font-size:11px;color:var(--mut)}
+.vpill{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.vpill.good{background:var(--good-bg);color:var(--good)}
+.vpill.serious{background:var(--serious-bg);color:var(--serious)}
+.vpill.crit{background:var(--crit-bg);color:var(--crit)}
+.vpill.mut{background:var(--mut-bg);color:var(--mut)}
+.capbad{color:var(--crit)} .arrowto{color:var(--mut);font-family:var(--mono)}
+.cqbar{display:flex;align-items:center;gap:16px;padding:13px 16px}
+.cqbar .l{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:var(--mut)}
+.cqbar .v{font-family:var(--mono);font-weight:700;font-size:16px}
+.cqbar .v.crit{color:var(--crit)}
+.cqbar .act{margin-left:auto;display:flex;gap:8px}
+.note{font-size:12.5px;color:var(--ink2);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin:14px 0}
+.empty{padding:26px;text-align:center;color:var(--ink2)}
+.msg{margin:12px 2px;font-family:var(--mono);font-size:12px;color:var(--info)}
+@media(max-width:820px){.kpis{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<header><div class="hbar">
+  <div class="logo">◈</div>
+  <div><b>Inbox Health</b><div class="sub">THT · deliverability ops</div></div>
+  <div class="right"><span id="synced">loading…</span>
+    <button class="btn sm" id="refresh">Refresh</button>
+    <button class="btn sm" id="snap" title="Pull today's SmartLead metrics and re-score">Run snapshot</button>
+  </div>
+</div></header>
+
+<div class="wrap">
+  <div class="kpis" id="kpis"></div>
+
+  <div class="panel costbar" id="costbar" style="display:none"></div>
+
+  <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
+  <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th>Client</th><th class="num">Sending</th><th class="num">Burned</th><th class="num">Warming</th>
+      <th class="num">Est/day now</th><th class="num">after delete</th><th>If you delete burned</th>
+    </tr></thead>
+    <tbody id="clientrows"></tbody>
+  </table></div>
+
+  <div class="sect"><h2>Burned — cancel queue</h2><span class="eye" id="burnedsub"></span></div>
+  <div class="note">Burned inboxes can't be recovered by warm-up. Select and schedule <b>remove-on-renewal</b> (Zapmail) — you stop paying with zero wasted days. <b>At-risk</b> inboxes below are recovered, not cancelled.</div>
+  <div class="panel"><div class="cqbar">
+    <div><div class="l">Burned</div><div class="v crit" id="burnedcount">0</div></div>
+    <div><div class="l">Selected</div><div class="v" id="selcount">0</div></div>
+    <div class="act">
+      <button class="btn sm" id="selall">Select all</button>
+      <button class="btn sm" id="replacebtn" disabled>Flag for replacement</button>
+      <button class="btn danger sm" id="planbtn" disabled>Plan removal</button>
+      <button class="btn danger sm" id="confirmbtn" disabled>Confirm remove-on-renewal</button>
+    </div>
+  </div>
+
+  <div id="planmsg2"></div>
+  <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
+  <div class="note"><b>Reserve-first:</b> when you flag a burned inbox, assign a <b>pre-warmed reserve inbox instantly (0-day)</b> if any are ready — no waiting. Only <b>warm a new one (14 days, cannot send)</b> when the reserve runs low; that path stays locked until warmed. Either way, after swapping, cancel the old inbox. Nothing gets started and forgotten.</div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th>Old inbox / domain</th><th>Client</th><th>Status</th><th>Warmup</th><th>Flagged</th><th>Action</th>
+    </tr></thead>
+    <tbody id="reprows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+  </table></div></div>
+  <div id="planmsg"></div>
+
+  <div class="sect"><h2>Renewals &amp; decisions</h2><span class="eye" id="rensub">loading…</span></div>
+  <div class="note">Renewal ≈ the monthly anniversary of each inbox's Zapmail creation date. <b>Cancel burned/idle inboxes before they renew</b> so you stop paying for dead infrastructure. Healthy inboxes renew as normal.</div>
+  <div class="panel costbar" id="renbar" style="display:none"></div>
+  <div class="toolbar" id="renfilters">
+    <button class="chip" data-rf="urgent" aria-pressed="true">Renewing ≤7d</button>
+    <button class="chip" data-rf="burned" aria-pressed="false">Burned</button>
+    <button class="chip" data-rf="idle" aria-pressed="false">Idle</button>
+    <button class="chip" data-rf="all" aria-pressed="false">All</button>
+    <button class="btn sm" id="renrefresh" style="margin-left:auto">Re-pull Zapmail</button>
+  </div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th>Inbox / Domain</th><th>Client</th><th>Status</th><th class="num">Renews</th><th class="num">$/mo</th><th>Decision</th>
+    </tr></thead>
+    <tbody id="renrows"><tr><td colspan="6" class="empty">Loading renewals…</td></tr></tbody>
+  </table></div>
+
+  <div class="sect"><h2>All inboxes</h2><span class="eye" id="allsub"></span></div>
+  <div class="toolbar" id="filters">
+    <button class="chip" data-f="all" aria-pressed="true">All</button>
+    <button class="chip" data-f="healthy" aria-pressed="false">Healthy</button>
+    <button class="chip" data-f="watch" aria-pressed="false">Watch</button>
+    <button class="chip" data-f="at_risk" aria-pressed="false">At-risk</button>
+    <button class="chip" data-f="burned" aria-pressed="false">Burned</button>
+    <button class="chip" data-f="warming" aria-pressed="false">Warming</button>
+    <button class="chip" data-f="insufficient" aria-pressed="false">Low volume</button>
+    <button class="chip" data-f="idle" aria-pressed="false">Idle</button>
+  </div>
+  <div class="panel tablewrap"><table>
+    <thead><tr>
+      <th></th><th>Inbox / Domain</th><th>Source</th><th>Client</th><th>Grp</th>
+      <th>Status</th><th class="num">Score</th>
+      <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Sent 3d</th>
+      <th>Why</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
+  </table></div>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const PW = qs.get('pw') || '';
+const api = p => p + (PW ? (p.includes('?')?'&':'?') + 'pw=' + encodeURIComponent(PW) : '');
+const RANK = {burned:5,at_risk:4,watch:3,healthy:2,warming:1,insufficient:0,idle:-1};
+const LABEL = {healthy:'Healthy',watch:'Watch',at_risk:'At-risk',burned:'Burned',warming:'Warming',insufficient:'Low-vol',idle:'Idle'};
+let FLEET = [], filter = 'all';
+const selected = new Set();
+
+async function load(){
+  try{
+    const r = await fetch(api('/api/health-fleet'), {credentials:'include'});
+    if(r.status===401){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>Unauthorized — open with ?pw=YOUR_DASHBOARD_PASSWORD</td></tr>'; return; }
+    const d = await r.json();
+    if(d.loading || !d.inboxes){ document.getElementById('synced').textContent='no snapshot yet — click Run snapshot'; render([], {}); return; }
+    FLEET = d.inboxes;
+    document.getElementById('synced').textContent = 'snapshot ' + (d.date||'') ;
+    render(FLEET, d.counts||{});
+  }catch(e){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>'+e+'</td></tr>'; }
+}
+
+function render(fleet, counts){
+  const c = k => fleet.filter(x=>x.status===k).length;
+  document.getElementById('kpis').innerHTML = [
+    ['Total', fleet.length, ''], ['Healthy', c('healthy'),'good'], ['Watch', c('watch'),'warn'],
+    ['At-risk', c('at_risk'),'serious'], ['Burned', c('burned'),'crit'], ['Warming', c('warming'),'info'],
+    ['Low-vol', c('insufficient'),'mut'], ['Idle', c('idle'),'mut'],
+  ].map(([l,v,cl])=>`<div class="kpi"><div class="l">${l}</div><div class="v" style="color:${cl?`var(--${cl})`:'inherit'}">${v}</div></div>`).join('');
+
+  const burned = fleet.filter(x=>x.status==='burned');
+  document.getElementById('burnedcount').textContent = burned.length;
+  document.getElementById('burnedsub').textContent = burned.length ? burned.length+' to review' : 'none 🎉';
+  renderCost({burned: c('burned'), idle: c('idle')});
+  renderClients();
+
+  const shown = fleet.filter(x=> filter==='all' ? true : x.status===filter)
+                     .sort((a,b)=>(RANK[b.status]||0)-(RANK[a.status]||0) || (a.score??999)-(b.score??999));
+  document.getElementById('allsub').textContent = shown.length+' of '+fleet.length;
+  document.getElementById('rows').innerHTML = shown.length ? shown.map(row).join('')
+    : '<tr><td colspan=12 class=empty>none</td></tr>';
+  bindChecks(); updateSel();
+}
+
+let RENEWALS=null, renFilter='urgent';
+async function loadRenewals(refresh){
+  const sub=document.getElementById('rensub'); sub.textContent = refresh?'re-pulling Zapmail…':'loading…';
+  try{
+    const r=await fetch(api('/api/health-renewals'+(refresh?'?refresh=1':'')),{credentials:'include'});
+    const d=await r.json();
+    if(d.error){ sub.textContent='error: '+d.error; return; }
+    RENEWALS=d; renderRenewals();
+  }catch(e){ sub.textContent='error: '+e; }
+}
+function renderRenewals(){
+  if(!RENEWALS) return;
+  const rows=RENEWALS.rows||[];
+  const rb=document.getElementById('renbar'); rb.style.display='flex';
+  rb.innerHTML=`
+    <div class="ci"><span class="l">Tracked inboxes</span><span class="v">${RENEWALS.count}</span></div>
+    <div class="ci"><span class="l">Burned/idle renewing ≤7d</span><span class="v crit">$${(RENEWALS.renewing_waste_7d||0).toLocaleString()}/mo</span></div>
+    <div class="ci big"><span class="l">Action</span><span class="v" style="font-size:15px;color:var(--crit)">cancel before they charge</span></div>`;
+  let f=rows;
+  if(renFilter==='urgent') f=rows.filter(r=>['burned','idle'].includes(r.status)&&r.days_until!=null&&r.days_until<=7);
+  else if(renFilter!=='all') f=rows.filter(r=>r.status===renFilter);
+  document.getElementById('rensub').textContent=`${f.length} shown${RENEWALS.fetched_at?' · pulled '+RENEWALS.fetched_at.slice(0,10):''}`;
+  document.getElementById('renrows').innerHTML = f.length? f.slice(0,400).map(r=>`
+    <tr>
+      <td><div class="em">${r.email}</div><div class="dom">${r.domain||''}</div></td>
+      <td>${r.client||'<span class="dom">—</span>'}</td>
+      <td><span class="pill ${r.status}"><span class="g"></span>${LABEL[r.status]||r.status}</span></td>
+      <td class="num">${r.renewal_date||'—'}<div class="dom">${r.days_until!=null?'in '+r.days_until+'d':''}</div></td>
+      <td class="num">$${r.cost}</td>
+      <td><span class="vpill ${r.decision_class}">${r.decision}</span></td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">none in this filter</td></tr>';
+}
+const SENDS_PER_INBOX_DAY = 15;   // Zapmail message_per_day
+const DAILY_FLOOR = 500;          // target minimum sends/day per client
+function renderClients(){
+  const g={};
+  FLEET.forEach(x=>{
+    const c=x.client||'(none)';
+    (g[c]=g[c]||{healthy:0,watch:0,at_risk:0,burned:0,warming:0,idle:0,insufficient:0})[x.status]++;
+  });
+  const rows=Object.entries(g).map(([c,s])=>{
+    const sending=s.healthy+s.watch+s.at_risk+s.burned;
+    const afterDel=s.healthy+s.watch+s.at_risk;
+    const capNow=sending*SENDS_PER_INBOX_DAY, capAfter=afterDel*SENDS_PER_INBOX_DAY;
+    let verdict,vc,sev;
+    if(s.burned===0){ verdict='no burned'; vc='mut'; sev=0; }
+    else if(capAfter<DAILY_FLOOR && s.warming<s.burned){ verdict='⚠ warm replacements first'; vc='crit'; sev=3; }
+    else if(capAfter<DAILY_FLOOR){ verdict='low — replacements warming'; vc='serious'; sev=2; }
+    else { verdict='safe to delete burned'; vc='good'; sev=1; }
+    return {c,s,sending,afterDel,capNow,capAfter,verdict,vc,sev};
+  }).filter(r=>r.sending>0)
+    .sort((a,b)=> b.sev-a.sev || b.s.burned-a.s.burned);
+  document.getElementById('clientrows').innerHTML = rows.map(r=>`
+    <tr>
+      <td>${r.c}</td>
+      <td class="num">${r.sending}</td>
+      <td class="num" style="color:${r.s.burned?'var(--crit)':'inherit'}">${r.s.burned||'—'}</td>
+      <td class="num" style="color:${r.s.warming?'var(--info)':'inherit'}">${r.s.warming||'—'}</td>
+      <td class="num">${r.capNow.toLocaleString()}</td>
+      <td class="num"><span class="${r.capAfter<DAILY_FLOOR&&r.s.burned?'capbad':''}">${r.capAfter.toLocaleString()}</span></td>
+      <td><span class="vpill ${r.vc}">${r.verdict}</span></td>
+    </tr>`).join('') || '<tr><td colspan=7 class=empty>no clients</td></tr>';
+}
+
+let SUBS=null;
+async function renderCost(n){
+  const el=document.getElementById('costbar');
+  if(SUBS===null){
+    try{ const r=await fetch(api('/api/subscriptions'),{credentials:'include'}); SUBS=r.ok?await r.json():{}; }
+    catch(e){ SUBS={}; }
+  }
+  const tm=SUBS.total_monthly||0, mb=SUBS.total_mailboxes||0;
+  const per = mb>0 ? tm/mb : null;
+  const m = x => per==null ? '—' : '$'+Math.round(x).toLocaleString();
+  const idleCost=per==null?0:per*n.idle, burnedCost=per==null?0:per*n.burned;
+  el.style.display='flex';
+  el.innerHTML = `
+    <div class="ci"><span class="l">Zapmail spend / mo</span><span class="v">${per==null?'—':'$'+Math.round(tm).toLocaleString()}</span></div>
+    <div class="ci"><span class="l">Burned · ${n.burned}</span><span class="v crit">${m(burnedCost)}/mo</span></div>
+    <div class="ci"><span class="l">Idle · ${n.idle}</span><span class="v crit">${m(idleCost)}/mo</span></div>
+    <div class="ci big"><span class="l">Recoverable / mo</span><span class="v">${m(idleCost+burnedCost)}</span></div>
+    ${per==null?'<div class="hint">connect ZAPMAIL_API_KEY to price these</div>':`<div class="hint">≈ $${(per).toFixed(2)}/inbox · ${mb} mailboxes billed</div>`}`;
+}
+function reasonText(r){
+  if(Array.isArray(r)) return r.join('; ');
+  if(typeof r==='string'){ try{ const p=JSON.parse(r); return Array.isArray(p)?p.join('; '):r; }catch(e){ return r; } }
+  return '';
+}
+const pct = v => v==null ? '—' : (+v).toFixed(v<10?2:1)+'%';
+function row(x){
+  const canSel = x.status==='burned';
+  return `<tr>
+    <td>${canSel?`<input type="checkbox" class="chk" data-e="${x.email}" ${selected.has(x.email)?'checked':''}>`:''}</td>
+    <td><div class="em">${x.email}</div><div class="dom">${x.domain||''}</div></td>
+    <td><span class="tag">${x.source||'Zapmail'}</span></td>
+    <td>${x.client||'<span class="dom">—</span>'}</td>
+    <td class="em">${x.group_letter||'·'}</td>
+    <td><span class="pill ${x.status}"><span class="g"></span>${LABEL[x.status]||x.status}</span></td>
+    <td class="num score">${x.score==null?'—':x.score}</td>
+    <td class="num">${pct(x.reply_3d)}</td>
+    <td class="num" style="color:${x.bounce_3d>=3?'var(--crit)':x.bounce_3d>=2.5?'var(--serious)':'inherit'}">${pct(x.bounce_3d)}</td>
+    <td class="num">${pct(x.ooo_3d)}</td>
+    <td class="num">${x.sent_3d??0}</td>
+    <td class="reasons">${reasonText(x.reasons)}</td>
+  </tr>`;
+}
+
+async function loadReplacements(){
+  try{ const r=await fetch(api('/api/health-replace'),{credentials:'include'}); if(!r.ok)return; const d=await r.json(); renderReplacements(d.jobs||[], d.reserve||{}); }catch(e){}
+}
+function renderReplacements(jobs, reserve){
+  const active=jobs.filter(j=>j.status!=='cancelled');
+  const avail=reserve.available??0;
+  const rcol = avail<20?'var(--crit)':avail<50?'var(--serious)':'var(--good)';
+  document.getElementById('repsub').innerHTML = `${active.length} in flight · <span style="color:${rcol}">${avail} ready reserve</span>`;
+  const order={flagged:0,reserved:1,warming:2,ready:3,swapped:4};
+  const btnC=`<button class="btn sm" onclick="adv(EMAIL_ID,'cancel')">Cancel</button>`;
+  const body = active.length ? active.sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)).map(j=>{
+    const C=btnC.replace('EMAIL_ID',j.id);
+    let warm='—', action='', stcls='insufficient';
+    if(j.status==='flagged'){
+      warm='<span class="dom">choose source</span>';
+      action=`<button class="btn pri sm" onclick="adv(${j.id},'reserve')" ${avail<=0?'disabled title="no reserve left"':''}>Assign reserve (0d)</button> <button class="btn sm" onclick="adv(${j.id},'warm')">Warm new (14d)</button> ${C}`;
+    } else if(j.status==='reserved'){
+      warm=`<span style="color:var(--good)">✓ reserve · ${j.reserve_source||''}</span>`; stcls='healthy';
+      action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Swap now</button> ${C}`;
+    } else if(j.status==='warming'){
+      warm=`<span style="color:var(--info)">ready in ${j.days_left}d</span>`; stcls='warming';
+      action=`<button class="btn sm" disabled title="warming ${j.days_left}d left">Swap 🔒</button> ${C}`;
+    } else if(j.status==='ready'){
+      warm='<span style="color:var(--good)">✓ warmed</span>'; stcls='healthy';
+      action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Mark swapped</button> ${C}`;
+    } else if(j.status==='swapped'){
+      warm=`<span style="color:var(--good)">✓ ${j.swapped_at}</span>`; stcls='healthy';
+      action='<span class="eye">now cancel the old inbox ↑</span>';
+    }
+    return `<tr>
+      <td><div class="em">${j.old_email}</div><div class="dom">${j.old_domain}</div></td>
+      <td>${j.client||'—'}</td>
+      <td><span class="pill ${stcls}"><span class="g"></span>${j.status}</span></td>
+      <td style="font-family:var(--mono);font-size:12px">${warm}</td>
+      <td class="dom">${j.flagged_at}</td>
+      <td>${action}</td></tr>`;
+  }).join('') : '<tr><td colspan="6" class="empty">No replacements in flight. Select burned inboxes above and "Flag for replacement".</td></tr>';
+  document.getElementById('reprows').innerHTML = body;
+}
+async function advPost(body){
+  const r=await fetch(api('/api/health-replace/advance'),{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return r.json();
+}
+window.adv = async (id,action)=>{
+  const el=document.getElementById('planmsg2'); el.className='msg';
+  try{
+    if(action==='swap'){
+      const plan=await advPost({id,action:'swap',confirm:false});   // dry-run first
+      if(plan.error){ el.textContent=plan.error; loadReplacements(); return; }
+      const rt=plan.retag;
+      if(rt && !rt.error){
+        if(!confirm(`Re-tag ${rt.email}\n  ${(rt.current_tags||[]).join(', ')}  ->  ${rt.target}\nin SmartLead?\n\nAfter this you must hit "Reallocate" on the campaign in SmartLead (no API for that step).`)){
+          el.textContent='swap cancelled'; loadReplacements(); return;
+        }
+      }
+      const done=await advPost({id,action:'swap',confirm:true});
+      el.textContent = done.error ? done.error
+        : (done.retag ? `Swapped — re-tagged to ${done.retag.target} (HTTP ${done.retag.http}). Now Reallocate in SmartLead.`
+                      : 'Swapped.');
+      loadReplacements(); return;
+    }
+    const d=await advPost({id,action});
+    if(d.error){ el.textContent=d.error; }
+    loadReplacements();
+  }catch(e){ el.textContent='Error: '+e; }
+};
+async function flagReplace(){
+  const emails=[...selected]; if(!emails.length) return;
+  const el=document.getElementById('planmsg2'); el.className='msg'; el.textContent='Flagging…';
+  try{
+    const r=await fetch(api('/api/health-replace'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({emails})});
+    const d=await r.json();
+    el.textContent = d.error ? ('Error: '+d.error) : `Flagged ${d.created} for replacement`+(d.skipped?` (${d.skipped} already active)`:'');
+    selected.clear(); load(); loadReplacements();
+  }catch(e){ el.textContent='Error: '+e; }
+}
+function bindChecks(){
+  document.querySelectorAll('.chk').forEach(c=>c.onchange=()=>{
+    c.checked?selected.add(c.dataset.e):selected.delete(c.dataset.e); updateSel();
+  });
+}
+function updateSel(){
+  document.getElementById('selcount').textContent = selected.size;
+  document.getElementById('planbtn').disabled = selected.size===0;
+  document.getElementById('confirmbtn').disabled = selected.size===0;
+  document.getElementById('replacebtn').disabled = selected.size===0;
+}
+
+document.getElementById('filters').onclick = e=>{
+  const b=e.target.closest('.chip'); if(!b)return;
+  document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed','false'));
+  b.setAttribute('aria-pressed','true'); filter=b.dataset.f; render(FLEET,{});
+};
+document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); loadRenewals(); };
+document.getElementById('renfilters').onclick = e=>{
+  const b=e.target.closest('.chip'); if(!b)return;
+  document.querySelectorAll('#renfilters .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
+  b.setAttribute('aria-pressed','true'); renFilter=b.dataset.rf; renderRenewals();
+};
+document.getElementById('renrefresh').onclick = ()=>loadRenewals(true);
+
+document.getElementById('snap').onclick = async ()=>{
+  const el=document.getElementById('planmsg'); el.className='msg'; el.textContent='Running snapshot (pulling SmartLead)…';
+  try{ const r=await fetch(api('/api/health-snapshot'),{method:'POST',credentials:'include'}); const d=await r.json();
+    el.textContent = d.ok ? `Snapshot done: ${d.inboxes} inboxes — ${JSON.stringify(d.counts)}` : 'Error: '+(d.error||'');
+    load();
+  }catch(e){ el.textContent='Error: '+e; }
+};
+
+async function burn(confirm){
+  const emails=[...selected];
+  const el=document.getElementById('planmsg'); el.className='msg';
+  el.textContent = confirm ? 'Scheduling remove-on-renewal…' : 'Planning…';
+  try{
+    const r=await fetch(api('/api/health-burn'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({emails,confirm})});
+    const d=await r.json();
+    if(d.error){ el.textContent='Error: '+d.error; return; }
+    if(d.dry_run){ el.textContent=`Plan: ${d.would_remove} mailbox(es) would be scheduled` +
+        (d.unresolved?.length?` · ${d.unresolved.length} could not be matched in Zapmail`:'') + '. Click Confirm to execute.'; }
+    else{ el.textContent=`Scheduled removal-on-renewal for ${d.removed} mailbox(es).`; selected.clear(); load(); }
+  }catch(e){ el.textContent='Error: '+e; }
+}
+document.getElementById('replacebtn').onclick = flagReplace;
+document.getElementById('planbtn').onclick = ()=>burn(false);
+document.getElementById('confirmbtn').onclick = ()=>{
+  if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
+};
+
+load();
+loadReplacements();
+loadRenewals();
+</script>
+</body>
+</html>

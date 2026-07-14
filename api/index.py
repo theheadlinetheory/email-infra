@@ -55,6 +55,12 @@ def serve_index():
     return send_from_directory(_PUBLIC_DIR, "index.html")
 
 
+@app.route("/health.html")
+@app.route("/health")
+def serve_health():
+    return send_from_directory(_PUBLIC_DIR, "health.html")
+
+
 @app.route("/css/<path:f>")
 def serve_css(f):
     return send_from_directory(os.path.join(_PUBLIC_DIR, "css"), f)
@@ -158,6 +164,125 @@ def health_history():
         return jsonify({"error": "Unauthorized"}), 401
     history, _ = _get_cache("health_history")
     return _cors(jsonify(history or []))
+
+
+# ─── Health V1 (per-inbox tracking / burn detection / cancel) ───
+
+@app.route("/api/health-fleet")
+def health_fleet():
+    """Current per-inbox health fleet (read-only, from the health_fleet cache)."""
+    if not _check_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+    data, ts = _get_cache("health_fleet")
+    if not data:
+        return _cors(jsonify({"loading": True, "inboxes": [], "counts": {}}))
+    data["_synced_at"] = ts
+    return _cors(jsonify(data))
+
+
+def _is_vercel_cron():
+    """Vercel sends cron requests with Authorization: Bearer $CRON_SECRET."""
+    secret = os.environ.get("CRON_SECRET", "")
+    return bool(secret) and request.headers.get("Authorization", "") == f"Bearer {secret}"
+
+
+@app.route("/api/health-snapshot", methods=["GET", "POST", "OPTIONS"])
+def health_snapshot():
+    """Run today's snapshot: score the fleet from the cache, persist. Daily cron (GET)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not (_check_auth() or _is_vercel_cron()):
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_snapshot as hs
+        return _cors(jsonify(hs.snapshot_daily()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-burn", methods=["POST", "OPTIONS"])
+def health_burn():
+    """Plan or execute remove-on-renewal for burned inboxes.
+    Body: {emails: [...], confirm: bool}.  confirm=false (default) => dry-run plan."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or []
+    confirm = bool(body.get("confirm"))
+    if not emails:
+        return _cors(jsonify({"error": "emails required"})), 400
+    try:
+        import health_actions as ha
+        result = ha.schedule_removal(emails, dry_run=not confirm)
+        return _cors(jsonify(result))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-replace", methods=["GET", "POST", "OPTIONS"])
+def health_replace():
+    """GET: list replacement jobs. POST {emails:[...]}: flag burned inboxes for replacement."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_replace as hr
+        if request.method == "GET":
+            return _cors(jsonify({"jobs": hr.list_jobs(), "reserve": hr.reserve_summary()}))
+        emails = (request.get_json(silent=True) or {}).get("emails") or []
+        if not emails:
+            return _cors(jsonify({"error": "emails required"})), 400
+        res = hr.create_jobs(emails)
+        return _cors(jsonify({**res, "jobs": hr.list_jobs()}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-renewals")
+def health_renewals():
+    """Per-inbox renewal dates + renew/drop decisions. ?refresh=1 re-pulls Zapmail."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_renewals as hrn
+        refresh = request.args.get("refresh") == "1"
+        return _cors(jsonify(hrn.build_tracking(refresh=refresh)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-replace/advance", methods=["POST", "OPTIONS"])
+def health_replace_advance():
+    """Move a replacement forward. Body: {id, action: warm|swap|cancel, new_domain?}."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    try:
+        import health_replace as hr
+        res = hr.advance(int(body.get("id")), body.get("action", ""),
+                         body.get("new_domain"), confirm=bool(body.get("confirm")))
+        code = 400 if res.get("error") else 200
+        return _cors(jsonify(res)), code
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
 @app.route("/api/sync", methods=["POST", "OPTIONS"])

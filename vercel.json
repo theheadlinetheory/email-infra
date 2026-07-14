@@ -2,6 +2,9 @@
   "functions": {
     "api/index.py": { "maxDuration": 300 }
   },
+  "crons": [
+    { "path": "/api/health-snapshot", "schedule": "0 13 * * *" }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" },
     { "source": "/", "destination": "/api/index.py" }

@@ -639,3 +639,81 @@ def get_group_history(group_id: int = None, limit: int = 100) -> list[dict]:
             if isinstance(r.get(col), str):
                 r[col] = json.loads(r[col])
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Health V1  (inbox_health_daily / inbox_health_status / inbox_health_config)
+# ---------------------------------------------------------------------------
+
+def upsert_health_daily(rows: list[dict]) -> None:
+    """Upsert per-inbox per-day metric rows (unique on email+date)."""
+    if not rows:
+        return
+    _request("POST", "/inbox_health_daily", params={"on_conflict": "email,date"},
+             json_body=rows, headers={"Prefer": "resolution=merge-duplicates"})
+
+
+def get_health_daily(email: str, limit: int = 14) -> list[dict]:
+    """Recent daily rows for one inbox, newest first."""
+    return _request("GET", "/inbox_health_daily", params={
+        "select": "*", "email": f"eq.{email}",
+        "order": "date.desc", "limit": str(limit),
+    })
+
+
+def get_health_daily_bulk(since_date: str) -> dict:
+    """All daily rows since `since_date` (YYYY-MM-DD), grouped email -> [rows].
+    One request instead of one-per-inbox — used by the snapshot scorer."""
+    rows = _request("GET", "/inbox_health_daily", params={
+        "select": "*", "date": f"gte.{since_date}", "order": "date.desc",
+    })
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(r["email"], []).append(r)
+    return out
+
+
+def upsert_health_status(rows: list[dict]) -> None:
+    """Upsert current computed status rows (primary key = email)."""
+    if not rows:
+        return
+    # serialize jsonb columns on COPIES — never mutate the caller's dicts
+    # (the same list objects are reused for the health_fleet cache).
+    payload = []
+    for r in rows:
+        row = dict(r)
+        for col in ("reasons", "subscores", "campaigns"):
+            if col in row and not isinstance(row[col], str):
+                row[col] = json.dumps(row[col])
+        payload.append(row)
+    _request("POST", "/inbox_health_status", params={"on_conflict": "email"},
+             json_body=payload, headers={"Prefer": "resolution=merge-duplicates"})
+
+
+def get_health_status_all() -> list[dict]:
+    """All current inbox statuses — paginated past PostgREST's 1000-row cap."""
+    rows, offset = [], 0
+    while True:
+        page = _request("GET", "/inbox_health_status", params={
+            "select": "*", "order": "email.asc",
+            "limit": "1000", "offset": str(offset),
+        })
+        rows.extend(page)
+        if len(page) < 1000:
+            break
+        offset += 1000
+    for r in rows:
+        for col in ("reasons", "subscores"):
+            if isinstance(r.get(col), str):
+                try:
+                    r[col] = json.loads(r[col])
+                except Exception:
+                    pass
+    return rows
+
+
+def get_health_config(key: str = "default") -> dict:
+    """Load tunable weights/thresholds; {} if unset (model falls back to defaults)."""
+    rows = _request("GET", "/inbox_health_config",
+                    params={"select": "value", "key": f"eq.{key}"})
+    return rows[0]["value"] if rows else {}
