@@ -193,6 +193,11 @@ async function renderCost(n){
     <div class="ci big"><span class="l">Recoverable / mo</span><span class="v">${m(idleCost+burnedCost)}</span></div>
     ${per==null?'<div class="hint">connect ZAPMAIL_API_KEY to price these</div>':`<div class="hint">≈ $${(per).toFixed(2)}/inbox · ${mb} mailboxes billed</div>`}`;
 }
+function reasonText(r){
+  if(Array.isArray(r)) return r.join('; ');
+  if(typeof r==='string'){ try{ const p=JSON.parse(r); return Array.isArray(p)?p.join('; '):r; }catch(e){ return r; } }
+  return '';
+}
 const pct = v => v==null ? '—' : (+v).toFixed(v<10?2:1)+'%';
 function row(x){
   const canSel = x.status==='burned';
@@ -208,7 +213,7 @@ function row(x){
     <td class="num" style="color:${x.bounce_3d>=3?'var(--crit)':x.bounce_3d>=2.5?'var(--serious)':'inherit'}">${pct(x.bounce_3d)}</td>
     <td class="num">${pct(x.ooo_3d)}</td>
     <td class="num">${x.sent_3d??0}</td>
-    <td class="reasons">${(x.reasons||[]).join('; ')}</td>
+    <td class="reasons">${reasonText(x.reasons)}</td>
   </tr>`;
 }
 

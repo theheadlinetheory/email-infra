@@ -677,12 +677,17 @@ def upsert_health_status(rows: list[dict]) -> None:
     """Upsert current computed status rows (primary key = email)."""
     if not rows:
         return
+    # serialize jsonb columns on COPIES — never mutate the caller's dicts
+    # (the same list objects are reused for the health_fleet cache).
+    payload = []
     for r in rows:
+        row = dict(r)
         for col in ("reasons", "subscores", "campaigns"):
-            if col in r and not isinstance(r[col], str):
-                r[col] = json.dumps(r[col])
+            if col in row and not isinstance(row[col], str):
+                row[col] = json.dumps(row[col])
+        payload.append(row)
     _request("POST", "/inbox_health_status", params={"on_conflict": "email"},
-             json_body=rows, headers={"Prefer": "resolution=merge-duplicates"})
+             json_body=payload, headers={"Prefer": "resolution=merge-duplicates"})
 
 
 def get_health_status_all() -> list[dict]:
