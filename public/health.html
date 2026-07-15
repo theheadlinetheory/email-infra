@@ -146,6 +146,10 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   </table></div></div>
   <div id="planmsg"></div>
 
+  <div class="sect"><h2>Reserve replenishment</h2><span class="eye" id="replsub">plan only</span></div>
+  <div class="note">Keep the warmed reserve topped up so replacements never run dry. This is a <b>plan only — nothing is bought.</b> On execute, the pipeline buys mailbox slots ($3 each), creates inboxes, and starts the 14-day warmup.</div>
+  <div class="panel costbar" id="replbar" style="display:none"></div>
+
   <div class="sect"><h2>Renewals &amp; decisions</h2><span class="eye" id="rensub">loading…</span></div>
   <div class="note">Renewal ≈ the monthly anniversary of each inbox's Zapmail creation date. <b>Cancel burned/idle inboxes before they renew</b> so you stop paying for dead infrastructure. Healthy inboxes renew as normal.</div>
   <div class="panel costbar" id="renbar" style="display:none"></div>
@@ -230,6 +234,22 @@ function render(fleet, counts){
   updateSel();
 }
 
+async function loadReplenish(){
+  try{
+    const r=await fetch(api('/api/health-buy-plan'),{credentials:'include'}); if(!r.ok)return;
+    const d=await r.json(); if(d.error)return;
+    const M=x=>'$'+(x==null?0:x).toLocaleString();
+    const el=document.getElementById('replbar'); el.style.display='flex';
+    el.innerHTML=`
+      <div class="ci"><span class="l">Warmed reserve</span><span class="v">${d.reserve}</span></div>
+      <div class="ci"><span class="l">Target</span><span class="v">${d.target}</span></div>
+      <div class="ci"><span class="l">Deficit</span><span class="v ${d.deficit>0?'crit':''}">${d.deficit}</span></div>
+      <div class="ci"><span class="l">To provision</span><span class="v" style="font-size:14px">${d.deficit} inboxes · ${d.domains_to_buy} new domains</span></div>
+      <div class="ci"><span class="l">Cost</span><span class="v" style="font-size:14px">${M(d.domain_cost_onetime)} once + ${M(d.mailbox_cost_mo)}/mo</span></div>
+      <div class="ci big"><span class="l">Zapmail wallet</span><span class="v" style="font-size:17px">${M(d.wallet_balance)}${d.auto_recharge?' · auto':''}</span></div>`;
+    document.getElementById('replsub').textContent = d.deficit>0 ? `${d.deficit} short of ${d.target} · ${d.ready_domains} domains ready` : 'at target';
+  }catch(e){}
+}
 let RENEWALS=null, renFilter='urgent';
 async function loadRenewals(refresh){
   const sub=document.getElementById('rensub'); sub.textContent = refresh?'re-pulling Zapmail…':'loading…';
@@ -462,7 +482,7 @@ document.getElementById('filters').onclick = e=>{
   document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed','false'));
   b.setAttribute('aria-pressed','true'); filter=b.dataset.f; render(FLEET,{});
 };
-document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); loadRenewals(); };
+document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); loadRenewals(); loadReplenish(); };
 document.getElementById('renfilters').onclick = e=>{
   const b=e.target.closest('.chip'); if(!b)return;
   document.querySelectorAll('#renfilters .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
@@ -508,6 +528,7 @@ setupSelection();
 load();
 loadReplacements();
 loadRenewals();
+loadReplenish();
 </script>
 </body>
 </html>

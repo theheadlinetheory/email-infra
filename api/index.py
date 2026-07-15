@@ -248,6 +248,20 @@ def health_replace():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-buy-plan")
+def health_buy_plan():
+    """Dry-run plan to replenish the warmed reserve. ?target=N. Buys nothing."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import health_buy as hb
+        target = int(request.args.get("target", hb.DEFAULT_TARGET))
+        return _cors(jsonify(hb.plan_replenish(target)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/smartlead-jwt-status")
 def smartlead_jwt_status():
     """Diagnostic for the SmartLead token / auto-refresh. Booleans only."""
