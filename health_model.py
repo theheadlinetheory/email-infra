@@ -163,7 +163,15 @@ def score_inbox(signals, cfg=None):
         trip = _worse(trip, AT_RISK); reasons.append("SMTP disconnected")
 
     if bounce is not None and bounce >= cfg["bounce_burn"]:
-        trip = BURNED; reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_burn']}%")
+        # High bounce only means a DEAD inbox if replies have also dried up.
+        # High bounce + healthy reply = the inbox is landing; the bounces are a
+        # bad lead list, not a burned inbox -> at-risk / check the list, don't cancel.
+        if reply is not None and reply > cfg["reply_risk"]:
+            trip = _worse(trip, AT_RISK)
+            reasons.append(f"bounce {bounce:.1f}% but reply {reply:.2f}% - check lead list")
+        else:
+            trip = BURNED
+            reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_burn']}% + low reply")
     elif bounce is not None and bounce >= cfg["bounce_risk"]:
         trip = _worse(trip, AT_RISK); reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_risk']}%")
 
