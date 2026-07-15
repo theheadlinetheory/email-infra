@@ -134,6 +134,12 @@ def score_inbox(signals, cfg=None):
         return {"score": None, "status": WARMING, "label": STATUS_LABEL[WARMING],
                 "subscores": {}, "reasons": ["in warmup period"]}
 
+    # --- not in an active campaign -> idle: it isn't sending, so a 0% reply is
+    #     expected and meaningless. Don't score it on reply/bounce. ---
+    if signals.get("in_campaign") is False:
+        return {"score": None, "status": IDLE, "label": STATUS_LABEL[IDLE],
+                "subscores": {}, "reasons": ["not in a campaign — idle"]}
+
     # --- idle: sent nothing at all — can't be measured, and may be paid-for waste ---
     sent = signals.get("sent_3d") or 0
     if sent == 0:

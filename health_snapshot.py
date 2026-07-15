@@ -56,6 +56,7 @@ def build_fleet_from_overview(overview: dict) -> list[dict]:
             "smtp_ok": ad.get("smtp_ok"),
             "warmup_reputation": _num(ad.get("warmup_reputation")),
             "campaigns": ad.get("campaign_names") or [],
+            "in_campaign": ad.get("in_campaign"),
         }
 
     # client A/B groups = production
@@ -117,6 +118,7 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         sig = hm.rolling(rows, days=3)
         sig["in_warmup"] = r["in_warmup"]
         sig["smtp_ok"] = r["smtp_ok"]
+        sig["in_campaign"] = r["in_campaign"]
         res = hm.score_inbox(sig, cfg)
         counts[res["status"]] = counts.get(res["status"], 0) + 1
         status_rows.append({
