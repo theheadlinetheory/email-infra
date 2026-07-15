@@ -59,30 +59,43 @@ def plan_removal(emails: list[str]) -> dict:
             "mailbox_ids": [r["mailbox_id"] for r in resolved]}
 
 
-def schedule_removal(emails: list[str], dry_run: bool = True) -> dict:
-    """Schedule burned mailboxes for removal at next renewal.
+def draft_zapmail_message(emails: list[str]) -> str:
+    """A ready-to-send Zapmail support message requesting billing optimization
+    for the given mailboxes (Zapmail adjusts billing on their backend once the
+    mailboxes are scheduled for deletion)."""
+    lines = "\n".join(emails)
+    return (f"Hi Zapmail team — please optimize the billing on our subscriptions. "
+            f"The following {len(emails)} mailbox(es) have been scheduled for deletion "
+            f"from our dashboard:\n\n{lines}\n\nThank you!")
 
-    dry_run=True  -> returns the plan, changes nothing (default).
-    dry_run=False -> calls Zapmail remove-on-renewal for the resolved mailboxes.
+
+def schedule_removal(emails: list[str], dry_run: bool = True) -> dict:
+    """Schedule mailboxes for removal at next renewal + draft the Zapmail message.
+
+    dry_run=True  -> returns the plan + draft, changes nothing (preview).
+    dry_run=False -> calls Zapmail remove-on-renewal, then returns the draft to send.
+    Works on ANY selection, any time — no thresholds, no date gating.
     """
     plan = plan_removal(emails)
     ids = plan["mailbox_ids"]
+    resolved_emails = [r["email"] for r in plan["resolved"]]
+    draft = draft_zapmail_message(resolved_emails or emails)
+
     if dry_run:
-        return {"dry_run": True, "would_remove": len(ids), **plan}
+        return {"dry_run": True, "would_remove": len(ids), "draft": draft, **plan}
 
     if not ids:
-        return {"dry_run": False, "removed": 0, "error": "no mailbox ids resolved", **plan}
+        return {"dry_run": False, "removed": 0, "error": "no mailbox ids resolved",
+                "draft": draft, **plan}
 
     result = zm.zm_remove_on_renewal(ids)
-    # audit trail (reuses the existing monitor_log table)
     try:
         store.log_monitor_event("health_remove_on_renewal", {
-            "emails": [r["email"] for r in plan["resolved"]],
-            "mailbox_ids": ids, "zapmail_response": result,
+            "emails": resolved_emails, "mailbox_ids": ids, "zapmail_response": result,
         })
     except Exception:
         pass
-    return {"dry_run": False, "removed": len(ids), "zapmail": result, **plan}
+    return {"dry_run": False, "removed": len(ids), "zapmail": result, "draft": draft, **plan}
 
 
 def burned_emails() -> list[str]:
