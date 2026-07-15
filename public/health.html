@@ -500,8 +500,8 @@ function renderAtRisk(){
   const tb=document.getElementById('atrisklist'); if(!tb) return;
   const show = atriskExpanded ? items : items.slice(0, COLLAPSE_N);
   tb.innerHTML = items.length ? show.map(x=>`
-    <tr>
-      <td><input type="checkbox" class="rchk" data-e="${x.email}" ${recSel.has(x.email)?'checked':''}></td>
+    <tr onclick="rowToggle(event,'${x.email}','rec')" style="cursor:pointer">
+      <td><input type="checkbox" class="rchk" data-e="${x.email}" ${recSel.has(x.email)?'checked':''} style="pointer-events:none"></td>
       <td><div class="em">${x.email}</div><div class="dom">${x.domain||''}</div></td>
       <td>${x.client||'<span class="dom">—</span>'}</td>
       <td class="num">${x.reply_3d==null?'—':x.reply_3d+'%'}</td>
@@ -536,8 +536,8 @@ function renderBurnedList(){
   tb.innerHTML = burned.length ? (show.map(x=>{
       const d=ren[x.email];
       const rcell = d==null?'—':(d<=5?`<span style="color:var(--crit)">in ${d}d</span>`:'in '+d+'d');
-      return `<tr>
-        <td><input type="checkbox" class="chk" data-e="${x.email}" ${selected.has(x.email)?'checked':''}></td>
+      return `<tr onclick="rowToggle(event,'${x.email}','burn')" style="cursor:pointer">
+        <td><input type="checkbox" class="chk" data-e="${x.email}" ${selected.has(x.email)?'checked':''} style="pointer-events:none"></td>
         <td><div class="em">${x.email}</div><div class="dom">${x.domain||''}</div></td>
         <td>${x.client||'<span class="dom">—</span>'}</td>
         <td class="num" style="color:var(--crit)">${x.bounce_3d==null?'—':x.bounce_3d+'%'}</td>
@@ -554,6 +554,15 @@ function updateSel(){
     const b=document.getElementById(id); if(b) b.disabled = selected.size===0;
   });
 }
+// bulletproof selection: whole row is clickable, drives the set directly
+// (independent of checkbox click-handling, delegation, or DOM nesting)
+window.rowToggle = function(ev, email, kind){
+  const set = kind==='rec' ? recSel : selected;
+  set.has(email) ? set.delete(email) : set.add(email);
+  const cb = ev.currentTarget.querySelector('input[type=checkbox]');
+  if(cb) cb.checked = set.has(email);
+  kind==='rec' ? updateRecSel() : updateSel();
+};
 
 function on(id, fn){ const e=document.getElementById(id); if(e) e.onclick=fn; }
 setupSelection();   // FIRST — checkbox selection must never be blocked by later wiring
