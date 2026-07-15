@@ -206,6 +206,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <button class="tab" onclick="showTab('acquisition')">Acquisition</button>
     <button class="tab" onclick="showTab('maintenance')">Maintenance</button>
     <button class="tab" onclick="showTab('domains')">Domains</button>
+    <button class="tab" onclick="showTab('health')">Health</button>
 </div>
 
 <div id="sync-toast" class="sync-toast hidden">
@@ -218,6 +219,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="sync-eta" id="sync-eta"></div>
 </div>
 <div id="loading" class="loading">Loading dashboard...</div>
+
+<div id="health-tab" style="display:none;">
+    <iframe id="health-frame" title="Inbox Health" style="width:100%;height:calc(100vh - 150px);border:1px solid #1e293b;border-radius:12px;background:#0b0e13;"></iframe>
+</div>
 
 <div id="clients-tab" style="display:none;">
     <div class="stats-row" id="client-stats"></div>
@@ -4302,12 +4307,13 @@ function showTab(tab) {
     document.querySelectorAll('.tab').forEach(function(t) {
         if (t.textContent.trim().toLowerCase() === (tab === 'clients' ? 'clients' : tab)) t.classList.add('active');
     });
-    ['clients', 'acquisition', 'maintenance', 'domains'].forEach(function(id) {
+    ['clients', 'acquisition', 'maintenance', 'domains', 'health'].forEach(function(id) {
         var show = tab === id;
         document.getElementById(id + '-tab').style.display = show ? (id === 'domains' ? 'flex' : 'block') : 'none';
     });
     if (tab === 'maintenance') renderMaintenance();
     if (tab === 'domains') renderDomainsTab();
+    if (tab === 'health') { var f = document.getElementById('health-frame'); if (f && !f.src) f.src = '/health.html'; }
 }
 
 function statBox(val, label, cls) { return '<div class="stat-box"><div class="stat-value ' + (cls || '') + '">' + val + '</div><div class="stat-label">' + label + '</div></div>'; }
