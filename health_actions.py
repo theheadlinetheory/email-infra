@@ -60,13 +60,15 @@ def plan_removal(emails: list[str]) -> dict:
 
 
 def draft_zapmail_message(emails: list[str]) -> str:
-    """A ready-to-send Zapmail support message requesting billing optimization
-    for the given mailboxes (Zapmail adjusts billing on their backend once the
-    mailboxes are scheduled for deletion)."""
+    """Ready-to-send Zapmail support message asking them to delete the mailboxes
+    AND optimize billing — so it can be handled in one message (no manual UI step
+    needed if support does it). Includes the domains for quick lookup."""
     lines = "\n".join(emails)
-    return (f"Hi Zapmail team — please optimize the billing on our subscriptions. "
-            f"The following {len(emails)} mailbox(es) have been scheduled for deletion "
-            f"from our dashboard:\n\n{lines}\n\nThank you!")
+    domains = sorted({e.split("@")[-1] for e in emails if "@" in e})
+    return (f"Hi Zapmail team — we'd like to cancel the following {len(emails)} mailbox(es) "
+            f"(they're burnt / no longer in use). Could you please delete them and optimize "
+            f"the billing on our subscriptions accordingly?\n\n{lines}\n\n"
+            f"Domains ({len(domains)}): {', '.join(domains)}\n\nThank you!")
 
 
 def schedule_removal(emails: list[str], dry_run: bool = True) -> dict:

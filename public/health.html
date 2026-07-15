@@ -604,7 +604,7 @@ async function burn(confirm){
 }
 function showZapmailDraft(text, scheduled){
   const dr=document.getElementById('zapmaildraft');
-  dr.innerHTML = `<div class="note" style="margin:0 0 6px"><b>To cancel these — 2 steps</b> (Zapmail has no delete API): &nbsp;<b>1)</b> delete these mailboxes in your <b>Zapmail dashboard</b>, then &nbsp;<b>2)</b> paste the message below into <b>Zapmail support</b> so they optimize your billing:</div>
+  dr.innerHTML = `<div class="note" style="margin:0 0 6px"><b>Send this to Zapmail support</b> — it asks them to delete these mailboxes <b>and</b> optimize the billing in one message (Zapmail has no delete API, so support handles it). If they ask you to delete them yourself first, do it in your Zapmail dashboard, then send this:</div>
     <textarea id="draftbox" readonly style="width:100%;height:150px;font-family:var(--mono);font-size:12px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:8px;padding:10px;box-sizing:border-box"></textarea>
     <button class="btn sm" id="copydraft" style="margin-top:6px">Copy for Zapmail</button>`;
   const box=document.getElementById('draftbox'); box.value=text;
