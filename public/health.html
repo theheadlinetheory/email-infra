@@ -555,26 +555,27 @@ function updateSel(){
   });
 }
 
-document.getElementById('filters').onclick = e=>{
+function on(id, fn){ const e=document.getElementById(id); if(e) e.onclick=fn; }
+setupSelection();   // FIRST — checkbox selection must never be blocked by later wiring
+on('filters', e=>{
   const b=e.target.closest('.chip'); if(!b)return;
   document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed','false'));
   b.setAttribute('aria-pressed','true'); filter=b.dataset.f; render(FLEET,{});
-};
-document.getElementById('refresh').onclick = ()=>{ load(); loadReplacements(); loadRenewals(); loadReplenish(); };
-document.getElementById('renfilters').onclick = e=>{
+});
+on('refresh', ()=>{ load(); loadReplacements(); loadRenewals(); loadReplenish(); });
+on('renfilters', e=>{
   const b=e.target.closest('.chip'); if(!b)return;
   document.querySelectorAll('#renfilters .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
   b.setAttribute('aria-pressed','true'); renFilter=b.dataset.rf; renderRenewals();
-};
-document.getElementById('renrefresh').onclick = ()=>loadRenewals(true);
-
-document.getElementById('snap').onclick = async ()=>{
+});
+on('renrefresh', ()=>loadRenewals(true));
+on('snap', async ()=>{
   const el=document.getElementById('planmsg'); el.className='msg'; el.textContent='Running snapshot (pulling SmartLead)…';
   try{ const r=await fetch(api('/api/health-snapshot'),{method:'POST',credentials:'include'}); const d=await r.json();
     el.textContent = d.ok ? `Snapshot done: ${d.inboxes} inboxes — ${JSON.stringify(d.counts)}` : 'Error: '+(d.error||'');
     load();
   }catch(e){ el.textContent='Error: '+e; }
-};
+});
 
 async function burn(confirm){
   const emails=[...selected];
@@ -605,28 +606,27 @@ function showZapmailDraft(text, scheduled){
       .catch(()=>{ try{ document.execCommand('copy'); document.getElementById('copydraft').textContent='Copied ✓'; }catch(e){} });
   };
 }
-document.getElementById('selall').onclick = ()=>{
+on('selall', ()=>{
   const burned=(FLEET||[]).filter(x=>x.status==='burned');
   const allSel = burned.length && burned.every(x=>selected.has(x.email));
   burned.forEach(x=> allSel ? selected.delete(x.email) : selected.add(x.email));  // toggle
   render(FLEET||[], {});
-};
-document.getElementById('replacebtn').onclick = flagReplace;
-document.getElementById('recselall').onclick = ()=>{
+});
+on('replacebtn', flagReplace);
+on('recselall', ()=>{
   const items=(FLEET||[]).filter(x=>x.status==='at_risk');
   const all=items.length && items.every(x=>recSel.has(x.email));
   items.forEach(x=> all?recSel.delete(x.email):recSel.add(x.email));
   renderAtRisk(); updateRecSel();
-};
-document.getElementById('recoverbtn').onclick = ()=>{
+});
+on('recoverbtn', ()=>{
   if(recSel.size && confirm(`Put ${recSel.size} at-risk inbox(es) back on warm-up in SmartLead?`)) recover(true);
-};
-document.getElementById('planbtn').onclick = ()=>burn(false);
-document.getElementById('confirmbtn').onclick = ()=>{
+});
+on('planbtn', ()=>burn(false));
+on('confirmbtn', ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
-};
+});
 
-setupSelection();
 load();
 loadReplacements();
 loadRenewals();
