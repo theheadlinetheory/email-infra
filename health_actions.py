@@ -77,25 +77,23 @@ def schedule_removal(emails: list[str], dry_run: bool = True) -> dict:
     Works on ANY selection, any time — no thresholds, no date gating.
     """
     plan = plan_removal(emails)
-    ids = plan["mailbox_ids"]
     resolved_emails = [r["email"] for r in plan["resolved"]]
     draft = draft_zapmail_message(resolved_emails or emails)
 
     if dry_run:
-        return {"dry_run": True, "would_remove": len(ids), "draft": draft, **plan}
+        return {"dry_run": True, "would_remove": len(plan["resolved"]), "draft": draft, **plan}
 
-    if not ids:
-        return {"dry_run": False, "removed": 0, "error": "no mailbox ids resolved",
-                "draft": draft, **plan}
-
-    result = zm.zm_remove_on_renewal(ids)
+    # Zapmail exposes NO public API to delete/schedule mailboxes — per Zapmail
+    # support, deletion is done from the Zapmail dashboard, then they optimize
+    # billing from the message. So we record the intent and hand back the list +
+    # message; the operator finishes in the Zapmail UI. (Don't fake a "removed".)
     try:
-        store.log_monitor_event("health_remove_on_renewal", {
-            "emails": resolved_emails, "mailbox_ids": ids, "zapmail_response": result,
-        })
+        store.log_monitor_event("health_flag_cancel", {
+            "emails": resolved_emails, "mailbox_ids": plan["mailbox_ids"]})
     except Exception:
         pass
-    return {"dry_run": False, "removed": len(ids), "zapmail": result, "draft": draft, **plan}
+    return {"dry_run": False, "flagged": len(resolved_emails), "manual": True,
+            "draft": draft, **plan}
 
 
 def burned_emails() -> list[str]:
