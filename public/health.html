@@ -135,6 +135,24 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <tbody id="burnedlist"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
   </table></div>
 
+  <div id="planmsg"></div>
+
+  <div class="sect"><h2>At-risk — recover</h2><span class="eye" id="atrisksub"></span></div>
+  <div class="note">Declining but not dead. Put them <b>back on warm-up</b> to rebuild reputation. Also reduce/pause them in their SmartLead campaign so they warm without burning further (reallocation is UI-only).</div>
+  <div class="panel"><div class="cqbar">
+    <div class="stat"><span class="l">At-risk</span><span class="v" style="color:var(--serious)" id="atriskcount">0</span></div>
+    <div class="stat"><span class="l">Selected</span><span class="v" id="recselcount">0</span></div>
+    <div class="act">
+      <button class="btn sm" id="recselall">Select all</button>
+      <button class="btn sm" id="recoverbtn" disabled>Put back to warm-up</button>
+    </div>
+  </div></div>
+  <div class="panel tablewrap" style="margin-top:10px"><table>
+    <thead><tr><th style="width:36px"></th><th>Inbox / domain</th><th>Client</th><th class="num">Reply</th><th class="num">Bounce</th><th class="num">Score</th></tr></thead>
+    <tbody id="atrisklist"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+  </table></div>
+  <div id="recmsg"></div>
+
   <div id="planmsg2"></div>
   <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
   <div class="note"><b>Reserve-first:</b> when you flag a burned inbox, assign a <b>pre-warmed reserve inbox instantly (0-day)</b> if any are ready — no waiting. Only <b>warm a new one (14 days, cannot send)</b> when the reserve runs low; that path stays locked until warmed. Either way, after swapping, cancel the old inbox. Nothing gets started and forgotten.</div>
@@ -197,6 +215,9 @@ const RANK = {burned:5,at_risk:4,watch:3,healthy:2,warming:1,insufficient:0,idle
 const LABEL = {healthy:'Healthy',watch:'Watch',at_risk:'At-risk',burned:'Burned',warming:'Warming',insufficient:'Low-vol',idle:'Idle'};
 let FLEET = [], filter = 'all';
 const selected = new Set();
+const recSel = new Set();
+let burnedExpanded = false, renExpanded = false, atriskExpanded = false;
+const COLLAPSE_N = 6;
 
 async function load(){
   try{
@@ -223,6 +244,7 @@ function render(fleet, counts){
   document.getElementById('burnedsub').textContent = burned.length ? burned.length+' to review' : 'none 🎉';
   // aux sections must never break the core table + selection below
   try { renderBurnedList(); } catch(e){ console.error('renderBurnedList', e); }
+  try { renderAtRisk(); } catch(e){ console.error('renderAtRisk', e); }
   try { renderCost({burned: c('burned'), idle: c('idle')}); } catch(e){ console.error('renderCost', e); }
   try { renderClients(); } catch(e){ console.error('renderClients', e); }
 
@@ -272,7 +294,8 @@ function renderRenewals(){
   if(renFilter==='urgent') f=rows.filter(r=>['burned','idle'].includes(r.status)&&r.days_until!=null&&r.days_until<=7);
   else if(renFilter!=='all') f=rows.filter(r=>r.status===renFilter);
   document.getElementById('rensub').textContent=`${f.length} shown${RENEWALS.fetched_at?' · pulled '+RENEWALS.fetched_at.slice(0,10):''}`;
-  document.getElementById('renrows').innerHTML = f.length? f.slice(0,400).map(r=>`
+  const show = renExpanded ? f.slice(0,400) : f.slice(0, COLLAPSE_N);
+  document.getElementById('renrows').innerHTML = f.length? (show.map(r=>`
     <tr>
       <td><div class="em">${r.email}</div><div class="dom">${r.domain||''}</div></td>
       <td>${r.client||'<span class="dom">—</span>'}</td>
@@ -280,7 +303,8 @@ function renderRenewals(){
       <td class="num">${r.renewal_date||'—'}<div class="dom">${r.days_until!=null?'in '+r.days_until+'d':''}</div></td>
       <td class="num">$${r.cost}</td>
       <td><span class="vpill ${r.decision_class}">${r.decision}</span></td>
-    </tr>`).join('') : '<tr><td colspan="6" class="empty">none in this filter</td></tr>';
+    </tr>`).join('') + _moreRow(6, Math.min(f.length,400), show.length, 'ren'))
+    : '<tr><td colspan="6" class="empty">none in this filter</td></tr>';
 }
 const SENDS_PER_INBOX_DAY = 15;   // Zapmail message_per_day
 const DAILY_FLOOR = 500;          // target minimum sends/day per client
@@ -437,26 +461,78 @@ async function flagReplace(){
 }
 function bindChecks(){ /* selection now handled by delegation in setupSelection() */ }
 function setupSelection(){
-  // one delegated listener on the whole document — catches every .chk checkbox
-  // (burned list AND the all-inboxes table), survives every re-render
+  // one delegated listener on the whole document — catches every checkbox,
+  // survives every re-render. .chk = cancel/flag (burned); .rchk = recover (at-risk)
   document.addEventListener('change', e=>{
-    const t=e.target;
-    if(!t.classList || !t.classList.contains('chk')) return;
-    const em=t.dataset.e;
-    t.checked ? selected.add(em) : selected.delete(em);
-    // keep the twin checkbox (same email in both tables) in sync
-    document.querySelectorAll(`.chk[data-e="${CSS.escape(em)}"]`).forEach(c=>{ c.checked=t.checked; });
-    updateSel();
+    const t=e.target; if(!t.classList) return;
+    if(t.classList.contains('chk')){
+      const em=t.dataset.e;
+      t.checked ? selected.add(em) : selected.delete(em);
+      document.querySelectorAll(`.chk[data-e="${CSS.escape(em)}"]`).forEach(c=>{ c.checked=t.checked; });
+      updateSel();
+    } else if(t.classList.contains('rchk')){
+      const em=t.dataset.e;
+      t.checked ? recSel.add(em) : recSel.delete(em);
+      updateRecSel();
+    }
   });
+  // collapse toggles (delegated so they survive re-renders)
+  document.addEventListener('click', e=>{
+    const b=e.target.closest('[data-toggle]'); if(!b) return;
+    const w=b.dataset.toggle;
+    if(w==='burned'){ burnedExpanded=!burnedExpanded; renderBurnedList(); }
+    else if(w==='ren'){ renExpanded=!renExpanded; renderRenewals(); }
+    else if(w==='atrisk'){ atriskExpanded=!atriskExpanded; renderAtRisk(); }
+  });
+}
+function _moreRow(cols, total, shown, which){
+  if(total<=COLLAPSE_N) return '';
+  const exp = shown>=total;
+  return `<tr><td colspan="${cols}" style="text-align:center;padding:10px">
+    <button class="btn sm" data-toggle="${which}">${exp?'Show fewer ▲':('Show all '+total+' ▼')}</button></td></tr>`;
+}
+function renderAtRisk(){
+  const items=(FLEET||[]).filter(x=>x.status==='at_risk')
+    .sort((a,b)=>(a.score??999)-(b.score??999));
+  document.getElementById('atriskcount').textContent=items.length;
+  document.getElementById('atrisksub').textContent = items.length? items.length+' declining' : 'none';
+  const tb=document.getElementById('atrisklist'); if(!tb) return;
+  const show = atriskExpanded ? items : items.slice(0, COLLAPSE_N);
+  tb.innerHTML = items.length ? show.map(x=>`
+    <tr>
+      <td><input type="checkbox" class="rchk" data-e="${x.email}" ${recSel.has(x.email)?'checked':''}></td>
+      <td><div class="em">${x.email}</div><div class="dom">${x.domain||''}</div></td>
+      <td>${x.client||'<span class="dom">—</span>'}</td>
+      <td class="num">${x.reply_3d==null?'—':x.reply_3d+'%'}</td>
+      <td class="num" style="color:var(--serious)">${x.bounce_3d==null?'—':x.bounce_3d+'%'}</td>
+      <td class="num score" style="color:var(--serious)">${x.score==null?'—':x.score}</td>
+    </tr>`).join('') + _moreRow(6, items.length, show.length, 'atrisk')
+    : '<tr><td colspan="6" class="empty">none at-risk 🎉</td></tr>';
+}
+function updateRecSel(){
+  const el=document.getElementById('recselcount'); if(el) el.textContent=recSel.size;
+  const b=document.getElementById('recoverbtn'); if(b) b.disabled=recSel.size===0;
+}
+async function recover(confirm){
+  const emails=[...recSel]; if(!emails.length) return;
+  const el=document.getElementById('recmsg'); el.className='msg'; el.textContent = confirm?'Re-enabling warm-up…':'Planning…';
+  try{
+    const r=await fetch(api('/api/health-recover'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({emails,confirm})});
+    const d=await r.json();
+    if(d.error){ el.textContent='Error: '+d.error; return; }
+    if(d.dry_run){ el.textContent=`Plan: put ${d.would_recover} inbox(es) back on warm-up`+(d.unresolved?.length?` · ${d.unresolved.length} not matched`:'')+'. Click Confirm.'; }
+    else{ el.textContent=`Warm-up re-enabled on ${d.recovered}. Now reduce/pause them in the SmartLead campaign.`; recSel.clear(); load(); }
+  }catch(e){ el.textContent='Error: '+e; }
 }
 function renderBurnedList(){
   const burned=(FLEET||[]).filter(x=>x.status==='burned');
   const ren={}; if(RENEWALS&&RENEWALS.rows) RENEWALS.rows.forEach(r=>ren[r.email]=r.days_until);
   const tb=document.getElementById('burnedlist'); if(!tb) return;
   document.getElementById('burnedcount').textContent = burned.length;
-  tb.innerHTML = burned.length ? burned
-    .sort((a,b)=>(ren[a.email]??999)-(ren[b.email]??999))
-    .map(x=>{
+  const sorted = burned.sort((a,b)=>(ren[a.email]??999)-(ren[b.email]??999));
+  const show = burnedExpanded ? sorted : sorted.slice(0, COLLAPSE_N);
+  tb.innerHTML = burned.length ? (show.map(x=>{
       const d=ren[x.email];
       const rcell = d==null?'—':(d<=5?`<span style="color:var(--crit)">in ${d}d</span>`:'in '+d+'d');
       return `<tr>
@@ -468,7 +544,8 @@ function renderBurnedList(){
         <td class="num">${rcell}</td>
         <td class="num">$3</td>
       </tr>`;
-    }).join('') : '<tr><td colspan="7" class="empty">no burned inboxes 🎉</td></tr>';
+    }).join('') + _moreRow(7, burned.length, show.length, 'burned'))
+    : '<tr><td colspan="7" class="empty">no burned inboxes 🎉</td></tr>';
 }
 function updateSel(){
   const sc=document.getElementById('selcount'); if(sc) sc.textContent=selected.size;
@@ -519,6 +596,15 @@ document.getElementById('selall').onclick = ()=>{
   render(FLEET||[], {});
 };
 document.getElementById('replacebtn').onclick = flagReplace;
+document.getElementById('recselall').onclick = ()=>{
+  const items=(FLEET||[]).filter(x=>x.status==='at_risk');
+  const all=items.length && items.every(x=>recSel.has(x.email));
+  items.forEach(x=> all?recSel.delete(x.email):recSel.add(x.email));
+  renderAtRisk(); updateRecSel();
+};
+document.getElementById('recoverbtn').onclick = ()=>{
+  if(recSel.size && confirm(`Put ${recSel.size} at-risk inbox(es) back on warm-up in SmartLead?`)) recover(true);
+};
 document.getElementById('planbtn').onclick = ()=>burn(false);
 document.getElementById('confirmbtn').onclick = ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);

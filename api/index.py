@@ -248,6 +248,25 @@ def health_replace():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-recover", methods=["POST", "OPTIONS"])
+def health_recover():
+    """Put at-risk inboxes back on warm-up. Body {emails:[...], confirm:bool}."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or []
+    if not emails:
+        return _cors(jsonify({"error": "emails required"})), 400
+    try:
+        import health_recover as hrec
+        return _cors(jsonify(hrec.recover(emails, dry_run=not body.get("confirm"))))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-buy-plan")
 def health_buy_plan():
     """Dry-run plan to replenish the warmed reserve. ?target=N. Buys nothing."""
