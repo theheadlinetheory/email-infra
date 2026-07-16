@@ -76,7 +76,9 @@ def fetch_tag_mappings():
         except Exception as e:
             print(f"  GQL error at offset {offset}: {e}")
             break
-        rows = (result or {}).get("data", {}).get("email_account_tag_mappings", [])
+        # GraphQL errors return {"errors":[...], "data": null} — `.get("data", {})`
+        # would yield None (key present) and crash; coerce null -> {}.
+        rows = ((result or {}).get("data") or {}).get("email_account_tag_mappings", [])
         for row in rows:
             acc_id = row["email_account_id"]
             tag = row.get("tag", {})
@@ -99,7 +101,7 @@ def fetch_health_metrics(start_date=None, end_date=None):
         )
         if not r or r.status_code != 200:
             return {}
-        metrics = r.json().get("data", {}).get("email_health_metrics", [])
+        metrics = (r.json().get("data") or {}).get("email_health_metrics", [])
         return {m["from_email"]: m for m in metrics}
     except Exception as e:
         print(f"  Health metrics error: {e}")

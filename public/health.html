@@ -201,10 +201,10 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <thead><tr>
       <th></th><th>Inbox / Domain</th><th>Source</th><th>Client</th><th>Grp</th>
       <th>Status</th><th class="num">Score</th>
-      <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Sent 3d</th>
+      <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Placement</th><th class="num">Sent 3d</th>
       <th>Why</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
   </table></div>
 </div>
 
@@ -377,6 +377,7 @@ function row(x){
     <td class="num">${pct(x.reply_3d)}</td>
     <td class="num" style="color:${x.bounce_3d>=3?'var(--crit)':x.bounce_3d>=2.5?'var(--serious)':'inherit'}">${pct(x.bounce_3d)}</td>
     <td class="num">${pct(x.ooo_3d)}</td>
+    <td class="num" style="color:${x.placement==null?'inherit':x.placement<45?'var(--crit)':x.placement<65?'var(--serious)':'inherit'}">${x.placement==null?'—':(+x.placement).toFixed(0)+'%'}</td>
     <td class="num">${x.sent_3d??0}</td>
     <td class="reasons">${reasonText(x.reasons)}</td>
   </tr>`;

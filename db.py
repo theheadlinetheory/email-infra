@@ -663,10 +663,19 @@ def get_health_daily(email: str, limit: int = 14) -> list[dict]:
 
 def get_health_daily_bulk(since_date: str) -> dict:
     """All daily rows since `since_date` (YYYY-MM-DD), grouped email -> [rows].
-    One request instead of one-per-inbox — used by the snapshot scorer."""
-    rows = _request("GET", "/inbox_health_daily", params={
-        "select": "*", "date": f"gte.{since_date}", "order": "date.desc",
-    })
+    Paginated past PostgREST's 1000-row cap — with 1500+ inboxes a single day
+    already exceeds 1000 rows, so without paging the scorer would silently miss
+    ~a third of the fleet's history (and their placement)."""
+    rows, offset = [], 0
+    while True:
+        page = _request("GET", "/inbox_health_daily", params={
+            "select": "*", "date": f"gte.{since_date}",
+            "order": "date.desc", "limit": "1000", "offset": str(offset),
+        })
+        rows.extend(page)
+        if len(page) < 1000:
+            break
+        offset += 1000
     out: dict[str, list] = {}
     for r in rows:
         out.setdefault(r["email"], []).append(r)
