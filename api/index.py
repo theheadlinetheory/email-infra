@@ -203,6 +203,38 @@ def health_snapshot():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-placement", methods=["GET", "POST", "OPTIONS"])
+def health_placement():
+    """Pull SmartLead warmup inbox-placement into today's daily rows, then it
+    feeds the model on the next snapshot.
+
+    A full fleet sweep is ~9 min (180/min SmartLead cap) so it can't finish in
+    one 60s function — advance it in chunks:
+        /api/health-placement?limit=150&offset=0   -> {..., next_offset: 150}
+        /api/health-placement?limit=150&offset=150  -> ...
+    Loops until next_offset is null. Optional &rescore=1 re-runs the snapshot
+    after the chunk so the new placement is scored immediately.
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not (_check_auth() or _is_vercel_cron()):
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_placement as hp
+        offset = int(request.args.get("offset", 0))
+        limit = int(request.args.get("limit", 150))
+        res = hp.collect(offset=offset, limit=limit)
+        if request.args.get("rescore") in ("1", "true"):
+            import health_snapshot as hs
+            res["rescore"] = hs.snapshot_daily().get("counts")
+        return _cors(jsonify(res))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-burn", methods=["POST", "OPTIONS"])
 def health_burn():
     """Plan or execute remove-on-renewal for burned inboxes.

@@ -624,8 +624,19 @@ def sl_set_warmup(account_id):
 # ─── SMARTLEAD INTERNAL API (tags, requires JWT) ───
 
 def sl_internal_headers():
+    # Prefer the auto-refreshing token (minted from SMARTLEAD_LOGIN_EMAIL/PASSWORD)
+    # so the sync's GraphQL + internal analytics calls don't fail on a stale static
+    # JWT. Falls back to the SMARTLEAD_JWT env var when no login creds are set.
+    jwt = SMARTLEAD_JWT
+    try:
+        import health_smartlead as _hsl
+        fresh = _hsl.get_jwt()
+        if fresh:
+            jwt = fresh
+    except Exception:
+        pass
     return {
-        "Authorization": f"Bearer {SMARTLEAD_JWT}",
+        "Authorization": f"Bearer {jwt}",
         "Content-Type": "application/json"
     }
 

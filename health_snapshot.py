@@ -99,7 +99,11 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         "client": r["client"], "group_letter": r["group_letter"],
         "source": r["source"], "domain": r["domain"],
         "reply_rate": r["reply_rate"], "bounce_rate": r["bounce_rate"],
-        "ooo_rate": None, "placement": None,
+        "ooo_rate": None,
+        # NOTE: `placement` is deliberately omitted — it's written separately by
+        # health_placement.py (SmartLead warmup landing). Sending placement:None
+        # here would clobber it on every snapshot (merge-duplicates only touches
+        # the columns present in the payload).
         "sent": r["sent"], "smtp_ok": r["smtp_ok"],
         "warmup_reputation": r["warmup_reputation"],
     } for r in fleet]
