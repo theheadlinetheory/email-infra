@@ -277,7 +277,7 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
             domain = email.split("@")[-1] if "@" in email else ""
             h = health.get(email, {})
             acct_camps = campaign_map.get(email, [])
-            raw_rep = a.get("warmup_details", {}).get("warmup_reputation", "?")
+            raw_rep = (a.get("warmup_details") or {}).get("warmup_reputation", "?")
             warmup_reputation = None
             if isinstance(raw_rep, str) and raw_rep.endswith("%"):
                 try:
@@ -428,7 +428,7 @@ def fetch_acq_campaign_stats(progress_cb=None):
 
         all_r = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/analytics", {"api_key": SMARTLEAD_KEY}, timeout=15)
         if all_r and all_r.status_code == 200:
-            ad = all_r.json()
+            ad = all_r.json() or {}
             total_sent = int(ad.get("sent_count", 0))
             total_opened = int(ad.get("unique_open_count", 0))
             total_replied = int(ad.get("reply_count", 0))
@@ -446,7 +446,7 @@ def fetch_acq_campaign_stats(progress_cb=None):
             for status_key in ("COMPLETED", "INPROGRESS", "STARTED"):
                 lr = _api_get(f"{SMARTLEAD_API}/campaigns/{cid}/leads",
                               {"api_key": SMARTLEAD_KEY, "limit": 1, "offset": 0, "status": status_key}, timeout=15)
-                lead_counts[status_key] = int(lr.json().get("total_leads", 0)) if lr and lr.status_code == 200 else 0
+                lead_counts[status_key] = int((lr.json() or {}).get("total_leads", 0)) if lr and lr.status_code == 200 else 0
         else:
             acct_count = 0
 
