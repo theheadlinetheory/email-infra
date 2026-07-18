@@ -140,11 +140,19 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         })
     store.upsert_health_status(status_rows)
 
-    # 3) cache the fleet for fast, read-only UI access
+    # 3) build the top-of-page "what just sank" alert feed from the same history
+    try:
+        import health_alerts as ha
+        alerts, alert_summary = ha.build_alerts(status_rows, history)
+    except Exception:
+        alerts, alert_summary = [], {}
+
+    # 4) cache the fleet for fast, read-only UI access
     fleet_out = sorted(status_rows, key=lambda x: hm.STATUS_RANK.get(x["status"], 0), reverse=True)
     store.cache_set("health_fleet", {
         "generated_at": datetime.now().isoformat(),
         "date": today, "counts": counts, "inboxes": fleet_out,
+        "alerts": alerts, "alert_summary": alert_summary,
     })
 
     return {"ok": True, "date": today, "inboxes": len(status_rows), "counts": counts}
