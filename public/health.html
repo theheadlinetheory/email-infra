@@ -102,6 +102,8 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 <div class="wrap">
   <div class="kpis" id="kpis"></div>
 
+  <div class="panel" id="alertpanel" style="display:none"></div>
+
   <div class="panel costbar" id="costbar" style="display:none"></div>
 
   <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
@@ -229,6 +231,7 @@ async function load(){
     FLEET = d.inboxes;
     document.getElementById('synced').textContent = 'snapshot ' + (d.date||'') ;
     render(FLEET, d.counts||{});
+    try { renderAlerts(d.alerts, d.alert_summary); } catch(e){ console.error('renderAlerts', e); }
   }catch(e){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>'+e+'</td></tr>'; }
 }
 
@@ -255,6 +258,26 @@ function render(fleet, counts){
   document.getElementById('rows').innerHTML = shown.length ? shown.map(row).join('')
     : '<tr><td colspan=12 class=empty>none</td></tr>';
   updateSel();
+}
+
+// Top-of-page "what just sank" feed — read-only, from the health_fleet cache.
+function renderAlerts(alerts, summary){
+  const el=document.getElementById('alertpanel'); if(!el) return;
+  alerts=alerts||[]; summary=summary||{};
+  if(!alerts.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  const rows = alerts.map(a=>{
+    const cur = `reply ${a.reply==null?'—':a.reply+'%'} · bounce ${a.bounce==null?'—':a.bounce+'%'}`;
+    const txt = a.change || cur;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 2px;border-top:1px solid var(--line)">
+      <span class="pill ${a.status}" style="flex:0 0 auto"><span class="g"></span>${LABEL[a.status]||a.status}</span>
+      <span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="em">${a.email}</span> <span class="dom">${a.client||a.domain||''}</span></span>
+      <span style="flex:0 0 auto;color:var(--crit);font-weight:600;font-size:13px" title="${a.why||''}">${txt}</span>
+    </div>`;
+  }).join('');
+  const s=summary;
+  const sub = `${s.declining||0} sinking · ${s.burned||0} burned · ${s.at_risk||0} at-risk (3d) · act on these in the sections below · sharpens as daily data accumulates`;
+  el.innerHTML = `<div class="sect" style="margin:0 0 6px"><h2>🔻 Sinking now — biggest deliverability drops</h2><span class="eye">${sub}</span></div>${rows}`;
 }
 
 async function loadReplenish(){
