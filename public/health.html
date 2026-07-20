@@ -420,8 +420,14 @@ function renderReplacements(jobs, reserve){
     const C=btnC.replace('EMAIL_ID',j.id);
     let warm='—', action='', stcls='insufficient';
     if(j.status==='flagged'){
-      warm='<span class="dom">choose source</span>';
-      action=`<button class="btn pri sm" onclick="adv(${j.id},'reserve')" ${avail<=0?'disabled title="no reserve left"':''}>Assign reserve (0d)</button> <button class="btn sm" onclick="adv(${j.id},'warm')">Warm new (14d)</button> ${C}`;
+      const isAcq = (j.client||'').toLowerCase().includes('acquisition');
+      if(isAcq){
+        warm='<span class="dom">acquisition — no reserve</span>'; stcls='burned';
+        action=`<span class="eye" style="color:var(--serious)">No spare acquisition inboxes to swap in — THT keeps no acquisition reserve (generic reserve is client-only).</span> ${C}`;
+      } else {
+        warm='<span class="dom">choose source</span>';
+        action=`<button class="btn pri sm" onclick="adv(${j.id},'reserve')" ${avail<=0?'disabled title="no reserve left"':''}>Assign reserve (0d)</button> <button class="btn sm" onclick="adv(${j.id},'warm')">Warm new (14d)</button> ${C}`;
+      }
     } else if(j.status==='reserved'){
       warm=`<span style="color:var(--good)">✓ reserve · ${j.reserve_source||''}</span>`; stcls='healthy';
       action=`<button class="btn pri sm" onclick="adv(${j.id},'swap')">Swap now</button> ${C}`;
