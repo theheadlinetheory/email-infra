@@ -14,8 +14,12 @@ using the rules agreed with Aidan (2026-07-10 call):
     short enough to catch a real dip fast.
   * A campaign/inbox with too little recent volume is NOT scored (its rates are
     statistical noise — e.g. 1 bounce out of 17 sends = 5.6%).
-  * Any single critical metric can TRIP the status on its own, even if the blended
-    score looks fine (this is what made the old weighted-only score confusing).
+  * BURNED is deliberately narrow (Tim, 2026-07-18): an inbox is burned ONLY when
+    bounce >= 3% AND reply <= 0.5% together. Low reply alone does NOT burn it (that
+    can just be a weak campaign); high bounce alone does not either (bad lead list).
+    Everything else that looks bad tops out at AT-RISK — i.e. recoverable, not
+    written off. The blended score and placement can push an inbox to At-risk but
+    can never burn it on their own.
 
 Pure module: no network, no DB. Unit-testable. Tunables live in DEFAULT_CONFIG
 and can be overridden per call (later: from the inbox_health_config table).
@@ -52,13 +56,15 @@ DEFAULT_CONFIG = {
     "ooo_full": 4.0, "ooo_zero": 0.3,          # ooo%   : >=4 great, ~0 = not landing
     "placement_full": 90.0, "placement_zero": 40.0,
 
-    # hard single-metric tripwires (override the blended score)
-    "bounce_burn": 3.0,        # 3-day bounce >= this  -> BURNED
-    "bounce_risk": 2.5,        # 3-day bounce >= this  -> at least AT_RISK
-    "reply_dead": 0.3,         # 3-day reply  <= this (with volume) -> BURNED
-    "reply_risk": 0.8,         # 3-day reply  <= this  -> at least AT_RISK
-    "placement_burn": 45.0,    # placement  <  this   -> BURNED (when known)
-    "placement_risk": 65.0,    # placement  <  this   -> at least AT_RISK (when known)
+    # BURNED requires BOTH conditions together — bounce >= bounce_burn AND
+    # reply <= reply_dead. Neither one alone burns an inbox: a low reply may just
+    # be a weak campaign, and a high bounce with live replies is a bad lead list.
+    "bounce_burn": 3.0,        # burn rule, part 1 (paired with reply <= reply_dead)
+    "bounce_risk": 2.5,        # 3-day bounce >= this (alone) -> AT_RISK
+    "reply_dead": 0.5,         # burn rule, part 2 (paired with bounce >= bounce_burn)
+    "reply_risk": 0.8,         # 3-day reply  <= this (alone) -> AT_RISK, not burned
+    "placement_burn": 45.0,    # retained for reference — placement no longer burns
+    "placement_risk": 65.0,    # placement  <  this   -> AT_RISK (when known)
 
     # status bands from the blended score
     "band_healthy": 80, "band_watch": 60, "band_atrisk": 40,
@@ -153,10 +159,12 @@ def score_inbox(signals, cfg=None):
 
     subs = sub_scores(signals, cfg)
     score = blended_score(subs, cfg)
+    # The blended score sets Healthy / Watch / At-risk only. It NEVER burns on its
+    # own — BURNED is reserved for the explicit bounce+reply rule below, so a merely
+    # weak campaign (low reply, ok bounce) stays recoverable instead of written off.
     band = (HEALTHY if score >= cfg["band_healthy"]
             else WATCH if score >= cfg["band_watch"]
-            else AT_RISK if score >= cfg["band_atrisk"]
-            else BURNED)
+            else AT_RISK)
 
     # --- single-metric tripwires: escalate status regardless of the blend ---
     trip = HEALTHY
@@ -168,28 +176,25 @@ def score_inbox(signals, cfg=None):
     if signals.get("smtp_ok") is False:
         trip = _worse(trip, AT_RISK); reasons.append("SMTP disconnected")
 
-    if bounce is not None and bounce >= cfg["bounce_burn"]:
-        # High bounce only means a DEAD inbox if replies have also dried up.
-        # High bounce + healthy reply = the inbox is landing; the bounces are a
-        # bad lead list, not a burned inbox -> at-risk / check the list, don't cancel.
-        if reply is not None and reply > cfg["reply_risk"]:
+    # THE ONLY BURN CONDITION: hard bounce AND replies dried up, together.
+    if (bounce is not None and bounce >= cfg["bounce_burn"]
+            and reply is not None and reply <= cfg["reply_dead"]):
+        trip = BURNED
+        reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_burn']}% AND "
+                       f"reply {reply:.2f}% <= {cfg['reply_dead']}% — burned")
+    else:
+        # high bounce but replies still coming = bad lead list, recoverable
+        if bounce is not None and bounce >= cfg["bounce_burn"]:
             trip = _worse(trip, AT_RISK)
-            reasons.append(f"bounce {bounce:.1f}% but reply {reply:.2f}% - check lead list")
-        else:
-            trip = BURNED
-            reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_burn']}% + low reply")
-    elif bounce is not None and bounce >= cfg["bounce_risk"]:
-        trip = _worse(trip, AT_RISK); reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_risk']}%")
-
-    if reply is not None and reply <= cfg["reply_dead"]:
-        trip = BURNED; reasons.append(f"reply {reply:.2f}% <= {cfg['reply_dead']}%")
-    elif reply is not None and reply <= cfg["reply_risk"]:
-        trip = _worse(trip, AT_RISK); reasons.append(f"reply {reply:.2f}% <= {cfg['reply_risk']}%")
-
-    if placement is not None and placement < cfg["placement_burn"]:
-        trip = BURNED; reasons.append(f"placement {placement:.0f}% < {cfg['placement_burn']}%")
-    elif placement is not None and placement < cfg["placement_risk"]:
-        trip = _worse(trip, AT_RISK); reasons.append(f"placement {placement:.0f}% < {cfg['placement_risk']}%")
+            reasons.append(f"bounce {bounce:.1f}% high but reply {(reply if reply is not None else 0):.2f}% - check lead list")
+        elif bounce is not None and bounce >= cfg["bounce_risk"]:
+            trip = _worse(trip, AT_RISK); reasons.append(f"bounce {bounce:.1f}% >= {cfg['bounce_risk']}%")
+        # low reply ALONE = possibly a weak campaign, not a dead inbox -> at-risk only
+        if reply is not None and reply <= cfg["reply_risk"]:
+            trip = _worse(trip, AT_RISK); reasons.append(f"reply {reply:.2f}% <= {cfg['reply_risk']}% (campaign or inbox — watch)")
+        # placement is a warning signal now, never a burn on its own
+        if placement is not None and placement < cfg["placement_risk"]:
+            trip = _worse(trip, AT_RISK); reasons.append(f"placement {placement:.0f}% < {cfg['placement_risk']}%")
 
     status = _worse(band, trip)
 
