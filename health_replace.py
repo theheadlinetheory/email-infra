@@ -26,6 +26,12 @@ STATE_KEY = "health_replacements"
 _ACTIVE = ("flagged", "warming", "ready", "reserved")
 
 
+def _is_acquisition(job: dict) -> bool:
+    """True if this is one of THT's own outreach inboxes (client == '(acquisition)').
+    Acquisition inboxes have no reserve — they must not be swapped with client stock."""
+    return "acquisition" in (job.get("client") or "").lower()
+
+
 def _load() -> dict:
     return store.get_state(STATE_KEY) or {"jobs": []}
 
@@ -133,6 +139,13 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
         if new_domain:
             job["new_domain"] = new_domain
     elif action == "reserve":
+        # The generic/warming reserve is CLIENT stock — never swap it into an
+        # acquisition (THT's own outreach) inbox. We keep no acquisition reserve,
+        # so there's nothing to draw from; say so instead of grabbing a client inbox.
+        if _is_acquisition(job):
+            return {"error": "No spare acquisition inboxes available — THT keeps no "
+                             "acquisition reserve. The generic/warming reserve is client "
+                             "stock only. Warm or buy a new inbox for acquisition."}
         # instant path: draw a specific pre-warmed inbox from the generic reserve
         if reserve_summary()["available"] <= 0:
             return {"error": "no ready reserve inboxes available - warm a new one instead"}
