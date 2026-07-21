@@ -512,6 +512,7 @@ async function freeUpClient(name) {
         var msg = 'Free up ' + p.inboxes + ' inbox(es) from "' + name + '"?\n\n' +
             '• Re-tag them into ' + p.target_generic + ' (back in the warmed reserve)\n' +
             '• Turn warm-up back on\n' +
+            '• Clear domain forwarding (so they stop pointing at this client\'s website)\n' +
             (p.own_active && p.own_active.length
                 ? '• Pause this client\'s own active campaign(s): ' + p.own_active.map(function(c){return c.name;}).join(', ') + '\n'
                 : '') +
@@ -525,6 +526,7 @@ async function freeUpClient(name) {
         if (d.error) { alert('Error: ' + d.error); return; }
         alert('Freed up "' + name + '"\n\n' + d.retagged + '/' + d.inboxes + ' re-tagged to ' +
               d.generic_group + '\n' + d.warmed + ' warm-up re-enabled' +
+              '\nforwarding cleared on ' + (d.forwarding_cleared || 0) + ' domain(s)' +
               (d.failed ? '\n' + d.failed + ' failed' : '') +
               (d.paused_campaigns && d.paused_campaigns.length ? '\nPaused: ' + d.paused_campaigns.join(', ') : '') +
               '\n\nRun a sync to refresh the dashboard.');
@@ -3682,6 +3684,11 @@ function renderModal() {
         html += '<option value="A">Group A</option><option value="B">Group B</option></select>';
         html += '<button onclick="_assignGenericToClient()" id="assign-client-btn" style="padding:8px 16px;font-size:13px;border-radius:6px;border:none;background:#22c55e;color:#fff;font-weight:600;cursor:pointer;">Assign</button>';
         html += '</div>';
+        html += '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;">';
+        html += '<input id="assign-client-website" type="url" placeholder="Client website (e.g. https://client.com/) — domains will forward here" ' +
+                'style="padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid #334155;background:#0f1117;color:#e2e8f0;flex:1;min-width:320px;">';
+        html += '</div>';
+        html += '<div style="margin-top:6px;font-size:11px;color:#64748b;">Sets domain forwarding so anyone who types a sending domain lands on the client\'s site. Leave blank to skip.</div>';
         html += '<div id="assign-client-status" style="margin-top:8px;font-size:12px;color:#64748b;"></div>';
         html += '</div>';
     }
@@ -3752,15 +3759,19 @@ function _assignGenericToClient() {
     var statusEl = document.getElementById('assign-client-status');
     var btn = document.getElementById('assign-client-btn');
     if (!clientName) { statusEl.innerHTML = '<span style="color:#ef4444;">Enter a client name</span>'; return; }
+    var website = (document.getElementById('assign-client-website') ? (document.getElementById('assign-client-website').value || '').trim() : '');
     var tagName = clientName + ' ' + ab;
-    if (!confirm('This will re-tag all accounts in "' + groupName + '" to "' + tagName + '".\n\nThis cannot be undone. Continue?')) return;
+    if (!confirm('This will re-tag all accounts in "' + groupName + '" to "' + tagName + '".\n\n' +
+        (website ? 'Domains will forward to: ' + website + '\n\n'
+                 : 'No website given — domain forwarding will NOT be set (prospects who type a sending domain hit nothing).\n\n') +
+        'This cannot be undone. Continue?')) return;
     btn.disabled = true;
     btn.textContent = 'Assigning...';
     statusEl.innerHTML = '<span style="color:#3b82f6;">Re-tagging accounts — this may take a minute...</span>';
     fetch('/api/assign-generic-to-client' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ group_name: groupName, client_name: clientName, ab: ab })
+        body: JSON.stringify({ group_name: groupName, client_name: clientName, ab: ab, forward_to: website })
     }).then(function(r) { return r.json(); }).then(function(res) {
         btn.disabled = false;
         btn.textContent = 'Assign';
@@ -3771,6 +3782,8 @@ function _assignGenericToClient() {
         var vColor = res.verified === res.total ? '#22c55e' : '#f59e0b';
         var vMsg = 'Verified: ' + res.verified + '/' + res.total + ' accounts confirmed as "' + esc(res.new_tag) + '"';
         if (res.missing > 0) vMsg += ' (' + res.missing + ' failed — retry or check SmartLead)';
+        if (res.forwarding_set) vMsg += ' · forwarding set on ' + res.forwarding_set + ' domain(s)';
+        else if (website) vMsg += ' · forwarding NOT set (check Zapmail)';
         statusEl.innerHTML = '<span style="color:' + vColor + ';">' + vMsg + '</span>';
         setTimeout(async function() {
             closeModal();

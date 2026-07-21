@@ -1009,6 +1009,18 @@ def assign_generic_to_client():
                 data_cache["clients"] = clients
                 store.cache_patch("overview_v2", data_cache)
 
+        # Point the group's domains at the new client's website. Zapmail's
+        # forwardTo does NOT follow a re-tag, so without this the domains keep
+        # redirecting prospects to whoever used them last.
+        forward_to = (body.get("forward_to") or "").strip()
+        fwd = None
+        if forward_to:
+            try:
+                import health_offboard as ho
+                fwd = ho.set_domain_forwarding(ho.domains_for_accounts(account_ids), forward_to)
+            except Exception as e:
+                fwd = {"ok": False, "domains": 0, "note": str(e)[:120]}
+
         return _cors(jsonify({
             "ok": verified == len(account_ids),
             "tagged": tagged,
@@ -1017,6 +1029,8 @@ def assign_generic_to_client():
             "new_tag": new_tag_name,
             "missing": len(missing),
             "errors": tag_errors[:5] if tag_errors else [],
+            "forwarding": fwd,
+            "forwarding_set": (fwd or {}).get("domains", 0),
         }))
     except Exception as e:
         import traceback
