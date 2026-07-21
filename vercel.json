@@ -6,8 +6,7 @@
     { "path": "/api/health-snapshot", "schedule": "0 13 * * *" }
   ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index.py" },
-    { "source": "/", "destination": "/api/index.py" }
+    { "source": "/api/(.*)", "destination": "/api/index.py" }
   ],
   "headers": [
     { "source": "/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] }
