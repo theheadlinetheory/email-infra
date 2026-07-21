@@ -485,8 +485,50 @@ function renderClients() {
                 '<div class="card-subtitle">Group A · ' + c.group_a_count + ' accounts</div>'
             ) +
             '<div id="card-stats-' + i + '">' + statsHtml(s) + '</div>' +
+            '<div style="padding:8px 16px 12px;text-align:right" onclick="event.stopPropagation()">' +
+                '<button class="group-btn" style="font-size:11px;color:#fbbf24" ' +
+                  'title="Off-boarded this client? Return its inboxes to the warmed reserve." ' +
+                  'onclick="freeUpClient(\'' + esc(c.name).replace(/'/g, "\\'") + '\')">Free up inboxes →</button>' +
+            '</div>' +
         '</div>';
     }).join('');
+}
+
+// Off-boarded client -> return its inboxes to a fresh Generic group + warm-up.
+// Always previews (and runs the cross-client safety check) before doing anything.
+async function freeUpClient(name) {
+    try {
+        var qs = _authQs();
+        var url = '/api/client-offboard' + (qs ? qs + '&' : '?') + 'client=' + encodeURIComponent(name);
+        var r = await fetch(url, { headers: _authHeaders(), credentials:'include' });
+        var p = await r.json();
+        if (p.error) { alert('Error: ' + p.error); return; }
+        if (!p.safe) {
+            alert('Cannot free up "' + name + '"\n\n' + (p.reason || 'not safe') +
+                  '\n\nThese inboxes are still sending for another client — freeing them ' +
+                  'would kill that client\'s sending. Pause/reallocate those campaigns first.');
+            return;
+        }
+        var msg = 'Free up ' + p.inboxes + ' inbox(es) from "' + name + '"?\n\n' +
+            '• Re-tag them into ' + p.target_generic + ' (back in the warmed reserve)\n' +
+            '• Turn warm-up back on\n' +
+            (p.own_active && p.own_active.length
+                ? '• Pause this client\'s own active campaign(s): ' + p.own_active.map(function(c){return c.name;}).join(', ') + '\n'
+                : '') +
+            '\nZapmail + date tags are kept. This changes SmartLead.';
+        if (!confirm(msg)) return;
+        var h2 = _authHeaders(); h2['Content-Type'] = 'application/json';
+        var r2 = await fetch('/api/client-offboard' + _authQs(), {
+            method:'POST', credentials:'include', headers: h2,
+            body: JSON.stringify({client:name, confirm:true, pause_campaigns:true})});
+        var d = await r2.json();
+        if (d.error) { alert('Error: ' + d.error); return; }
+        alert('Freed up "' + name + '"\n\n' + d.retagged + '/' + d.inboxes + ' re-tagged to ' +
+              d.generic_group + '\n' + d.warmed + ' warm-up re-enabled' +
+              (d.failed ? '\n' + d.failed + ' failed' : '') +
+              (d.paused_campaigns && d.paused_campaigns.length ? '\nPaused: ' + d.paused_campaigns.join(', ') : '') +
+              '\n\nRun a sync to refresh the dashboard.');
+    } catch (e) { alert('Error: ' + e); }
 }
 
 function renderGeneric() {

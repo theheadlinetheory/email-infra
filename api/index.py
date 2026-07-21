@@ -235,6 +235,40 @@ def health_placement():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/client-offboard", methods=["GET", "POST", "OPTIONS"])
+def client_offboard():
+    """Free up an off-boarded client's inboxes -> fresh Generic group + warm-up.
+
+    GET  ?client=NAME            -> read-only plan + safety verdict
+    POST {client, confirm:true}  -> pause own campaigns, re-tag, re-enable warm-up
+    Refuses when the inboxes are still sending for ANOTHER client (unless force).
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_offboard as ho
+        if request.method == "GET":
+            client = request.args.get("client", "").strip()
+            if not client:
+                return _cors(jsonify({"error": "client required"})), 400
+            return _cors(jsonify(ho.plan(client)))
+        body = request.get_json(silent=True) or {}
+        client = (body.get("client") or "").strip()
+        if not client:
+            return _cors(jsonify({"error": "client required"})), 400
+        res = ho.execute(client, confirm=bool(body.get("confirm")),
+                         pause_campaigns=body.get("pause_campaigns", True),
+                         force=bool(body.get("force")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-burn", methods=["POST", "OPTIONS"])
 def health_burn():
     """Plan or execute remove-on-renewal for burned inboxes.
