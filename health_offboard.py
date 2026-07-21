@@ -95,6 +95,68 @@ def next_generic_letter(tags: list[dict] | None = None) -> str | None:
     return next((c for c in string.ascii_uppercase if c not in used), None)
 
 
+def domains_for_accounts(account_ids) -> set:
+    """Sending domains behind these SmartLead account ids (from the overview cache)."""
+    ov, _ = store.cache_get("overview_v2")
+    id2email = {}
+    for c in (ov or {}).get("clients", []):
+        for L in ("a", "b"):
+            for ad in (c.get(f"group_{L}") or {}).get("account_details", []):
+                if ad.get("id"):
+                    id2email[ad["id"]] = ad.get("email", "")
+    for sec in ("generic_groups", "acquisition_groups"):
+        for g in (ov or {}).get(sec, []):
+            for ad in g.get("account_details", []):
+                if ad.get("id"):
+                    id2email[ad["id"]] = ad.get("email", "")
+    out = set()
+    for aid in account_ids:
+        em = id2email.get(aid, "")
+        if "@" in em:
+            out.add(em.split("@")[-1].lower())
+    return out
+
+
+def zapmail_domain_ids(domains: set) -> dict:
+    """domain name -> Zapmail domain id (paginated over the whole account)."""
+    key = (os.environ.get("ZAPMAIL_API_KEY", "") or "").strip()
+    if not key or not domains:
+        return {}
+    headers = {"Content-Type": "application/json",
+               "x-auth-zapmail": key, "x-service-provider": "GOOGLE"}
+    want = {d.lower() for d in domains}
+    out, page = {}, 1
+    while True:
+        try:
+            r = requests.get(f"https://api.zapmail.ai/api/v2/domains?page={page}&limit=100",
+                             headers=headers, timeout=30)
+        except requests.RequestException:
+            break
+        if r.status_code != 200:
+            break
+        data = r.json().get("data", {})
+        for dom in data.get("domains", []):
+            nm = (dom.get("domain") or "").lower()
+            if nm in want and dom.get("id"):
+                out[nm] = dom["id"]
+        if page >= data.get("totalPages", 1):
+            break
+        page += 1
+    return out
+
+
+def set_domain_forwarding(domains, forward_to: str | None) -> dict:
+    """Point these sending domains at `forward_to`. Pass '' / None to CLEAR it,
+    so a freed domain never keeps redirecting to an ex-client's website."""
+    ids = zapmail_domain_ids(set(domains))
+    if not ids:
+        return {"domains": 0, "ok": False, "note": "no matching Zapmail domains"}
+    import setup
+    res = setup.zm_set_forwarding(list(ids.values()), forward_to or "")
+    ok = str((res or {}).get("status", "")) in ("200", "201") or (res or {}).get("status") in (200, 201)
+    return {"domains": len(ids), "forward_to": forward_to or None, "ok": ok, "response": res}
+
+
 def _campaign_status_map() -> dict:
     try:
         r = requests.get(f"{PUBLIC_API}/campaigns", params={"api_key": _api_key()}, timeout=60)
@@ -206,6 +268,9 @@ def execute(client_name: str, confirm: bool = False, pause_campaigns: bool = Tru
     # 3) re-tag + re-enable warm-up
     ctags = find_client_tags(client_name, tags)
     ids = sorted({a for t in ctags for a in t["account_ids"]})
+    # capture the sending domains BEFORE re-tagging (overview still lists them
+    # under this client) so we can strip their forwarding afterwards
+    freed_domains = domains_for_accounts(ids)
     retagged = warmed = failed = 0
     import setup
     for aid in ids:
@@ -235,13 +300,24 @@ def execute(client_name: str, confirm: bool = False, pause_campaigns: bool = Tru
             pass
         time.sleep(0.3)
 
+    # 4) strip domain forwarding — a freed domain must not keep redirecting
+    #    prospects to the ex-client's website (Zapmail forwardTo does NOT follow
+    #    a re-tag, so without this it silently points at the old client forever).
+    try:
+        fwd = set_domain_forwarding(freed_domains, "")
+    except Exception as e:
+        fwd = {"domains": 0, "ok": False, "note": str(e)[:120]}
+
     try:
         store.log_monitor_event("client_offboard", {
             "client": client_name, "generic": gname, "retagged": retagged,
-            "warmed": warmed, "failed": failed, "paused": paused})
+            "warmed": warmed, "failed": failed, "paused": paused,
+            "forwarding_cleared": fwd.get("domains", 0)})
     except Exception:
         pass
     return {"ok": True, "client": client_name, "generic_group": gname,
             "inboxes": len(ids), "retagged": retagged, "warmed": warmed,
             "failed": failed, "paused_campaigns": paused,
-            "note": "Inboxes are back in the reserve as " + gname + " with warm-up on."}
+            "forwarding_cleared": fwd.get("domains", 0), "forwarding": fwd,
+            "note": (f"Inboxes are back in the reserve as {gname} with warm-up on; "
+                     f"forwarding stripped from {fwd.get('domains', 0)} domain(s).")}
