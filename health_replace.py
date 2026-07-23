@@ -124,6 +124,28 @@ def swap_campaign_membership(old_email: str, reserve_account_id: int,
     return {"added": added, "removed": removed, "results": results, **plan}
 
 
+def swap_forwarding(old_email: str, reserve_email: str, dry_run: bool = True) -> dict:
+    """Point the reserve inbox's domain at the same site the burned inbox's domain
+    forwards to (the client's website), so the swapped-in domain doesn't redirect
+    prospects to nowhere. Best-effort; never blocks a swap."""
+    old_dom = old_email.split("@")[-1] if "@" in old_email else ""
+    new_dom = reserve_email.split("@")[-1] if "@" in reserve_email else ""
+    if not old_dom or not new_dom:
+        return {"ok": False, "note": "missing domain"}
+    try:
+        import health_offboard as ho
+        target = ho.domain_forwarding({old_dom}).get(old_dom)
+        if not target:
+            return {"ok": False, "note": f"burned domain {old_dom} has no forwarding to copy",
+                    "target": None, "new_domain": new_dom}
+        if dry_run:
+            return {"dry_run": True, "target": target, "new_domain": new_dom, "from_domain": old_dom}
+        res = ho.set_domain_forwarding({new_dom}, target)
+        return {"ok": res.get("ok"), "target": target, "new_domain": new_dom, "from_domain": old_dom}
+    except Exception as e:
+        return {"ok": False, "note": str(e)[:120]}
+
+
 def _is_acquisition(job: dict) -> bool:
     """True if this is one of THT's own outreach inboxes (client == '(acquisition)').
     Acquisition inboxes have no reserve — they must not be swapped with client stock."""
@@ -272,15 +294,20 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
         camp = swap_campaign_membership(job["old_email"], job.get("reserve_account_id"),
                                         job.get("campaigns") or [], dry_run=not confirm)
         job["campaign_swap"] = camp
-        # dry-run: show the full plan (re-tag + campaign move), don't finalize yet
+        # forwarding: point the reserve domain at the same client site the burned
+        # domain forwards to, so the new domain doesn't redirect prospects nowhere
+        fwd = swap_forwarding(job["old_email"], job.get("reserve_email", ""), dry_run=not confirm)
+        job["forwarding"] = fwd
+        # dry-run: show the full plan (re-tag + campaign move + forwarding), don't finalize yet
         if not confirm and retag is not None and not retag.get("error"):
             _save(st)
             return {"ok": True, "dry_run": True, "job": _annotate(job),
-                    "retag": retag, "campaign_swap": camp}
+                    "retag": retag, "campaign_swap": camp, "forwarding": fwd}
         job["status"] = "swapped"
         job["swapped_at"] = datetime.now().strftime("%Y-%m-%d")
         _save(st)
-        return {"ok": True, "job": _annotate(job), "retag": retag, "campaign_swap": camp}
+        return {"ok": True, "job": _annotate(job), "retag": retag,
+                "campaign_swap": camp, "forwarding": fwd}
     elif action == "cancel":
         job["status"] = "cancelled"
     else:
