@@ -47,6 +47,65 @@ def _overview_account_id(email: str):
     return None
 
 
+import re as _re
+_HVAC_RE = _re.compile(r"hvac|heating|cooling|furnace|refrigerat|mechanical|climate|comfort|"
+                       r"aircon|airconditioning|conditioning|heatpump|\bheat\b", _re.I)
+_AIR_RE = _re.compile(r"(?:^|[^a-z])air(?:[^a-z]|$)", _re.I)
+_LAND_RE = _re.compile(r"lawn|landscap|landcare|yard|turf|grounds|mow|garden|"
+                       r"outdoor|scape|irrigation|hardscape|planting|\bsod\b|greenery|nursery|"
+                       r"groundskeep|propertyturf|propertyland|treecare|treeservice", _re.I)
+
+
+def _niche(domain_or_email: str) -> str:
+    """Classify a domain/inbox as 'hvac', 'landscaping', or 'generic' by its name.
+    HVAC and landscaping must never replace each other; generic fills either."""
+    d = (domain_or_email or "").lower()
+    if "@" in d:
+        d = d.split("@")[-1]
+    hv = bool(_HVAC_RE.search(d) or _AIR_RE.search(d))
+    la = bool(_LAND_RE.search(d))
+    if hv and not la:
+        return "hvac"
+    if la and not hv:
+        return "landscaping"
+    return "generic"
+
+
+def _client_niche(client_name: str) -> str:
+    """The client's niche. The client NAME is the strongest signal (e.g. 'Quantum
+    Heating & Air', 'Woody's Landcare'); fall back to the dominant niche of its
+    inbox domains only when the name is generic."""
+    by_name = _niche(client_name)
+    if by_name != "generic":
+        return by_name
+    from collections import Counter
+    ov, _ = store.cache_get("overview_v2")
+    c = Counter()
+    for cl in (ov or {}).get("clients", []):
+        if cl.get("name") != client_name:
+            continue
+        for L in ("a", "b"):
+            for ad in (cl.get(f"group_{L}") or {}).get("account_details", []):
+                n = _niche(ad.get("email", ""))
+                if n != "generic":
+                    c[n] += 1
+    return c.most_common(1)[0][0] if c else "generic"
+
+
+def required_niche(job: dict) -> str:
+    """The niche a replacement for this burned inbox must be (or generic).
+
+    The CLIENT's niche wins when it's decisive — an HVAC client must get HVAC/
+    generic even if the specific burned inbox happens to be a landscaping-branded
+    domain (a pre-existing mismatch); replacing it with more landscaping would
+    just deepen the cross-contamination. Fall back to the inbox's own domain niche
+    only when the client is niche-ambiguous."""
+    want = _client_niche(job.get("client") or "")
+    if want == "generic":
+        want = _niche(job.get("old_email", ""))
+    return want
+
+
 def _resolve_campaign_ids(names) -> dict:
     """Campaign name -> id for the given names (live campaigns list, any status)."""
     import time
@@ -180,27 +239,43 @@ def list_jobs() -> list[dict]:
 
 
 def reserve_summary() -> dict:
-    """How many warmed reserve inboxes are ready to deploy right now.
-    Reads generic groups from the overview cache; 'ready' = warmed >= WARMUP_DAYS.
-    'available' subtracts inboxes already claimed by active reserved jobs."""
+    """How many warmed reserve inboxes are ready to deploy right now, broken down
+    by niche. Reads generic groups from the overview cache; 'ready' = warmed >=
+    WARMUP_DAYS. 'available' subtracts inboxes already claimed by reserved jobs."""
+    from collections import Counter
     ov, _ = store.cache_get("overview_v2")
     ready, groups = 0, []
+    ready_by = Counter()
     for g in (ov or {}).get("generic_groups", []):
-        n = len(g.get("account_details", []))
         wd = g.get("warmup_days")
-        if n and wd is not None and wd >= WARMUP_DAYS:
-            ready += n
-            groups.append({"name": g.get("name"), "count": n})
-    claimed = sum(1 for j in _load().get("jobs", []) if j["status"] == "reserved")
+        ads = g.get("account_details", [])
+        if ads and wd is not None and wd >= WARMUP_DAYS:
+            ready += len(ads)
+            groups.append({"name": g.get("name"), "count": len(ads)})
+            for ad in ads:
+                ready_by[_niche(ad.get("email", ""))] += 1
+    claimed = 0
+    claimed_by = Counter()
+    for j in _load().get("jobs", []):
+        if j["status"] == "reserved":
+            claimed += 1
+            claimed_by[_niche(j.get("reserve_email", ""))] += 1
+    avail_by = {k: max(0, ready_by.get(k, 0) - claimed_by.get(k, 0))
+                for k in ("hvac", "landscaping", "generic")}
     return {"ready": ready, "claimed": claimed,
-            "available": max(0, ready - claimed), "groups": groups}
+            "available": max(0, ready - claimed), "groups": groups,
+            "ready_by_niche": {k: ready_by.get(k, 0) for k in ("hvac", "landscaping", "generic")},
+            "available_by_niche": avail_by}
 
 
-def pick_reserve_inbox(exclude=None) -> dict | None:
-    """Pick a specific warmed reserve inbox (email + SmartLead account id) that
-    isn't already claimed by another active job."""
+def pick_reserve_inbox(exclude=None, want_niche=None) -> dict | None:
+    """Pick a warmed reserve inbox (email + account id) not already claimed.
+    If want_niche is 'hvac'/'landscaping', only pick that niche or 'generic' —
+    NEVER cross HVAC<->landscaping. Prefers an exact-niche match so the scarce
+    generic pool is conserved for niches that have no exact reserve."""
     exclude = exclude or set()
     ov, _ = store.cache_get("overview_v2")
+    cands = []
     for g in (ov or {}).get("generic_groups", []):
         wd = g.get("warmup_days")
         if wd is None or wd < WARMUP_DAYS:
@@ -208,8 +283,19 @@ def pick_reserve_inbox(exclude=None) -> dict | None:
         for ad in g.get("account_details", []):
             em = ad.get("email")
             if em and em not in exclude and ad.get("id"):
-                return {"email": em, "account_id": ad["id"], "group": g.get("name")}
-    return None
+                cands.append({"email": em, "account_id": ad["id"],
+                              "group": g.get("name"), "niche": _niche(em)})
+    if not cands:
+        return None
+    gen = [c for c in cands if c["niche"] == "generic"]
+    if not want_niche or want_niche == "generic":
+        # niche-ambiguous client: prefer a truly generic domain over stamping a
+        # landscaping/HVAC brand onto it; fall back to anything if no generic left.
+        return gen[0] if gen else cands[0]
+    exact = [c for c in cands if c["niche"] == want_niche]
+    if exact:
+        return exact[0]
+    return gen[0] if gen else None   # no compatible reserve (never cross-niche)
 
 
 def create_jobs(emails: list[str]) -> dict:
@@ -266,17 +352,25 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
             return {"error": "No spare acquisition inboxes available — THT keeps no "
                              "acquisition reserve. The generic/warming reserve is client "
                              "stock only. Warm or buy a new inbox for acquisition."}
-        # instant path: draw a specific pre-warmed inbox from the generic reserve
-        if reserve_summary()["available"] <= 0:
-            return {"error": "no ready reserve inboxes available - warm a new one instead"}
+        # NICHE GUARD: a landscaping inbox may only be replaced by landscaping or
+        # generic; HVAC only by HVAC or generic. Never cross HVAC<->landscaping.
+        want = required_niche(job)
         used = {j.get("reserve_email") for j in st["jobs"] if j.get("reserve_email")}
-        pick = pick_reserve_inbox(used)
+        pick = pick_reserve_inbox(used, want_niche=want)
         if not pick:
-            return {"error": "could not pick a reserve inbox"}
+            avail = reserve_summary().get("available_by_niche", {})
+            if want in ("hvac", "landscaping"):
+                return {"error": f"No warmed reserve compatible with a {want} inbox "
+                                 f"(need {want} or generic). Available now — "
+                                 f"{want}: {avail.get(want, 0)}, generic: {avail.get('generic', 0)}. "
+                                 f"Warm new {want} inboxes or free up a {want} client's reserve."}
+            return {"error": "no ready reserve inboxes available - warm a new one instead"}
         job["status"] = "reserved"
         job["reserve_email"] = pick["email"]
         job["reserve_account_id"] = pick["account_id"]
         job["reserve_source"] = pick["group"]
+        job["reserve_niche"] = pick["niche"]
+        job["want_niche"] = want
         job["reserved_at"] = datetime.now().strftime("%Y-%m-%d")
     elif action == "swap":
         _annotate(job)

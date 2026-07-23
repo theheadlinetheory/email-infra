@@ -413,7 +413,10 @@ function renderReplacements(jobs, reserve){
   const active=jobs.filter(j=>j.status!=='cancelled');
   const avail=reserve.available??0;
   const rcol = avail<20?'var(--crit)':avail<50?'var(--serious)':'var(--good)';
-  document.getElementById('repsub').innerHTML = `${active.length} in flight · <span style="color:${rcol}">${avail} ready reserve</span>`;
+  const bn=reserve.available_by_niche||{};
+  const hvcol = (bn.hvac||0)===0?'var(--crit)':'inherit';
+  const niche = `land ${bn.landscaping??0} · <span style="color:${hvcol}">hvac ${bn.hvac??0}</span> · gen ${bn.generic??0}`;
+  document.getElementById('repsub').innerHTML = `${active.length} in flight · <span style="color:${rcol}">${avail} ready reserve</span> <span class="eye">(${niche})</span>`;
   const order={flagged:0,reserved:1,warming:2,ready:3,swapped:4};
   const btnC=`<button class="btn sm" onclick="adv(EMAIL_ID,'cancel')">Cancel</button>`;
   const body = active.length ? active.sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)).map(j=>{
