@@ -26,6 +26,104 @@ STATE_KEY = "health_replacements"
 _ACTIVE = ("flagged", "warming", "ready", "reserved")
 
 
+def _sl_key() -> str:
+    import os
+    return (os.environ.get("SMARTLEAD_API_KEY", "") or os.environ.get("SMARTLEAD_KEY", "")).strip()
+
+
+def _overview_account_id(email: str):
+    """Resolve an email to its SmartLead account id from the overview cache."""
+    ov, _ = store.cache_get("overview_v2")
+    for c in (ov or {}).get("clients", []):
+        for L in ("a", "b"):
+            for ad in (c.get(f"group_{L}") or {}).get("account_details", []):
+                if ad.get("email") == email and ad.get("id"):
+                    return ad["id"]
+    for sec in ("generic_groups", "acquisition_groups"):
+        for g in (ov or {}).get(sec, []):
+            for ad in g.get("account_details", []):
+                if ad.get("email") == email and ad.get("id"):
+                    return ad["id"]
+    return None
+
+
+def _resolve_campaign_ids(names) -> dict:
+    """Campaign name -> id for the given names (live campaigns list, any status)."""
+    import time
+    import requests
+    key = _sl_key()
+    if not key or not names:
+        return {}
+    for _ in range(4):
+        r = requests.get("https://server.smartlead.ai/api/v1/campaigns",
+                         params={"api_key": key}, timeout=60)
+        if r.status_code == 200 and r.text.strip():
+            by_name = {c.get("name"): c.get("id") for c in (r.json() or [])}
+            return {n: by_name[n] for n in names if n in by_name}
+        time.sleep(6)
+    return {}
+
+
+def swap_campaign_membership(old_email: str, reserve_account_id: int,
+                             campaign_names, dry_run: bool = True) -> dict:
+    """Move campaign senders: ADD the reserve inbox, REMOVE the burned inbox, on
+    every campaign the burned inbox is in. Re-tagging alone does NOT do this —
+    campaign membership is a separate SmartLead association. Add-before-remove so
+    the campaign never dips below capacity."""
+    import time
+    import requests
+    # campaign_names may arrive as a JSON string (the status table serializes it
+    # and the reader only de-serializes reasons/subscores) — normalise to a list.
+    if isinstance(campaign_names, str):
+        import json
+        try:
+            campaign_names = json.loads(campaign_names)
+        except Exception:
+            campaign_names = [campaign_names] if campaign_names.strip() else []
+    if not isinstance(campaign_names, list):
+        campaign_names = []
+    old_id = _overview_account_id(old_email)
+    cids = _resolve_campaign_ids(campaign_names)
+    plan = {"old_email": old_email, "old_account_id": old_id,
+            "reserve_account_id": reserve_account_id,
+            "campaigns": [{"name": n, "id": i} for n, i in cids.items()]}
+    if dry_run:
+        return {"dry_run": True, **plan}
+    if not old_id:
+        return {"error": f"could not resolve account id for {old_email}", **plan}
+    if not cids:
+        return {"note": "burned inbox not in any resolvable campaign — nothing to move",
+                "added": 0, "removed": 0, **plan}
+    key = _sl_key()
+    added = removed = 0
+    results = []
+    for name, cid in cids.items():
+        base = f"https://server.smartlead.ai/api/v1/campaigns/{cid}/email-accounts"
+
+        def _call(method, ids):
+            for _ in range(4):
+                r = requests.request(method, base, params={"api_key": key},
+                                     json={"email_account_ids": ids}, timeout=60)
+                if r.status_code != 429:
+                    return r.status_code
+                time.sleep(20)
+            return 429
+        a = _call("POST", [reserve_account_id])       # add new first
+        d = _call("DELETE", [old_id])                 # then remove burned
+        if a == 200:
+            added += 1
+        if d == 200:
+            removed += 1
+        results.append({"campaign": name, "id": cid, "add_http": a, "remove_http": d})
+    try:
+        store.log_monitor_event("health_swap_campaign", {
+            "old_email": old_email, "reserve_account_id": reserve_account_id,
+            "added": added, "removed": removed, "campaigns": list(cids.values())})
+    except Exception:
+        pass
+    return {"added": added, "removed": removed, "results": results, **plan}
+
+
 def _is_acquisition(job: dict) -> bool:
     """True if this is one of THT's own outreach inboxes (client == '(acquisition)').
     Acquisition inboxes have no reserve — they must not be swapped with client stock."""
@@ -169,14 +267,20 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
                                  job["client"], job.get("group_letter") or "A",
                                  dry_run=not confirm)
             job["retag"] = retag
-        # dry-run: show the re-tag plan, don't finalize the swap yet
+        # campaign membership: add the reserve inbox + remove the burned inbox on
+        # every campaign the burned one is in. Re-tag alone doesn't do this.
+        camp = swap_campaign_membership(job["old_email"], job.get("reserve_account_id"),
+                                        job.get("campaigns") or [], dry_run=not confirm)
+        job["campaign_swap"] = camp
+        # dry-run: show the full plan (re-tag + campaign move), don't finalize yet
         if not confirm and retag is not None and not retag.get("error"):
             _save(st)
-            return {"ok": True, "dry_run": True, "job": _annotate(job), "retag": retag}
+            return {"ok": True, "dry_run": True, "job": _annotate(job),
+                    "retag": retag, "campaign_swap": camp}
         job["status"] = "swapped"
         job["swapped_at"] = datetime.now().strftime("%Y-%m-%d")
         _save(st)
-        return {"ok": True, "job": _annotate(job), "retag": retag}
+        return {"ok": True, "job": _annotate(job), "retag": retag, "campaign_swap": camp}
     elif action == "cancel":
         job["status"] = "cancelled"
     else:
