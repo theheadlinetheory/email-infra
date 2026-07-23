@@ -145,6 +145,34 @@ def zapmail_domain_ids(domains: set) -> dict:
     return out
 
 
+def domain_forwarding(domains: set) -> dict:
+    """domain name -> its current Zapmail forwardTo (None if unset). Paginated."""
+    key = (os.environ.get("ZAPMAIL_API_KEY", "") or "").strip()
+    if not key or not domains:
+        return {}
+    headers = {"Content-Type": "application/json",
+               "x-auth-zapmail": key, "x-service-provider": "GOOGLE"}
+    want = {d.lower() for d in domains}
+    out, page = {}, 1
+    while True:
+        try:
+            r = requests.get(f"https://api.zapmail.ai/api/v2/domains?page={page}&limit=100",
+                             headers=headers, timeout=30)
+        except requests.RequestException:
+            break
+        if r.status_code != 200:
+            break
+        data = r.json().get("data", {})
+        for dom in data.get("domains", []):
+            nm = (dom.get("domain") or "").lower()
+            if nm in want:
+                out[nm] = dom.get("forwardTo")
+        if page >= data.get("totalPages", 1):
+            break
+        page += 1
+    return out
+
+
 def set_domain_forwarding(domains, forward_to: str | None) -> dict:
     """Point these sending domains at `forward_to`. Pass '' / None to CLEAR it,
     so a freed domain never keeps redirecting to an ex-client's website."""

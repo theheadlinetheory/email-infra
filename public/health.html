@@ -464,20 +464,23 @@ window.adv = async (id,action)=>{
       if(plan.error){ el.textContent=plan.error; loadReplacements(); return; }
       const rt=plan.retag;
       const cs=plan.campaign_swap||{};
+      const fw=plan.forwarding||{};
       const camps=(cs.campaigns||[]).map(c=>c.name).join(', ')||'(none found)';
+      const fwLine = fw.target ? `4) Forward ${fw.new_domain} -> ${fw.target}` : `4) Forwarding: ${fw.note||'none to copy'}`;
       if(rt && !rt.error){
         if(!confirm(`Swap ${plan.job.old_email}  ->  ${rt.email}\n\n`+
           `1) Re-tag to: ${rt.target}\n`+
           `2) Add the new inbox to campaign(s): ${camps}\n`+
-          `3) Remove the burned inbox from those campaign(s)\n\n`+
-          `This changes SmartLead directly (add-before-remove, no manual Reallocate needed). Continue?`)){
+          `3) Remove the burned inbox from those campaign(s)\n`+
+          `${fwLine}\n\n`+
+          `This changes SmartLead + Zapmail directly (add-before-remove). Continue?`)){
           el.textContent='swap cancelled'; loadReplacements(); return;
         }
       }
       const done=await advPost({id,action:'swap',confirm:true});
-      const d2=done.campaign_swap||{};
+      const d2=done.campaign_swap||{}; const f2=done.forwarding||{};
       el.textContent = done.error ? done.error
-        : (done.retag ? `Swapped — re-tagged to ${done.retag.target}; campaign: added to ${d2.added||0}, removed from ${d2.removed||0}. Old inbox is now out of the campaign — cancel it above.`
+        : (done.retag ? `Swapped: re-tagged, campaign +${d2.added||0}/-${d2.removed||0}, forwarding ${f2.ok?('-> '+(f2.target||'')):'skipped'}. ⚠ Hit "Reallocate mailboxes" once on the campaign, then cancel the old inbox above.`
                       : 'Swapped.');
       loadReplacements(); return;
     }
