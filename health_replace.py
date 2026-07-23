@@ -81,6 +81,7 @@ def _client_niche(client_name: str) -> str:
     from collections import Counter
     ov, _ = store.cache_get("overview_v2")
     c = Counter()
+    camp_names = set()
     for cl in (ov or {}).get("clients", []):
         if cl.get("name") != client_name:
             continue
@@ -89,6 +90,16 @@ def _client_niche(client_name: str) -> str:
                 n = _niche(ad.get("email", ""))
                 if n != "generic":
                     c[n] += 1
+                for cn in (ad.get("campaign_names") or []):
+                    camp_names.add(cn)
+    # The campaign's BUSINESS-NAME prefix (before '#') is the strongest identity
+    # signal — 'Denair HVAC Inc. #1 - ...' -> hvac even though Denair's domains are
+    # landscaping. Only the prefix is read, so a landscaping client whose campaign
+    # TARGETS hvac leads ('... - HVAC Contractors') isn't misclassified.
+    for cn in camp_names:
+        n = _niche(cn.split("#")[0])
+        if n != "generic":
+            return n
     return c.most_common(1)[0][0] if c else "generic"
 
 
