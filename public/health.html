@@ -444,8 +444,11 @@ function renderReplacements(jobs, reserve){
       warm=`<span style="color:var(--good)">✓ ${j.swapped_at}</span>`; stcls='healthy';
       action='<span class="eye">now cancel the old inbox ↑</span>';
     }
+    const replacedBy = j.reserve_email
+      ? `<div class="dom" style="color:var(--good)">↳ replaced by ${j.reserve_email}${j.reserve_niche?` <span style="opacity:.7">[${j.reserve_niche}]</span>`:''}</div>`
+      : '';
     return `<tr>
-      <td><div class="em">${j.old_email}</div><div class="dom">${j.old_domain}</div></td>
+      <td><div class="em">${j.old_email}</div><div class="dom">${j.old_domain}</div>${replacedBy}</td>
       <td>${j.client||'—'}</td>
       <td><span class="pill ${stcls}"><span class="g"></span>${j.status}</span></td>
       <td style="font-family:var(--mono);font-size:12px">${warm}</td>

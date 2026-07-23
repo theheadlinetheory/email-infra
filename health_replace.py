@@ -424,3 +424,56 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
         return {"error": f"unknown action {action}"}
     _save(st)
     return {"ok": True, "job": _annotate(job)}
+
+
+def _burned_for_client(client: str) -> list[str]:
+    """Emails of a client's currently-burned inboxes."""
+    return [r["email"] for r in store.get_health_status_all()
+            if r.get("status") == "burned" and (r.get("client") or "") == client]
+
+
+def replace_all_burned(client: str, confirm: bool = False) -> dict:
+    """One-shot: for every burned inbox of a client, flag -> assign niche-matched
+    reserve -> swap (re-tag + campaign add/remove + forwarding). Dry-run reports
+    the plan + whether there's enough compatible reserve."""
+    emails = _burned_for_client(client)
+    want = required_niche({"old_email": emails[0], "client": client}) if emails else "generic"
+    rs = reserve_summary().get("available_by_niche", {})
+    pool = rs.get(want, 0) + (rs.get("generic", 0) if want != "generic" else 0)
+    if want == "generic":
+        pool = rs.get("generic", 0) + rs.get("landscaping", 0) + rs.get("hvac", 0)
+    plan = {"client": client, "burned": len(emails), "niche": want,
+            "reserve_compatible": pool, "enough": pool >= len(emails), "emails": emails}
+    if not confirm:
+        return {"dry_run": True, **plan}
+    if not emails:
+        return {"error": "no burned inboxes for this client", **plan}
+    if pool < len(emails):
+        return {"error": f"only {pool} compatible reserve inboxes for {len(emails)} burned "
+                         f"({want} or generic) — warm more or free up a {want} client", **plan}
+
+    create_jobs(emails)
+    want_set = set(emails)
+    swapped, failed, old_to_cancel, reserve_used = 0, [], [], []
+    for j in [x for x in list_jobs() if x.get("old_email") in want_set
+              and x["status"] in ("flagged", "reserved")]:
+        r1 = advance(j["id"], "reserve")
+        if r1.get("error"):
+            failed.append({"email": j["old_email"], "stage": "reserve", "error": r1["error"]})
+            continue
+        r2 = advance(j["id"], "swap", confirm=True)
+        if r2.get("error"):
+            failed.append({"email": j["old_email"], "stage": "swap", "error": r2["error"]})
+            continue
+        swapped += 1
+        old_to_cancel.append(j["old_email"])
+        reserve_used.append((r1.get("job", {}) or {}).get("reserve_email"))
+    try:
+        store.log_monitor_event("health_replace_all", {
+            "client": client, "swapped": swapped, "failed": len(failed)})
+    except Exception:
+        pass
+    return {"ok": True, "client": client, "swapped": swapped, "failed": failed,
+            "reserve_used": reserve_used, "old_to_cancel": old_to_cancel, "niche": want,
+            "note": f"Swapped {swapped} inbox(es). Now hit 'Reallocate mailboxes' once on "
+                    f"{client}'s campaign in SmartLead, then cancel the old inboxes."}
