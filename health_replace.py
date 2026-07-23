@@ -255,28 +255,33 @@ def reserve_summary() -> dict:
     WARMUP_DAYS. 'available' subtracts inboxes already claimed by reserved jobs."""
     from collections import Counter
     ov, _ = store.cache_get("overview_v2")
-    ready, groups = 0, []
-    ready_by = Counter()
+    # A reserve inbox is spent once a job has claimed it — whether the job is still
+    # 'reserved' or already 'swapped'. Until the next sync re-tags it out of its
+    # generic group, it still appears in the cache, so exclude it BY EMAIL. This is
+    # self-correcting: post-sync it leaves the generic group and the exclusion is a
+    # no-op (no double count).
+    claimed_emails = {j.get("reserve_email") for j in _load().get("jobs", [])
+                      if j.get("reserve_email") and j.get("status") in ("reserved", "swapped")}
+    ready, available, groups = 0, 0, []
+    ready_by, avail_by = Counter(), Counter()
     for g in (ov or {}).get("generic_groups", []):
         wd = g.get("warmup_days")
         ads = g.get("account_details", [])
-        if ads and wd is not None and wd >= WARMUP_DAYS:
-            ready += len(ads)
-            groups.append({"name": g.get("name"), "count": len(ads)})
-            for ad in ads:
-                ready_by[_niche(ad.get("email", ""))] += 1
-    claimed = 0
-    claimed_by = Counter()
-    for j in _load().get("jobs", []):
-        if j["status"] == "reserved":
-            claimed += 1
-            claimed_by[_niche(j.get("reserve_email", ""))] += 1
-    avail_by = {k: max(0, ready_by.get(k, 0) - claimed_by.get(k, 0))
-                for k in ("hvac", "landscaping", "generic")}
-    return {"ready": ready, "claimed": claimed,
-            "available": max(0, ready - claimed), "groups": groups,
+        if not (ads and wd is not None and wd >= WARMUP_DAYS):
+            continue
+        groups.append({"name": g.get("name"), "count": len(ads)})
+        for ad in ads:
+            em = ad.get("email", "")
+            nic = _niche(em)
+            ready += 1
+            ready_by[nic] += 1
+            if em not in claimed_emails:
+                available += 1
+                avail_by[nic] += 1
+    return {"ready": ready, "claimed": len(claimed_emails), "available": available,
+            "groups": groups,
             "ready_by_niche": {k: ready_by.get(k, 0) for k in ("hvac", "landscaping", "generic")},
-            "available_by_niche": avail_by}
+            "available_by_niche": {k: avail_by.get(k, 0) for k in ("hvac", "landscaping", "generic")}}
 
 
 def pick_reserve_inbox(exclude=None, want_niche=None) -> dict | None:
