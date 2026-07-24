@@ -358,8 +358,28 @@ function renderClients(){
       <td class="num" style="color:${r.s.warming?'var(--info)':'inherit'}">${r.s.warming||'—'}</td>
       <td class="num">${r.capNow.toLocaleString()}</td>
       <td class="num"><span class="${r.capAfter<DAILY_FLOOR&&r.s.burned?'capbad':''}">${r.capAfter.toLocaleString()}</span></td>
-      <td><span class="vpill ${r.vc}">${r.verdict}</span></td>
+      <td><span class="vpill ${r.vc}">${r.verdict}</span>${r.s.burned?` <button class="btn pri sm" style="margin-left:6px" onclick="replaceAllBurned('${r.c.replace(/'/g,"\\'")}')">Replace all ${r.s.burned}</button>`:''}</td>
     </tr>`).join('') || '<tr><td colspan=7 class=empty>no clients</td></tr>';
+}
+
+// One-click replace of every burned inbox for a client (niche-matched reserve +
+// campaign swap + forwarding). Cancellation is deferred to the final batch message.
+async function replaceAllBurned(client){
+  const el=document.getElementById('planmsg2'); el.className='msg';
+  try{
+    const p=await (await fetch(api('/api/health-replace-all'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({client})})).json();
+    if(p.error){ alert('Error: '+p.error); return; }
+    if(!p.burned){ alert(`${client} has no burned inboxes.`); return; }
+    if(!p.enough){ alert(`Not enough compatible reserve for "${client}"\n\n${p.burned} burned (niche: ${p.niche}), only ${p.reserve_compatible} compatible reserve inboxes (${p.niche} or generic).\n\nWarm more or free up a ${p.niche} client.`); return; }
+    if(!confirm(`Replace ALL ${p.burned} burned inboxes for "${client}"?\n\nEach one: assign a niche-matched (${p.niche}/generic) reserve inbox → re-tag → add to the campaign → remove the burned one → set forwarding.\n\nThen you hit "Reallocate mailboxes" once in SmartLead. Old inboxes are queued for the final cancel message (not cancelled now).\n\nMay take a minute. Continue?`)) return;
+    el.textContent=`Replacing all ${p.burned} burned for ${client}… running each swap, please wait.`;
+    const d=await (await fetch(api('/api/health-replace-all'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({client,confirm:true})})).json();
+    if(d.error){ el.textContent='Error: '+d.error; return; }
+    el.textContent=`${client}: swapped ${d.swapped}/${p.burned}${d.failed&&d.failed.length?` · ${d.failed.length} failed`:''}. ⚠ Hit "Reallocate mailboxes" once on ${client}'s campaign in SmartLead. Old inboxes queued for the final cancel message.`;
+    load(); loadReplacements();
+  }catch(e){ el.textContent='Error: '+e; }
 }
 
 let SUBS=null;

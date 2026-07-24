@@ -333,6 +333,30 @@ def health_recover():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-replace-all", methods=["POST", "OPTIONS"])
+def health_replace_all():
+    """Replace ALL burned inboxes of one client in a single shot (flag + assign
+    niche-matched reserve + swap each). Body {client, confirm}. confirm=false
+    returns a dry-run plan (count, niche, reserve availability)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    client = (body.get("client") or "").strip()
+    if not client:
+        return _cors(jsonify({"error": "client required"})), 400
+    try:
+        import health_replace as hr
+        res = hr.replace_all_burned(client, confirm=bool(body.get("confirm")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-buy-plan")
 def health_buy_plan():
     """Dry-run plan to replenish the warmed reserve. ?target=N. Buys nothing."""
