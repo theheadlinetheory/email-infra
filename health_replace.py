@@ -427,9 +427,16 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
 
 
 def _burned_for_client(client: str) -> list[str]:
-    """Emails of a client's currently-burned inboxes."""
+    """Emails of a client's currently-burned inboxes that DON'T already have a
+    replacement job. A swapped inbox still shows 'burned' until the next snapshot
+    re-scores it (it's out of the campaign but its status is stale) — without this
+    guard a second run would replace it AGAIN, wasting reserve and over-provisioning
+    the campaign. Cancelled jobs don't count (that inbox is fair game again)."""
+    handled = {j["old_email"] for j in _load().get("jobs", [])
+               if j.get("status") != "cancelled"}
     return [r["email"] for r in store.get_health_status_all()
-            if r.get("status") == "burned" and (r.get("client") or "") == client]
+            if r.get("status") == "burned" and (r.get("client") or "") == client
+            and r["email"] not in handled]
 
 
 def replace_all_burned(client: str, confirm: bool = False) -> dict:
