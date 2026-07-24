@@ -117,6 +117,18 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
 
     status_rows = []
     counts: dict[str, int] = {}
+    # Burn-confirmation hysteresis: an inbox only flips to BURNED after it's met the
+    # burn condition on `confirm_days` CONSECUTIVE snapshots; one day back under the
+    # line resets the streak. Stops borderline inboxes (bounce ~3%) bouncing in/out
+    # of the burned list. Existing burned inboxes are grandfathered so turning this
+    # on doesn't wipe the current list.
+    confirm_days = int(cfg.get("burn_confirm_days", 3))
+    prev_status = {row["email"]: row.get("status") for row in store.get_health_status_all()}
+    # {email: [streak_days, last_counted_date]} — date-keyed so re-running the
+    # snapshot within the same day doesn't inflate the streak (it counts DAYS).
+    streaks = store.get_state("burn_streaks") or {}
+    new_streaks: dict[str, list] = {}
+
     for r in fleet:
         rows = history.get(r["email"], [])
         sig = hm.rolling(rows, days=3)
@@ -124,11 +136,31 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         sig["smtp_ok"] = r["smtp_ok"]
         sig["in_campaign"] = r["in_campaign"]
         res = hm.score_inbox(sig, cfg)
-        counts[res["status"]] = counts.get(res["status"], 0) + 1
+        status, reasons = res["status"], res["reasons"]
+
+        if status == hm.BURNED:
+            email = r["email"]
+            prev = streaks.get(email)
+            prev_count = prev[0] if isinstance(prev, list) else (prev if isinstance(prev, int) else None)
+            prev_date = prev[1] if isinstance(prev, list) else None
+            if prev_date == today:
+                streak = prev_count or 1             # already counted today (same-day re-run)
+            elif prev_count is not None:
+                streak = prev_count + 1              # a new day still over the line
+            elif prev_status.get(email) == hm.BURNED:
+                streak = confirm_days                # grandfather already-burned inboxes
+            else:
+                streak = 1
+            new_streaks[email] = [streak, today]
+            if streak < confirm_days:                # not yet confirmed -> hold at at-risk
+                status = hm.AT_RISK
+                reasons = list(reasons) + [f"burning {streak}/{confirm_days} days — not yet confirmed"]
+
+        counts[status] = counts.get(status, 0) + 1
         status_rows.append({
             "email": r["email"],
-            "score": res["score"], "status": res["status"],
-            "reasons": res["reasons"], "subscores": res["subscores"],
+            "score": res["score"], "status": status,
+            "reasons": reasons, "subscores": res["subscores"],
             "client": r["client"], "group_letter": r["group_letter"],
             "source": r["source"], "domain": r["domain"],
             "reply_3d": sig.get("reply"), "bounce_3d": sig.get("bounce"),
@@ -139,6 +171,7 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
             "updated_at": datetime.now().isoformat(),
         })
     store.upsert_health_status(status_rows)
+    store.set_state("burn_streaks", new_streaks)
 
     # 3) build the top-of-page "what just sank" alert feed from the same history
     try:
