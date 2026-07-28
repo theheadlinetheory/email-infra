@@ -134,6 +134,91 @@ def _resolve_campaign_ids(names) -> dict:
     return {}
 
 
+REALLOC_KEY = "reallocate_pending_campaigns"
+
+
+def campaign_status_map() -> dict:
+    """Live SmartLead campaign full-name -> STATUS (uppercase). Used to tell
+    actively-sending (ACTIVE) campaigns from paused/completed ones."""
+    import time
+    import requests
+    key = _sl_key()
+    if not key:
+        return {}
+    for _ in range(4):
+        try:
+            r = requests.get("https://server.smartlead.ai/api/v1/campaigns",
+                             params={"api_key": key}, timeout=60)
+            if r.status_code == 200 and r.text.strip():
+                return {c.get("name"): (c.get("status") or "").upper()
+                        for c in (r.json() or []) if c.get("name")}
+        except requests.RequestException:
+            pass
+        time.sleep(5)
+    return {}
+
+
+def _add_pending_reallocate(names) -> None:
+    """Remember campaigns that had a sender swap so the UI can list which still
+    need SmartLead's manual 'Reallocate mailboxes' click (no API for that step)."""
+    names = [n for n in (names or []) if n]
+    if not names:
+        return
+    st = store.get_state(REALLOC_KEY) or {"campaigns": []}
+    cur = set(st.get("campaigns") or [])
+    cur.update(names)
+    store.set_state(REALLOC_KEY, {"campaigns": sorted(cur)})
+
+
+def reallocation_campaigns() -> dict:
+    """Campaigns awaiting a manual SmartLead 'Reallocate mailboxes' after swaps —
+    the full-name checklist to work through one by one. Annotated with live status
+    (ACTIVE first); campaigns no longer in the live list are dropped."""
+    names = (store.get_state(REALLOC_KEY) or {}).get("campaigns", [])
+    if not names:
+        return {"campaigns": [], "count": 0}
+    sm = campaign_status_map()
+    rows = [{"name": n, "status": sm.get(n, "MISSING")} for n in names if n in sm]
+    rank = {"ACTIVE": 0, "PAUSED": 1, "COMPLETED": 2}
+    rows.sort(key=lambda r: (rank.get(r["status"], 3), r["name"]))
+    return {"campaigns": rows, "count": len(rows)}
+
+
+def clear_reallocation_campaign(name) -> dict:
+    """Tim ticks a campaign off once he's hit Reallocate on it in SmartLead."""
+    st = store.get_state(REALLOC_KEY) or {"campaigns": []}
+    cur = [n for n in (st.get("campaigns") or []) if n != name]
+    store.set_state(REALLOC_KEY, {"campaigns": cur})
+    return {"ok": True, "remaining": len(cur)}
+
+
+def acq_reserve_candidates(status_map: dict | None = None) -> list[dict]:
+    """Idle acquisition inboxes usable as acquisition reserve: THT acquisition
+    inboxes that are healthy/watch and sit in NO active campaign (a paused/completed
+    campaign, or none) — real, unused capacity we can swap into an active campaign.
+    Returns [{email, account_id}]. This is why acquisition isn't 'cancel only'."""
+    status_map = status_map if status_map is not None else campaign_status_map()
+    ov, _ = store.cache_get("overview_v2")
+    id_by = {}
+    for g in (ov or {}).get("acquisition_groups", []):
+        for ad in g.get("account_details", []):
+            if ad.get("email") and ad.get("id"):
+                id_by[ad["email"]] = ad["id"]
+    out = []
+    for r in store.get_health_status_all():
+        if "acquisition" not in (r.get("client") or "").lower():
+            continue
+        if r.get("status") not in ("healthy", "watch"):
+            continue
+        camps = r.get("campaigns") or []
+        if any(status_map.get(c) == "ACTIVE" for c in camps):
+            continue
+        aid = id_by.get(r["email"])
+        if aid:
+            out.append({"email": r["email"], "account_id": aid})
+    return out
+
+
 def swap_campaign_membership(old_email: str, reserve_account_id: int,
                              campaign_names, dry_run: bool = True) -> dict:
     """Move campaign senders: ADD the reserve inbox, REMOVE the burned inbox, on
@@ -191,6 +276,9 @@ def swap_campaign_membership(old_email: str, reserve_account_id: int,
             "added": added, "removed": removed, "campaigns": list(cids.values())})
     except Exception:
         pass
+    # record campaigns touched so the UI can list which need SmartLead reallocation
+    _add_pending_reallocate([r["campaign"] for r in results
+                             if r.get("add_http") == 200 or r.get("remove_http") == 200])
     return {"added": added, "removed": removed, "results": results, **plan}
 
 
@@ -463,15 +551,45 @@ def _run_swaps(emails: list[str]) -> dict:
             "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
 
 
-def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
-    """Reallocate an explicit set of burned inboxes (any client/domain) — remove
-    each from its campaign(s) and swap in a niche-matched reserve. Used by the
-    domain-priority view's per-domain / per-inbox 'Reallocate' button so it works
-    from the frontend with no Claude session. Dry-run reports reserve sufficiency.
+def _run_acq_swaps(emails, cands, status_by, status_map) -> dict:
+    """Reallocate acquisition inboxes using idle acquisition reserve — add the idle
+    inbox + remove the burned one on each ACTIVE campaign. No re-tag/forwarding: an
+    idle acquisition inbox is already THT-branded and acquisition-tagged."""
+    swapped, failed, old_to_cancel, reserve_used = 0, [], [], []
+    pool = list(cands)
+    for e in emails:
+        r = status_by.get(e, {})
+        active = [c for c in (r.get("campaigns") or []) if status_map.get(c) == "ACTIVE"]
+        if not active:
+            # nothing actively sending — no reallocation needed; it's cancel-ready
+            failed.append({"email": e, "stage": "noop",
+                           "error": "not in an active campaign — cancel directly, no reallocation"})
+            continue
+        if not pool:
+            failed.append({"email": e, "stage": "reserve", "error": "no idle acquisition reserve left"})
+            continue
+        pick = pool.pop(0)
+        camp = swap_campaign_membership(e, pick["account_id"], active, dry_run=False)
+        if camp.get("error"):
+            failed.append({"email": e, "stage": "swap", "error": camp["error"]})
+            pool.insert(0, pick)
+            continue
+        swapped += 1
+        old_to_cancel.append(e)
+        reserve_used.append(pick["email"])
+    return {"swapped": swapped, "failed": failed,
+            "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
 
-    Acquisition inboxes have no reserve pool (THT-branded, all occupied) — they
-    can't be reallocated, only cancelled; those are reported as blocked."""
-    # drop ones that already have an in-flight job (avoid double-swapping)
+
+def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
+    """Reallocate an explicit set of burned inboxes (any client/domain/acquisition)
+    — remove each from its ACTIVE campaign(s) and swap in compatible reserve. Drives
+    the domain-priority view's 'Reallocate' button (frontend, no Claude session).
+
+    Client inboxes draw niche-matched client reserve. Acquisition inboxes draw
+    'idle acquisition reserve' — THT inboxes sitting in paused/completed campaigns
+    (real unused capacity), so acquisition is reserve-driven, never 'cancel only'.
+    Dry-run reports reserve sufficiency for both."""
     handled = {j["old_email"] for j in _load().get("jobs", [])
                if j.get("status") != "cancelled"}
     emails = [e for e in emails if e and e not in handled]
@@ -479,47 +597,67 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
         return {"dry_run": not confirm, "error": "nothing to reallocate (all already have jobs)",
                 "reallocatable": 0}
 
-    # group by required niche to check reserve per niche
+    status_by = {r["email"]: r for r in store.get_health_status_all()}
+    status_map = campaign_status_map()
+
+    def _is_acq(e):
+        return "acquisition" in (status_by.get(e, {}).get("client") or "").lower()
+
+    acq_emails = [e for e in emails if _is_acq(e)]
+    client_emails = [e for e in emails if not _is_acq(e)]
+
+    # --- client reserve, per niche (exact + generic) ---
     rs = reserve_summary().get("available_by_niche", {})
     per_niche: dict[str, list] = {}
-    blocked = []
-    for e in emails:
-        j = {"old_email": e, "client": None}
-        if _is_acquisition({"old_email": e}):
-            blocked.append({"email": e, "reason": "acquisition — no reserve to swap in; cancel only"})
-            continue
-        n = required_niche(j)
+    for e in client_emails:
+        n = required_niche({"old_email": e, "client": status_by.get(e, {}).get("client")})
         per_niche.setdefault(n, []).append(e)
-
-    # reserve sufficiency: exact niche + generic (generic can pull from anything)
-    need_report, ok = {}, True
     gen_avail = rs.get("generic", 0) + rs.get("landscaping", 0) + rs.get("hvac", 0)
+    need_report, client_ok = {}, True
     for n, es in per_niche.items():
         pool = gen_avail if n == "generic" else rs.get(n, 0) + rs.get("generic", 0)
         need_report[n] = {"need": len(es), "reserve": pool, "enough": pool >= len(es)}
         if pool < len(es):
-            ok = False
+            client_ok = False
 
-    plan = {"reallocatable": sum(len(v) for v in per_niche.values()),
-            "blocked": blocked, "by_niche": need_report, "enough": ok,
-            "emails": [e for es in per_niche.values() for e in es]}
+    # --- acquisition reserve (idle acquisition capacity) ---
+    acq_cands = acq_reserve_candidates(status_map)
+    acq_report = {"need": len(acq_emails), "reserve": len(acq_cands),
+                  "enough": len(acq_cands) >= len(acq_emails)}
+    acq_ok = acq_report["enough"] or not acq_emails
+
+    plan = {"reallocatable": len(client_emails) + len(acq_emails),
+            "by_niche": need_report, "acquisition": acq_report,
+            "enough": client_ok and acq_ok,
+            "emails": client_emails + acq_emails}
     if not confirm:
         return {"dry_run": True, **plan}
     if not plan["emails"]:
-        return {"error": "no reallocatable inboxes (all acquisition or already handled)", **plan}
-    if not ok:
-        return {"error": "not enough compatible reserve — warm more or free up a client", **plan}
+        return {"error": "nothing to reallocate", **plan}
+    errs = []
+    if client_emails and not client_ok:
+        errs.append("not enough client reserve")
+    if acq_emails and not acq_ok:
+        errs.append("not enough idle acquisition reserve (warm/free more acquisition inboxes)")
+    if errs:
+        return {"error": "; ".join(errs), **plan}
 
-    res = _run_swaps(plan["emails"])
+    res_c = (_run_swaps(client_emails) if client_emails
+             else {"swapped": 0, "failed": [], "old_to_cancel": [], "reserve_used": []})
+    res_a = (_run_acq_swaps(acq_emails, acq_cands, status_by, status_map) if acq_emails
+             else {"swapped": 0, "failed": [], "old_to_cancel": [], "reserve_used": []})
+    swapped = res_c["swapped"] + res_a["swapped"]
+    failed = res_c["failed"] + res_a["failed"]
     try:
-        store.log_monitor_event("health_reallocate", {"swapped": res["swapped"],
-                                                       "failed": len(res["failed"])})
+        store.log_monitor_event("health_reallocate", {"swapped": swapped, "failed": len(failed)})
     except Exception:
         pass
-    return {"ok": True, **res, "blocked": blocked,
-            "note": f"Reallocated {res['swapped']} inbox(es) (reserve swapped in, burned removed "
-                    f"from campaign). Hit 'Reallocate mailboxes' once per affected campaign in "
-                    f"SmartLead, then the burned domains are safe to cancel."}
+    return {"ok": True, "swapped": swapped, "failed": failed,
+            "old_to_cancel": res_c["old_to_cancel"] + res_a["old_to_cancel"],
+            "reserve_used": res_c["reserve_used"] + res_a["reserve_used"],
+            "campaigns_to_reallocate": reallocation_campaigns().get("campaigns", []),
+            "note": f"Reallocated {swapped} inbox(es). Now hit 'Reallocate mailboxes' once per "
+                    f"campaign listed below in SmartLead, then the burned domains are safe to cancel."}
 
 
 def replace_all_burned(client: str, confirm: bool = False) -> dict:

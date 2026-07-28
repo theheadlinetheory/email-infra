@@ -50,6 +50,18 @@ def domain_view() -> dict:
     handled = {j["old_email"] for j in jobs if j.get("status") not in ("cancelled", None)}
     rs = hr.reserve_summary()
 
+    # Campaign STATUS map — only ACTIVE campaigns are actively sending; inboxes that
+    # sit only in paused/completed campaigns aren't really in use, so they don't need
+    # reallocating and aren't collateral (they can be cancelled directly).
+    status_map = hr.campaign_status_map()
+
+    def _active(camps):
+        return [c for c in (camps or []) if status_map.get(c) == "ACTIVE"]
+
+    # Acquisition reserve = idle acquisition inboxes (in no active campaign). This is
+    # why acquisition is reserve-driven, not "cancel only".
+    acq_pool = len(hr.acq_reserve_candidates(status_map))
+
     # what's already scheduled for cancellation (removal bot registry)
     try:
         import zapmail_removals as zr
@@ -82,12 +94,15 @@ def domain_view() -> dict:
 
         def _mb(r):
             camps = r.get("campaigns") or []
+            active = _active(camps)
             return {
                 "email": r.get("email"),
                 "status": r.get("status"),
                 "client": r.get("client"),
-                "in_campaign": bool(camps),
+                "in_campaign": bool(active),           # in an ACTIVE (sending) campaign
+                "active_campaigns": active,
                 "campaigns": camps,
+                "idle": bool(camps) and not active,    # only in paused/completed campaigns
                 "bounce_3d": r.get("bounce_3d"),
                 "reply_3d": r.get("reply_3d"),
                 "streak_days": (streaks.get(r.get("email")) or [None])[0]
@@ -96,14 +111,15 @@ def domain_view() -> dict:
             }
 
         burned_mb = [_mb(r) for r in burned]
-        # collateral = non-burned mailboxes still IN a campaign that a domain-cancel
-        # would also delete. Reserve/warming inboxes not in a campaign aren't collateral.
-        collateral = [_mb(r) for r in (at_risk + healthy) if r.get("campaigns")]
-        # burned mailboxes still in a campaign need reallocating before cancel
+        # collateral = non-burned mailboxes still in an ACTIVE campaign that a domain-
+        # cancel would also delete. Idle/reserve/warming inboxes aren't collateral.
+        collateral = [_mb(r) for r in (at_risk + healthy) if _active(r.get("campaigns"))]
+        # burned mailboxes still actively sending need reallocating before cancel;
+        # burned mailboxes only in paused/completed campaigns are cancel-ready as-is.
         need_realloc = [b for b in burned_mb if b["in_campaign"] and not b["has_job"]]
 
         is_acq = source == "acquisition"
-        pool = 0 if is_acq else _pool_for(niche, rs)
+        pool = acq_pool if is_acq else _pool_for(niche, rs)
 
         domains.append({
             "domain": dom,
@@ -119,9 +135,10 @@ def domain_view() -> dict:
             "collateral": collateral,
             "need_reallocate": need_realloc,
             "reserve_pool": pool,
-            "reserve_ok": is_acq or pool >= len(need_realloc),
+            "reserve_ok": pool >= len(need_realloc),
             "scheduled": dom in scheduled_domains,
-            # clean cancel = nothing healthy would be lost AND no burned still live in a campaign
+            # clean cancel = nothing healthy actively sending would be lost AND no
+            # burned still actively sending (idle/paused burned don't block a cancel)
             "clean_cancel": len(collateral) == 0 and len(need_realloc) == 0,
         })
 
