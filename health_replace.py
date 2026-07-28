@@ -215,8 +215,46 @@ def acq_reserve_candidates(status_map: dict | None = None) -> list[dict]:
             continue
         aid = id_by.get(r["email"])
         if aid:
-            out.append({"email": r["email"], "account_id": aid})
+            # keep its current (paused/completed) campaigns so we can detach it from
+            # them when it's swapped in — never leave a reserve in two campaigns
+            out.append({"email": r["email"], "account_id": aid, "campaigns": camps})
     return out
+
+
+def remove_account_from_campaigns(account_id, campaign_names, dry_run: bool = False) -> dict:
+    """DELETE a single email account from each named campaign. Used to detach an
+    idle reserve inbox from its old paused/completed campaign(s) when it's reused, so
+    resuming that campaign never leaves the inbox sending from two campaigns at once.
+    Does NOT flag these for SmartLead reallocation (they're not actively sending)."""
+    import time
+    import requests
+    if isinstance(campaign_names, str):
+        import json
+        try:
+            campaign_names = json.loads(campaign_names)
+        except Exception:
+            campaign_names = [campaign_names] if campaign_names.strip() else []
+    if not isinstance(campaign_names, list) or not campaign_names:
+        return {"removed": 0, "results": []}
+    cids = _resolve_campaign_ids(campaign_names)
+    if dry_run:
+        return {"dry_run": True, "campaigns": [{"name": n, "id": i} for n, i in cids.items()]}
+    key = _sl_key()
+    removed, results = 0, []
+    for name, cid in cids.items():
+        base = f"https://server.smartlead.ai/api/v1/campaigns/{cid}/email-accounts"
+        code = None
+        for _ in range(4):
+            r = requests.delete(base, params={"api_key": key},
+                                json={"email_account_ids": [account_id]}, timeout=60)
+            code = r.status_code
+            if code != 429:
+                break
+            time.sleep(20)
+        if code == 200:
+            removed += 1
+        results.append({"campaign": name, "id": cid, "http": code})
+    return {"removed": removed, "results": results}
 
 
 def swap_campaign_membership(old_email: str, reserve_account_id: int,
@@ -574,9 +612,15 @@ def _run_acq_swaps(emails, cands, status_by, status_map) -> dict:
             failed.append({"email": e, "stage": "swap", "error": camp["error"]})
             pool.insert(0, pick)
             continue
+        # detach the reused idle inbox from its OWN old paused/completed campaign(s)
+        # so it's never a member of two campaigns if the paused one is resumed later.
+        detached = 0
+        if pick.get("campaigns"):
+            det = remove_account_from_campaigns(pick["account_id"], pick["campaigns"])
+            detached = det.get("removed", 0)
         swapped += 1
         old_to_cancel.append(e)
-        reserve_used.append(pick["email"])
+        reserve_used.append({"email": pick["email"], "detached_from": detached})
     return {"swapped": swapped, "failed": failed,
             "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
 
