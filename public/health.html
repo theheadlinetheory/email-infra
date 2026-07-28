@@ -110,6 +110,10 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%) for <b>3 straight days</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot, which pings you when they actually drop. A domain is clean to cancel once nothing healthy is left on it (all 3 burned, or the healthy ones reallocated away).</div>
   <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
 
+  <div class="sect" id="reallocsect" style="display:none"><h2>📋 Campaigns to reallocate in SmartLead</h2><span class="eye" id="reallocsub"></span></div>
+  <div class="note" id="reallocnote" style="display:none">After each reallocation the dashboard moves the campaign's senders, but SmartLead needs a manual <b>Reallocate mailboxes</b> click per campaign to redistribute the lead queue (no API for that step). Work through these one by one and tick each off. Full campaign names — copy straight into SmartLead's search.</div>
+  <div id="realloclist"></div>
+
   <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
   <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
   <div class="panel tablewrap"><table>
@@ -237,7 +241,36 @@ async function load(){
     render(FLEET, d.counts||{});
     try { renderAlerts(d.alerts, d.alert_summary); } catch(e){ console.error('renderAlerts', e); }
     try { loadDomains(); } catch(e){ console.error('loadDomains', e); }
+    try { loadRealloc(); } catch(e){ console.error('loadRealloc', e); }
   }catch(e){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>'+e+'</td></tr>'; }
+}
+
+// ── Campaigns awaiting SmartLead "Reallocate mailboxes" (full-name checklist) ──
+let REALLOC=[];
+async function loadRealloc(){
+  try{
+    const r=await fetch(api('/api/health-reallocate-campaigns'),{credentials:'include'}); if(!r.ok)return;
+    const d=await r.json(); REALLOC=d.campaigns||[]; renderRealloc();
+  }catch(e){ console.error('loadRealloc',e); }
+}
+function renderRealloc(){
+  const sect=document.getElementById('reallocsect'), note=document.getElementById('reallocnote'), el=document.getElementById('realloclist');
+  if(!REALLOC.length){ sect.style.display='none'; note.style.display='none'; el.innerHTML=''; return; }
+  sect.style.display=''; note.style.display='';
+  document.getElementById('reallocsub').textContent=`${REALLOC.length} campaign(s) awaiting reallocation`;
+  el.innerHTML='<div class="panel">'+REALLOC.map((c,i)=>{
+    const st=c.status==='ACTIVE'?'var(--good)':c.status==='PAUSED'?'var(--warn)':'var(--mut)';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 2px;border-top:1px solid var(--line)">
+      <span style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;word-break:break-all">${c.name}</span>
+      <span style="flex:0 0 auto;color:${st};font-size:10.5px;font-family:var(--mono);text-transform:uppercase">${c.status}</span>
+      <button class="btn sm" style="flex:0 0 auto" onclick="reallocDone(${i})">✓ Done</button>
+    </div>`;
+  }).join('')+'</div>';
+}
+async function reallocDone(i){
+  const c=REALLOC[i]; if(!c) return;
+  await fetch(api('/api/health-reallocate-campaigns'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({done:c.name})});
+  loadRealloc();
 }
 
 // ── Burned domains — top-priority reallocate/cancel surface ──
@@ -261,19 +294,27 @@ function domainCard(d){
   const c=d.counts;
   const burnedRows = d.burned_mailboxes.map(m=>{
     const job = m.has_job?' · <span style="color:var(--good)">reallocated</span>':'';
-    const camp = m.in_campaign?'':' · <span style="color:var(--mut)">not in campaign</span>';
+    const camp = m.in_campaign ? '' : (m.idle
+      ? ' · <span style="color:var(--info)">idle (paused/completed campaign)</span>'
+      : ' · <span style="color:var(--mut)">not in campaign</span>');
     return `<div style="display:flex;gap:8px;padding:3px 0;font-family:var(--mono);font-size:12px;align-items:center">
       <span style="color:var(--crit)">✖</span>
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.email}</span>
       <span style="color:var(--mut);flex:0 0 auto">b ${m.bounce_3d==null?'—':m.bounce_3d+'%'} · r ${m.reply_3d==null?'—':m.reply_3d+'%'}${m.streak_days?' · '+m.streak_days+'d':''}${job}${camp}</span>
     </div>`;
   }).join('');
-  const collat = c.collateral ? `<div class="note" style="margin:6px 0;color:var(--serious);background:var(--serious-bg);border-color:var(--serious)">⚠ ${c.collateral} healthy inbox(es) still on this domain would ALSO be deleted on cancel: ${d.collateral.map(x=>x.email).join(', ')}. Reallocate/replace them first.</div>` : '';
+  const collat = c.collateral ? `<div class="note" style="margin:6px 0;color:var(--serious);background:var(--serious-bg);border-color:var(--serious)">⚠ ${c.collateral} healthy inbox(es) actively sending on this domain would ALSO be deleted on cancel: ${d.collateral.map(x=>x.email).join(', ')}. Reallocate/replace them first.</div>` : '';
   const needR = d.need_reallocate.length;
-  const reBtn = d.source==='acquisition'
-    ? `<span class="eye">acquisition — no reserve; cancel only</span>`
-    : (needR ? `<button class="btn pri sm" onclick="reallocateDomain('${d.domain}')">Reallocate ${needR} burned${d.reserve_ok?'':' (low reserve)'}</button>`
-             : `<span class="eye" style="color:var(--good)">✓ burned reallocated</span>`);
+  const acqHint = d.source==='acquisition' ? ' idle-acq' : '';
+  let reBtn;
+  if(needR){
+    reBtn = d.reserve_ok
+      ? `<button class="btn pri sm" onclick="reallocateDomain('${d.domain}')">Reallocate ${needR} burned</button>`
+      : `<button class="btn pri sm" disabled title="compatible reserve: ${d.reserve_pool}">Reallocate ${needR} — reserve ${d.reserve_pool}${acqHint} (warm more)</button>`;
+  } else {
+    const idleBurned = d.burned_mailboxes.some(m=>m.idle || !m.in_campaign);
+    reBtn = `<span class="eye" style="color:var(--good)">✓ ${idleBurned?'burned not actively sending — cancel directly':'burned reallocated'}</span>`;
+  }
   const canBtn = d.scheduled
     ? `<span class="eye" style="color:var(--info)">⏳ scheduled for removal</span>`
     : `<button class="btn danger sm" onclick="cancelDomain('${d.domain}')">Cancel domain${d.clean_cancel?'':' ⚠'}</button>`;
@@ -304,8 +345,8 @@ async function reallocateDomain(domain){
   el.textContent='reallocating…';
   const r=await POST({emails,confirm:true});
   if(r.error){ el.textContent='✖ '+r.error; return; }
-  el.textContent=`✓ reallocated ${r.swapped}. ⚠ Hit "Reallocate mailboxes" once per affected campaign in SmartLead. This domain is now safer to cancel.`;
-  setTimeout(()=>{loadDomains();load();},1600);
+  el.textContent=`✓ reallocated ${r.swapped}. ⚠ Hit "Reallocate mailboxes" per campaign in the checklist below, then cancel the domain. This domain is now safer to cancel.`;
+  setTimeout(()=>{loadDomains();loadRealloc();load();},1600);
 }
 async function cancelDomain(domain){
   const d=DOMAINS.find(x=>x.domain===domain); if(!d)return;

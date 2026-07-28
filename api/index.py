@@ -439,6 +439,31 @@ def health_reallocate():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-reallocate-campaigns", methods=["GET", "POST", "OPTIONS"])
+def health_reallocate_campaigns():
+    """The full-name checklist of campaigns that had sender swaps and still need
+    SmartLead's manual 'Reallocate mailboxes' click (no API for that step).
+      GET  -> {campaigns:[{name,status}], count}   (ACTIVE first)
+      POST {done: '<full name>'} -> tick one off after you've reallocated it."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import health_replace as hr
+        if request.method == "POST":
+            name = (request.get_json(silent=True) or {}).get("done")
+            if not name:
+                return _cors(jsonify({"error": "done (campaign name) required"})), 400
+            return _cors(jsonify(hr.clear_reallocation_campaign(name)))
+        return _cors(jsonify(hr.reallocation_campaigns()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-cancel-domain", methods=["POST", "OPTIONS"])
 def health_cancel_domain():
     """Schedule whole-domain removal in Zapmail (mailboxes deleted on next billing
