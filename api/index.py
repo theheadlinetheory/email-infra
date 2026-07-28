@@ -216,6 +216,10 @@ def zapmail_removals_route():
       GET  ?action=summary   -> pending vs removed registry
            ?action=check     -> run the diff now (dry_run unless &commit=1)
            ?action=flush     -> return+clear queued Slack messages (post via MCP)
+           ?action=test      -> post a test line through post_slack(); the reply
+                                says whether it went via 'webhook' or was 'queued'
+                                (i.e. whether SLACK_ZAPMAIL_WEBHOOK is really set
+                                on this deployment). Optional &msg=...
       POST {action:'register', domains:[...], source:'manual'} -> add to registry
     """
     if request.method == "OPTIONS":
@@ -240,6 +244,14 @@ def zapmail_removals_route():
             return _cors(jsonify(zr.check_removals(dry_run=not commit)))
         if action == "flush":
             return _cors(jsonify({"messages": zr.flush_pending()}))
+        if action == "test":
+            msg = request.args.get("msg") or (
+                ":wrench: Zapmail removal watcher — webhook test. If you can read "
+                "this in #zapmail-billing, removal alerts will land here.")
+            return _cors(jsonify({
+                "posted_via": zr.post_slack(msg),
+                "webhook_configured": bool(zr.SLACK_WEBHOOK),
+            }))
         return _cors(jsonify({"error": "unknown action"})), 400
     except Exception as e:
         import traceback
