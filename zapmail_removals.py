@@ -91,12 +91,16 @@ def _get_page(page):
     return None
 
 
+DOMID_KEY = "zm_domain_ids"   # cached {domain: zapmail_domain_id}, refreshed on each full scan
+
+
 def snapshot_mailboxes():
     """Full scan of every Zapmail mailbox. Returns
     {email: {"domain": d, "id": mbx_id, "status": s}} or None if the scan
     could not be completed (never overwrite a good snapshot with a partial one).
-    """
-    out, page, tot, failed = {}, 1, 99, 0
+    Side effect: on a complete scan, refreshes the cached domain-name -> id map
+    (DOMID_KEY) so cancel_domains() can resolve ids instantly."""
+    out, dom_ids, page, tot, failed = {}, {}, 1, 99, 0
     while page <= tot:
         d = _get_page(page)
         if not d:
@@ -106,6 +110,8 @@ def snapshot_mailboxes():
         tot = d.get("totalPages", 1)
         for dom in d.get("domains", []):
             dn = dom.get("domain")
+            if dn and dom.get("id"):
+                dom_ids[dn] = dom.get("id")
             for m in (dom.get("mailboxes") or []):
                 email = f"{m.get('username')}@{dn}"
                 out[email] = {"domain": dn, "id": m.get("id"), "status": m.get("status")}
@@ -113,7 +119,66 @@ def snapshot_mailboxes():
     if failed:
         # Partial scan -> unsafe to diff (would look like mass removals).
         return None
+    if dom_ids:
+        store.set_state(DOMID_KEY, {"map": dom_ids, "taken": _now_iso()})
     return out
+
+
+def resolve_domain_ids(domains):
+    """Map domain names -> Zapmail ids. Reads the cached map first; live-scans
+    (paged, early-exit) only for domains not in the cache."""
+    cached = (store.get_state(DOMID_KEY) or {}).get("map", {})
+    want = {d.lower(): d for d in domains}
+    found, missing = {}, []
+    for low, orig in want.items():
+        # cache keys are the canonical domain names
+        hit = next((v for k, v in cached.items() if k.lower() == low), None)
+        if hit:
+            found[orig] = hit
+        else:
+            missing.append(orig)
+    if missing:
+        miss = {m.lower() for m in missing}
+        page, tot = 1, 99
+        while page <= tot and miss:
+            d = _get_page(page)
+            if not d:
+                page += 1
+                continue
+            tot = d.get("totalPages", 1)
+            for dom in d.get("domains", []):
+                dn = (dom.get("domain") or "")
+                if dn.lower() in miss and dom.get("id"):
+                    found[want[dn.lower()]] = dom.get("id")
+                    miss.discard(dn.lower())
+            page += 1
+    return {"found": found, "missing": [d for d in domains if d not in found]}
+
+
+def cancel_domains(domains, dry_run=True, source="dashboard-cancel"):
+    """Schedule a Zapmail whole-domain removal (mailboxes deleted on next billing
+    date) AND register the domains with the removal watcher so the Slack bot alerts
+    when they actually cancel. `domains` is a list of domain names.
+
+    Dry-run resolves ids and reports what would be cancelled without calling Zapmail."""
+    if not domains:
+        return {"error": "no domains given"}
+    res = resolve_domain_ids(domains)
+    found, missing = res["found"], res["missing"]
+    plan = {"resolved": found, "missing": missing,
+            "count": len(found), "not_in_zapmail": missing}
+    if dry_run:
+        return {"dry_run": True, **plan}
+    if not found:
+        return {"error": "none of these domains resolve to a Zapmail id "
+                         "(external / already removed?)", **plan}
+    r = requests.put(f"{ZBASE}/mailboxes/scheduled-removal", headers=ZH,
+                     json={"domainIds": list(found.values()), "remove": True}, timeout=90)
+    ok = r.status_code in (200, 201)
+    reg = register_domains(list(found.keys()), source=source) if ok else {"added": 0}
+    return {"ok": ok, "status_code": r.status_code, "response": r.text[:200],
+            "scheduled": list(found.keys()), "missing": missing,
+            "registered": reg.get("added", 0), **({} if ok else {"error": "zapmail rejected the request"})}
 
 
 # ---------------------------------------------------------------------------

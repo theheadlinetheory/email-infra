@@ -400,6 +400,70 @@ def health_replace_all():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-domains")
+def health_domains():
+    """Domain-grouped view of the burned fleet — the top-priority reallocate/cancel
+    surface. Ranks domains by burned count (3->2->1) with collateral + reserve +
+    scheduled state so cancellations are made per whole domain (how Zapmail bills)."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import health_domains as hd
+        return _cors(jsonify(hd.domain_view()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-reallocate", methods=["POST", "OPTIONS"])
+def health_reallocate():
+    """Reallocate an explicit set of burned inboxes: remove each from its campaign(s)
+    and swap in a niche-matched reserve. Body {emails:[...], confirm}. confirm=false
+    is a dry-run (reserve sufficiency per niche; acquisition inboxes reported blocked)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or []
+    if not emails:
+        return _cors(jsonify({"error": "emails required"})), 400
+    try:
+        import health_replace as hr
+        res = hr.reallocate_emails(emails, confirm=bool(body.get("confirm")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-cancel-domain", methods=["POST", "OPTIONS"])
+def health_cancel_domain():
+    """Schedule whole-domain removal in Zapmail (mailboxes deleted on next billing
+    date) AND register the domains with the removal watcher so the Slack bot alerts
+    on actual cancellation. Body {domains:[...], confirm}. confirm=false is a dry-run
+    (resolves Zapmail ids, flags external/unknown domains)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    domains = body.get("domains") or []
+    if not domains:
+        return _cors(jsonify({"error": "domains required"})), 400
+    try:
+        import zapmail_removals as zr
+        res = zr.cancel_domains(domains, dry_run=not bool(body.get("confirm")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-buy-plan")
 def health_buy_plan():
     """Dry-run plan to replenish the warmed reserve. ?target=N. Buys nothing."""
