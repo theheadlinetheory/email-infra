@@ -197,7 +197,50 @@ def health_snapshot():
     store._CACHE_WRITE_ENABLED = True
     try:
         import health_snapshot as hs
-        return _cors(jsonify(hs.snapshot_daily()))
+        out = hs.snapshot_daily()
+        # Piggyback the daily Zapmail removal watcher (non-fatal).
+        try:
+            import zapmail_removals as zr
+            out["zapmail_removals"] = zr.check_removals()
+        except Exception as ze:
+            out["zapmail_removals"] = {"error": str(ze)}
+        return _cors(jsonify(out))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/zapmail-removals", methods=["GET", "POST", "OPTIONS"])
+def zapmail_removals_route():
+    """Zapmail mailbox-removal watcher.
+      GET  ?action=summary   -> pending vs removed registry
+           ?action=check     -> run the diff now (dry_run unless &commit=1)
+           ?action=flush     -> return+clear queued Slack messages (post via MCP)
+      POST {action:'register', domains:[...], source:'manual'} -> add to registry
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import zapmail_removals as zr
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            if body.get("action") == "register":
+                return _cors(jsonify(zr.register_domains(
+                    body.get("domains") or [], body.get("source", "manual"))))
+            return _cors(jsonify({"error": "unknown action"})), 400
+        action = request.args.get("action", "summary")
+        if action == "summary":
+            return _cors(jsonify(zr.pending_summary()))
+        if action == "check":
+            commit = request.args.get("commit") in ("1", "true")
+            return _cors(jsonify(zr.check_removals(dry_run=not commit)))
+        if action == "flush":
+            return _cors(jsonify({"messages": zr.flush_pending()}))
+        return _cors(jsonify({"error": "unknown action"})), 400
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
