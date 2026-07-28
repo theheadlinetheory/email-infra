@@ -439,6 +439,89 @@ def _burned_for_client(client: str) -> list[str]:
             and r["email"] not in handled]
 
 
+def _run_swaps(emails: list[str]) -> dict:
+    """Core reallocation loop: flag -> assign niche-matched reserve -> swap
+    (re-tag + campaign add/remove + forwarding) for each email. Assumes reserve
+    sufficiency was already checked by the caller."""
+    create_jobs(emails)
+    want_set = set(emails)
+    swapped, failed, old_to_cancel, reserve_used = 0, [], [], []
+    for j in [x for x in list_jobs() if x.get("old_email") in want_set
+              and x["status"] in ("flagged", "reserved")]:
+        r1 = advance(j["id"], "reserve")
+        if r1.get("error"):
+            failed.append({"email": j["old_email"], "stage": "reserve", "error": r1["error"]})
+            continue
+        r2 = advance(j["id"], "swap", confirm=True)
+        if r2.get("error"):
+            failed.append({"email": j["old_email"], "stage": "swap", "error": r2["error"]})
+            continue
+        swapped += 1
+        old_to_cancel.append(j["old_email"])
+        reserve_used.append((r1.get("job", {}) or {}).get("reserve_email"))
+    return {"swapped": swapped, "failed": failed,
+            "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
+
+
+def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
+    """Reallocate an explicit set of burned inboxes (any client/domain) — remove
+    each from its campaign(s) and swap in a niche-matched reserve. Used by the
+    domain-priority view's per-domain / per-inbox 'Reallocate' button so it works
+    from the frontend with no Claude session. Dry-run reports reserve sufficiency.
+
+    Acquisition inboxes have no reserve pool (THT-branded, all occupied) — they
+    can't be reallocated, only cancelled; those are reported as blocked."""
+    # drop ones that already have an in-flight job (avoid double-swapping)
+    handled = {j["old_email"] for j in _load().get("jobs", [])
+               if j.get("status") != "cancelled"}
+    emails = [e for e in emails if e and e not in handled]
+    if not emails:
+        return {"dry_run": not confirm, "error": "nothing to reallocate (all already have jobs)",
+                "reallocatable": 0}
+
+    # group by required niche to check reserve per niche
+    rs = reserve_summary().get("available_by_niche", {})
+    per_niche: dict[str, list] = {}
+    blocked = []
+    for e in emails:
+        j = {"old_email": e, "client": None}
+        if _is_acquisition({"old_email": e}):
+            blocked.append({"email": e, "reason": "acquisition — no reserve to swap in; cancel only"})
+            continue
+        n = required_niche(j)
+        per_niche.setdefault(n, []).append(e)
+
+    # reserve sufficiency: exact niche + generic (generic can pull from anything)
+    need_report, ok = {}, True
+    gen_avail = rs.get("generic", 0) + rs.get("landscaping", 0) + rs.get("hvac", 0)
+    for n, es in per_niche.items():
+        pool = gen_avail if n == "generic" else rs.get(n, 0) + rs.get("generic", 0)
+        need_report[n] = {"need": len(es), "reserve": pool, "enough": pool >= len(es)}
+        if pool < len(es):
+            ok = False
+
+    plan = {"reallocatable": sum(len(v) for v in per_niche.values()),
+            "blocked": blocked, "by_niche": need_report, "enough": ok,
+            "emails": [e for es in per_niche.values() for e in es]}
+    if not confirm:
+        return {"dry_run": True, **plan}
+    if not plan["emails"]:
+        return {"error": "no reallocatable inboxes (all acquisition or already handled)", **plan}
+    if not ok:
+        return {"error": "not enough compatible reserve — warm more or free up a client", **plan}
+
+    res = _run_swaps(plan["emails"])
+    try:
+        store.log_monitor_event("health_reallocate", {"swapped": res["swapped"],
+                                                       "failed": len(res["failed"])})
+    except Exception:
+        pass
+    return {"ok": True, **res, "blocked": blocked,
+            "note": f"Reallocated {res['swapped']} inbox(es) (reserve swapped in, burned removed "
+                    f"from campaign). Hit 'Reallocate mailboxes' once per affected campaign in "
+                    f"SmartLead, then the burned domains are safe to cancel."}
+
+
 def replace_all_burned(client: str, confirm: bool = False) -> dict:
     """One-shot: for every burned inbox of a client, flag -> assign niche-matched
     reserve -> swap (re-tag + campaign add/remove + forwarding). Dry-run reports
@@ -459,28 +542,15 @@ def replace_all_burned(client: str, confirm: bool = False) -> dict:
         return {"error": f"only {pool} compatible reserve inboxes for {len(emails)} burned "
                          f"({want} or generic) — warm more or free up a {want} client", **plan}
 
-    create_jobs(emails)
-    want_set = set(emails)
-    swapped, failed, old_to_cancel, reserve_used = 0, [], [], []
-    for j in [x for x in list_jobs() if x.get("old_email") in want_set
-              and x["status"] in ("flagged", "reserved")]:
-        r1 = advance(j["id"], "reserve")
-        if r1.get("error"):
-            failed.append({"email": j["old_email"], "stage": "reserve", "error": r1["error"]})
-            continue
-        r2 = advance(j["id"], "swap", confirm=True)
-        if r2.get("error"):
-            failed.append({"email": j["old_email"], "stage": "swap", "error": r2["error"]})
-            continue
-        swapped += 1
-        old_to_cancel.append(j["old_email"])
-        reserve_used.append((r1.get("job", {}) or {}).get("reserve_email"))
+    res = _run_swaps(emails)
+    swapped, failed = res["swapped"], res["failed"]
     try:
         store.log_monitor_event("health_replace_all", {
             "client": client, "swapped": swapped, "failed": len(failed)})
     except Exception:
         pass
     return {"ok": True, "client": client, "swapped": swapped, "failed": failed,
-            "reserve_used": reserve_used, "old_to_cancel": old_to_cancel, "niche": want,
+            "reserve_used": res["reserve_used"], "old_to_cancel": res["old_to_cancel"],
+            "niche": want,
             "note": f"Swapped {swapped} inbox(es). Now hit 'Reallocate mailboxes' once on "
                     f"{client}'s campaign in SmartLead, then cancel the old inboxes."}
