@@ -52,6 +52,7 @@ SLACK_WEBHOOK = (
 SNAP_KEY = "zm_mailbox_snapshot"      # last full inventory {email: {...}}
 REG_KEY = "zm_removal_registry"       # {email: {domain, source, first_seen, removed_date, notified}}
 PENDING_MSG_KEY = "zm_removal_pending_msgs"  # queued Slack msgs when no webhook set
+HEARTBEAT_KEY = "zm_removal_last_check"      # {ts, ok, scanned, error, fails} — see _beat()
 
 # Domains we scheduled for removal via the API (seed for the registry).
 API_SCHEDULED_DOMAINS = [
@@ -267,12 +268,37 @@ def _format_alert(removed):
 # Main daily check
 # ---------------------------------------------------------------------------
 
+def _beat(ok, dry_run, scanned=None, error=None):
+    """Record the outcome of a daily check so a silent watcher is distinguishable
+    from a quiet one. Without this, 'no Slack alert' means either 'nothing was
+    removed' or 'the check has been dead for a week' — and we'd act on the wrong
+    one. Alerts once a failure looks sustained (2 in a row), then weekly."""
+    if dry_run:
+        return
+    prev = store.get_state(HEARTBEAT_KEY) or {}
+    fails = 0 if ok else int(prev.get("fails") or 0) + 1
+    store.set_state(HEARTBEAT_KEY, {
+        "ts": _now_iso(), "ok": ok, "scanned": scanned, "error": error,
+        "fails": fails, "last_ok": _now_iso() if ok else prev.get("last_ok"),
+    })
+    if fails == 2 or (fails > 2 and fails % 7 == 0):
+        post_slack(
+            f":warning: Zapmail removal watcher has failed {fails} runs in a row "
+            f"— removals may be going undetected. Last error: {error or 'unknown'}. "
+            f"Last good run: {prev.get('last_ok') or 'never'}.")
+
+
 def check_removals(dry_run=False):
     """Snapshot the fleet, diff against the last snapshot, notify on removals.
     A mailbox counts as removed if it was ACTIVE last time and is now gone or
     EXPIRED. Safe to run repeatedly (already-notified removals aren't re-sent)."""
-    current = snapshot_mailboxes()
+    try:
+        current = snapshot_mailboxes()
+    except Exception as e:                       # network/API blowup, not just a bad page
+        _beat(False, dry_run, error=f"{type(e).__name__}: {e}")
+        return {"error": f"zapmail scan raised: {e}"}
     if current is None:
+        _beat(False, dry_run, error="incomplete scan (a page failed)")
         return {"error": "zapmail scan incomplete — skipped (snapshot not updated)"}
 
     prev = store.get_state(SNAP_KEY) or {}
@@ -285,6 +311,7 @@ def check_removals(dry_run=False):
         if not dry_run:
             store.set_state(SNAP_KEY, {"mailboxes": current, "taken": _now_iso()})
         result["note"] = "baseline established"
+        _beat(True, dry_run, scanned=len(current))
         return result
 
     reg = _registry()
@@ -324,6 +351,7 @@ def check_removals(dry_run=False):
     if not dry_run:
         store.set_state(SNAP_KEY, {"mailboxes": current, "taken": _now_iso()})
 
+    _beat(True, dry_run, scanned=len(current))
     return result
 
 
@@ -343,4 +371,8 @@ def pending_summary(current=None):
         "removed_domains": len(removed),
         "removed_mailboxes": sum(len(v) for v in removed.values()),
         "removed": removed,
+        # Proof the watcher is alive — an empty 'removed' means nothing if the
+        # daily check hasn't actually run.
+        "last_check": store.get_state(HEARTBEAT_KEY) or {"ts": None, "note": "never run"},
+        "snapshot_taken": (store.get_state(SNAP_KEY) or {}).get("taken"),
     }

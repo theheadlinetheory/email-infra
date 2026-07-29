@@ -195,19 +195,23 @@ def health_snapshot():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     import db as store
     store._CACHE_WRITE_ENABLED = True
+    import traceback
+    out, status = {}, 200
     try:
         import health_snapshot as hs
         out = hs.snapshot_daily()
-        # Piggyback the daily Zapmail removal watcher (non-fatal).
-        try:
-            import zapmail_removals as zr
-            out["zapmail_removals"] = zr.check_removals()
-        except Exception as ze:
-            out["zapmail_removals"] = {"error": str(ze)}
-        return _cors(jsonify(out))
     except Exception as e:
-        import traceback
-        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+        out, status = {"error": str(e), "trace": traceback.format_exc()}, 500
+
+    # The Zapmail removal watcher piggybacks this cron (Hobby allows 1 cron), but
+    # it must NOT be collateral damage when the health snapshot fails — a missed
+    # run means a mailbox cancellation goes unnoticed and we can't bill-optimise.
+    try:
+        import zapmail_removals as zr
+        out["zapmail_removals"] = zr.check_removals()
+    except Exception as ze:
+        out["zapmail_removals"] = {"error": str(ze)}
+    return _cors(jsonify(out)), status
 
 
 @app.route("/api/zapmail-removals", methods=["GET", "POST", "OPTIONS"])
