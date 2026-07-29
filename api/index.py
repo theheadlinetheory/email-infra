@@ -416,6 +416,21 @@ def health_replace_all():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-disconnected")
+def health_disconnected():
+    """Inboxes disconnected from SmartLead (smtp auth broken). Splits critical
+    (in an ACTIVE campaign — silently not sending) from idle. Drives the always-on
+    top-of-page alert."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import health_disconnected as hdc
+        return _cors(jsonify(hdc.disconnected_view()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-domains")
 def health_domains():
     """Domain-grouped view of the burned fleet — the top-priority reallocate/cancel

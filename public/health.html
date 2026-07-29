@@ -87,9 +87,27 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 .empty{padding:26px;text-align:center;color:var(--ink2)}
 .msg{margin:12px 2px;font-family:var(--mono);font-size:12px;color:var(--info)}
 @media(max-width:820px){.kpis{grid-template-columns:repeat(3,1fr)}}
+/* Disconnected-inbox critical alert */
+#dcbanner{position:sticky;top:0;z-index:900;display:none}
+#dcbanner.on{display:block}
+.dcbar{background:linear-gradient(90deg,#3a0d0d,#7a1a1a);border-bottom:2px solid var(--crit);
+  color:#fff;padding:11px 16px;display:flex;align-items:center;gap:12px;font-weight:600;
+  box-shadow:0 4px 18px rgba(229,89,90,.35);animation:dcpulse 1.6s ease-in-out infinite}
+@keyframes dcpulse{0%,100%{box-shadow:0 4px 18px rgba(229,89,90,.30)}50%{box-shadow:0 4px 26px rgba(229,89,90,.75)}}
+.dcbar .dot{width:11px;height:11px;border-radius:50%;background:#ff5a5a;flex:0 0 auto;box-shadow:0 0 0 0 rgba(255,90,90,.7);animation:dcping 1.4s infinite}
+@keyframes dcping{0%{box-shadow:0 0 0 0 rgba(255,90,90,.7)}70%{box-shadow:0 0 0 12px rgba(255,90,90,0)}100%{box-shadow:0 0 0 0 rgba(255,90,90,0)}}
+.dcbar .btn{margin-left:auto;background:#fff;color:#7a1a1a;border-color:#fff;font-weight:700}
+.dcbar .btn.ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.5)}
+.dcmodal{position:fixed;inset:0;z-index:1000;background:rgba(4,6,10,.72);display:flex;align-items:flex-start;justify-content:center;padding:6vh 16px;overflow:auto}
+.dcbox{background:var(--surface);border:2px solid var(--crit);border-radius:14px;max-width:680px;width:100%;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.dcbox h2{margin:0 0 4px;color:var(--crit);font-size:19px}
+.dcrow{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px}
+.dcbox .x{float:right;cursor:pointer;color:var(--mut);font-size:20px;line-height:1;background:none;border:none}
 </style>
 </head>
 <body>
+<div id="dcbanner" role="alert"></div>
+<div id="dcmodal" class="dcmodal" style="display:none"><div class="dcbox" id="dcbox"></div></div>
 <header><div class="hbar">
   <div class="logo">◈</div>
   <div><b>Inbox Health</b><div class="sub">THT · deliverability ops</div></div>
@@ -242,6 +260,7 @@ async function load(){
     try { renderAlerts(d.alerts, d.alert_summary); } catch(e){ console.error('renderAlerts', e); }
     try { loadDomains(); } catch(e){ console.error('loadDomains', e); }
     try { loadRealloc(); } catch(e){ console.error('loadRealloc', e); }
+    try { loadDisconnected(); } catch(e){ console.error('loadDisconnected', e); }
   }catch(e){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>'+e+'</td></tr>'; }
 }
 
@@ -272,6 +291,49 @@ async function reallocDone(i){
   await fetch(api('/api/health-reallocate-campaigns'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({done:c.name})});
   loadRealloc();
 }
+
+// ── Disconnected-from-SmartLead critical alert (always-on, top of page) ──
+let DC={critical:[],idle:[],critical_count:0,idle_count:0}, dcSeen=false;
+async function loadDisconnected(){
+  try{
+    const r=await fetch(api('/api/health-disconnected'),{credentials:'include'}); if(!r.ok)return;
+    DC=await r.json(); renderDcBanner();
+  }catch(e){ console.error('loadDisconnected',e); }
+}
+function renderDcBanner(){
+  const b=document.getElementById('dcbanner');
+  const n=DC.critical_count||0, idle=DC.idle_count||0;
+  if(!n && !idle){ b.className=''; b.innerHTML=''; return; }
+  b.className='on';
+  const label = n ? `${n} inbox${n>1?'es':''} DISCONNECTED from SmartLead — silently NOT sending`
+                  : `${idle} disconnected inbox${idle>1?'es':''} (not in an active campaign)`;
+  b.innerHTML=`<div class="dcbar"><span class="dot"></span><span>⚠ ${label}</span>
+    <button class="btn sm" onclick="openDcModal()">View &amp; fix</button></div>`;
+  if(n && !dcSeen){ dcSeen=true; openDcModal(); }   // auto-pop once per load when critical
+}
+function openDcModal(){
+  const m=document.getElementById('dcmodal'), box=document.getElementById('dcbox');
+  const crit=DC.critical||[], idle=DC.idle||[];
+  const rows=(arr,cl)=>arr.map(r=>`<div class="dcrow">
+     <span style="color:var(--crit)">⛔</span>
+     <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.email}</span>
+     <span style="color:var(--mut);flex:0 0 auto;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.client||''}</span>
+     <span style="color:${cl};flex:0 0 auto">${(r.active_campaigns&&r.active_campaigns.length)?'active campaign':(r.status||'')}</span>
+   </div>`).join('');
+  box.innerHTML=`<button class="x" onclick="closeDcModal()">×</button>
+    <h2>⚠ Inboxes disconnected from SmartLead</h2>
+    <div class="eye" style="margin-bottom:8px">SMTP/IMAP auth broke — these have silently stopped sending. Reconnect them in SmartLead (Email Accounts → reconnect), or an auto-resolver can retry the connection.</div>
+    ${crit.length?`<div style="margin-top:8px;font-weight:700;color:var(--crit)">Critical — in an ACTIVE campaign (${crit.length})</div>${rows(crit,'var(--crit)')}`:''}
+    ${idle.length?`<div style="margin-top:14px;font-weight:700;color:var(--mut)">Disconnected but not currently sending (${idle.length})</div>${rows(idle,'var(--mut)')}`:''}
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <a class="btn pri sm" href="https://app.smartlead.ai/app/email-accounts" target="_blank" rel="noopener">Open SmartLead accounts</a>
+      <button class="btn sm" onclick="closeDcModal()">Dismiss</button>
+    </div>`;
+  m.onclick=(e)=>{ if(e.target===m) closeDcModal(); };
+  m.style.display='flex';
+}
+function closeDcModal(){ document.getElementById('dcmodal').style.display='none'; }
+setInterval(loadDisconnected, 120000);   // re-check every 2 min for mid-session drops
 
 // ── Burned domains — top-priority reallocate/cancel surface ──
 let DOMAINS=[];
