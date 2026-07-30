@@ -427,6 +427,55 @@ def health_replace_all():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/buy-check", methods=["POST", "OPTIONS"])
+def buy_check():
+    """Spaceship availability + est price for a list of domains. Read-only, no spend."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    try:
+        import buy_inboxes as bi
+        return _cors(jsonify(bi.check_domains(body.get("domains") or [])))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/buy-plan", methods=["POST", "OPTIONS"])
+def buy_plan():
+    """Full cost preview + provisioning batch config for a purchase spec. No spend.
+    Body {owner, client_name?, provider:'google'|'outlook', inboxes_per_domain, domains:[...]}"""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    try:
+        import buy_inboxes as bi
+        return _cors(jsonify(bi.plan(body)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/buy-suggest", methods=["POST", "OPTIONS"])
+def buy_suggest():
+    """Zapmail AI domain-name suggestions from keywords. No spend. Body {keywords, count?}"""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    try:
+        import buy_inboxes as bi
+        return _cors(jsonify(bi.suggest_domains(body.get("keywords") or "", int(body.get("count") or 10))))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-disconnected")
 def health_disconnected():
     """Inboxes disconnected from SmartLead (smtp auth broken). Splits critical
