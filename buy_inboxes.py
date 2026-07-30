@@ -15,10 +15,29 @@ request, so the dashboard splits it:
 This module owns step 1 and the order bookkeeping; steps 2-3 wrap acq_outlook.
 """
 
+import random
 from datetime import datetime, timezone
 
 import db as store
 import setup as S
+
+# Brandable generic-service roots + suffixes for the in-dashboard suggester.
+# Roots deliberately AVOID ones already heavy in our infra (booking/callout/callback/
+# contractor/crew/repair/maintain/dispatch/turf/lawn/yard/grounds/landscape) so fresh
+# domains don't cluster into a detectable network.
+_GEN_ROOTS = [
+    "service", "jobsite", "onsite", "fieldwork", "quote", "sameday", "trusted", "local",
+    "worksite", "proteam", "project", "install", "upkeep", "schedule", "estimate",
+    "frontline", "rapid", "prime", "direct", "ready", "nextday", "core", "apex", "metro",
+    "summit", "handy", "taskforce", "fieldpro", "quicktask", "trade", "sitework", "callup",
+]
+_GEN_SUFFIX = ["pros", "hq", "crew", "team", "hub", "desk", "central", "group", "works",
+               "ops", "base", "squad", "point", "co"]
+_THEME_ROOTS = {
+    "hvac": ["hvac", "heating", "cooling", "climate", "airflow", "comfort", "furnace"],
+    "plumbing": ["plumb", "pipe", "drain", "waterworks", "leakfix", "flow"],
+    "landscaping": ["lawn", "yard", "turf", "grounds", "greenscape", "outdoor"],
+}
 
 ORDERS_KEY = "buy_orders"          # {orders: [ {id, owner, provider, domains, status, ...} ]}
 
@@ -77,6 +96,40 @@ def suggest_domains(keywords, count=10):
     # your own or retry" rather than looking broken.
     generating = isinstance(data, dict) and data.get("status") == "generating" and not out
     return {"suggestions": out, "generating": generating}
+
+
+def suggest_generic(count=12, tld="info", theme=None, max_checks=None):
+    """Generate brandable generic-service domain candidates and return `count`
+    that are actually available on Spaceship (with price). This is the reliable
+    in-dashboard replacement for the async Zapmail AI finder. Optional theme
+    ('hvac'/'plumbing'/'landscaping') flavours the names."""
+    tld = (tld or "info").lstrip(".").lower()
+    roots = list(_GEN_ROOTS)
+    if theme and theme.lower() in _THEME_ROOTS:
+        roots = _THEME_ROOTS[theme.lower()] + roots        # bias toward the niche
+    combos = []
+    for r in roots:
+        for s in _GEN_SUFFIX:
+            nm = f"{r}{s}"
+            if r != s and 6 <= len(nm) <= 24:
+                combos.append(nm)
+    random.shuffle(combos)
+    max_checks = max_checks or max(count * 4, 45)
+    out, checked, seen = [], 0, set()
+    for nm in combos:
+        if len(out) >= count or checked >= max_checks:
+            break
+        if nm in seen:
+            continue
+        seen.add(nm)
+        d = f"{nm}.{tld}"
+        checked += 1
+        try:
+            if bool(S.Spaceship.check_domain(d).get("available")):
+                out.append({"domain": d, "price": _domain_price(d)})
+        except Exception:
+            pass
+    return {"suggestions": out, "checked": checked, "found": len(out)}
 
 
 def check_domains(domains):
