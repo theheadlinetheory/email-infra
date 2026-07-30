@@ -132,6 +132,27 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   <div class="note" id="reallocnote" style="display:none">After each reallocation the dashboard moves the campaign's senders, but SmartLead needs a manual <b>Reallocate mailboxes</b> click per campaign to redistribute the lead queue (no API for that step). Work through these one by one and tick each off. Full campaign names — copy straight into SmartLead's search.</div>
   <div id="realloclist"></div>
 
+  <div class="sect"><h2>🛒 Buy inboxes &amp; domains</h2><span class="eye" id="buysub"></span></div>
+  <div class="note">Buy new domains (Spaceship) + inboxes (Zapmail) for acquisition or a client. <b>Nothing is charged until you confirm</b> — you see the exact cost first. Two steps: buy domains now, then <b>Provision inboxes</b> per order once DNS resolves (~15–60 min).</div>
+  <div class="panel" id="buypanel">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+      <div><span class="eye">For</span><br><select id="buyowner" onchange="buyOwnerChange()" style="margin-top:3px"><option value="acquisition">Acquisition</option><option value="client">Client</option></select></div>
+      <div id="buyclientwrap" style="display:none"><span class="eye">Client name</span><br><input id="buyclient" placeholder="e.g. Quantum Heating" style="margin-top:3px"></div>
+      <div><span class="eye">Provider</span><br><select id="buyprovider" style="margin-top:3px"><option value="google">Google</option><option value="outlook">Outlook</option></select></div>
+      <div><span class="eye">Inboxes / domain</span><br><input id="buyper" type="number" value="3" min="1" max="3" style="width:64px;margin-top:3px"></div>
+    </div>
+    <div style="margin-top:10px"><span class="eye">Domains (one per line)</span><br>
+      <textarea id="buydomains" rows="4" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px" placeholder="coolhvacleads2026.info&#10;heatingpros2026zz.com"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <button class="btn sm" onclick="buyCheck()">Check &amp; price</button>
+      <button class="btn pri sm" id="buyconfirm" disabled onclick="buyConfirm()">Confirm &amp; buy domains</button>
+    </div>
+    <div class="msg" id="buymsg"></div>
+    <div id="buypreview" style="margin-top:8px"></div>
+  </div>
+  <div id="buyorders" style="margin-top:10px"></div>
+
   <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
   <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
   <div class="panel tablewrap"><table>
@@ -261,6 +282,7 @@ async function load(){
     try { loadDomains(); } catch(e){ console.error('loadDomains', e); }
     try { loadRealloc(); } catch(e){ console.error('loadRealloc', e); }
     try { loadDisconnected(); } catch(e){ console.error('loadDisconnected', e); }
+    try { loadBuyOrders(); } catch(e){ console.error('loadBuyOrders', e); }
   }catch(e){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>'+e+'</td></tr>'; }
 }
 
@@ -334,6 +356,83 @@ function openDcModal(){
 }
 function closeDcModal(){ document.getElementById('dcmodal').style.display='none'; }
 setInterval(loadDisconnected, 120000);   // re-check every 2 min for mid-session drops
+
+// ── Buy inboxes & domains ──
+const _v = id => (document.getElementById(id).value||'').trim();
+let BUYPLAN=null;
+function buyOwnerChange(){ document.getElementById('buyclientwrap').style.display = _v('buyowner')==='client'?'':'none'; }
+function buySpec(){
+  return { owner:_v('buyowner'), client_name:_v('buyclient'), provider:_v('buyprovider'),
+           inboxes_per_domain:+_v('buyper')||3,
+           domains:(_v('buydomains').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean)) };
+}
+async function buyCheck(){
+  const el=document.getElementById('buypreview'); const spec=buySpec();
+  if(!spec.domains.length){ el.innerHTML='<span class="eye">enter at least one domain</span>'; return; }
+  document.getElementById('buymsg').textContent='checking availability + pricing…';
+  const p=await (await fetch(api('/api/buy-plan'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(spec)})).json();
+  document.getElementById('buymsg').textContent='';
+  if(p.error){ el.innerHTML='<span class="eye" style="color:var(--crit)">✖ '+p.error+'</span>'; return; }
+  BUYPLAN=p; renderBuyPreview(p);
+  document.getElementById('buyconfirm').disabled = !(p.counts.available>0);
+}
+function renderBuyPreview(p){
+  const rows=p.domains_checked.map(c=>{
+    const s=c.available===true?`<span style="color:var(--good)">available · $${c.price}</span>`
+      :c.available===false?`<span style="color:var(--mut)">taken</span>`
+      :`<span style="color:var(--warn)">? unknown</span>`;
+    return `<div class="dcrow"><span style="flex:1;font-family:var(--mono)">${c.domain}</span>${s}</div>`;
+  }).join('');
+  const c=p.cost;
+  document.getElementById('buypreview').innerHTML = rows +
+    `<div style="margin-top:8px;font-weight:600">${p.counts.available} available · ${p.counts.mailboxes} inboxes (${p.provider})<br>
+      <span style="color:var(--good)">$${c.domains_onetime} one-time domains + $${c.mailboxes_monthly}/mo inboxes = $${c.first_month_total} first month</span></div>`;
+}
+async function buyConfirm(){
+  if(!BUYPLAN) return; const spec=buySpec();
+  if(!confirm(`Register ${BUYPLAN.counts.available} domain(s) now for $${BUYPLAN.cost.domains_onetime} one-time?\n\nThen you'll provision ${BUYPLAN.counts.mailboxes} inboxes ($${BUYPLAN.cost.mailboxes_monthly}/mo) via "Provision inboxes now" once DNS resolves.\n\nThis spends money on the domains. Continue?`)) return;
+  document.getElementById('buymsg').textContent='registering domains…';
+  const r=await (await fetch(api('/api/buy-domains'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({...spec,confirm:true})})).json();
+  if(r.error){ document.getElementById('buymsg').textContent='✖ '+r.error; return; }
+  document.getElementById('buymsg').textContent=`✓ registered ${r.registered.length} domain(s)${r.failed&&r.failed.length?` · ${r.failed.length} failed`:''}. Order #${r.order_id} — wait for DNS, then Provision inboxes below.`;
+  BUYPLAN=null; document.getElementById('buyconfirm').disabled=true; document.getElementById('buypreview').innerHTML='';
+  loadBuyOrders();
+}
+async function loadBuyOrders(){
+  try{
+    const r=await fetch(api('/api/buy-orders'),{credentials:'include'}); if(!r.ok)return;
+    const d=await r.json(); renderBuyOrders(d.orders||[]);
+  }catch(e){ console.error('loadBuyOrders',e); }
+}
+function renderBuyOrders(orders){
+  const el=document.getElementById('buyorders');
+  document.getElementById('buysub').textContent = orders.length?`${orders.length} order(s)`:'';
+  if(!orders.length){ el.innerHTML=''; return; }
+  el.innerHTML = orders.map(o=>{
+    const rd=o.readiness||{};
+    const prov = o.status==='live' ? `<span class="eye" style="color:var(--good)">✓ inboxes live</span>`
+      : `<button class="btn pri sm" ${rd.all_ready?'':'disabled'} onclick="buyProvision(${o.id})">Provision inboxes now${rd.all_ready?'':' (DNS not ready)'}</button>`;
+    const who = o.owner==='client'? (o.client_name||'client') : 'acquisition';
+    return `<div class="panel" style="margin-bottom:8px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <b>Order #${o.id}</b> <span class="eye">${who} · ${o.provider} · ${(o.domains||[]).length} domains × ${o.inboxes_per_domain}</span>
+        <span style="margin-left:auto" class="eye">${o.status}${rd.ready_count!=null?` · DNS ${rd.ready_count}/${(o.domains||[]).length}`:''}</span>
+      </div>
+      <div style="margin-top:4px;font-family:var(--mono);font-size:11.5px;color:var(--mut)">${(o.domains||[]).join(', ')}</div>
+      <div style="margin-top:8px">${prov}</div>
+      <div class="msg" id="buyordmsg-${o.id}"></div>
+    </div>`;
+  }).join('');
+}
+async function buyProvision(oid){
+  const el=document.getElementById('buyordmsg-'+oid); el.textContent='checking DNS + provisioning plan…';
+  const r=await (await fetch(api('/api/buy-provision'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({order_id:oid,confirm:true})})).json();
+  if(r.error){ el.textContent='✖ '+r.error; return; }
+  el.textContent = r.provision_enabled===false
+    ? `DNS ready ${r.ready_count}/${(r.domains||[]).length}. ${r.note||''}`
+    : `✓ provisioned.`;
+  loadBuyOrders();
+}
 
 // ── Burned domains — top-priority reallocate/cancel surface ──
 let DOMAINS=[];
