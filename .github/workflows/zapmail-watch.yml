@@ -1,0 +1,58 @@
+name: Zapmail removal watch
+
+# Why this exists instead of the Vercel cron:
+# vercel.json declares `/api/health-snapshot` at `0 13 * * *`, but it has never
+# actually fired — inbox_health_daily had only 9 of 16 days, none of them at
+# 13:00, and the removal watcher's heartbeat never moved off a manual run. A
+# missed day means a Zapmail deletion date passes with no alert, which is the
+# one thing this system exists to prevent.
+#
+# Runs 4x/day so a single delayed/skipped run can't lose a date. The alert is
+# idempotent (each mailbox is flagged `date_notified` once), so extra runs are
+# free — they just re-confirm.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+    - cron: '0 8 * * *'
+    - cron: '0 14 * * *'
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: zapmail-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Zapmail removal check (deletion-date alerts + removal confirmation)
+        env:
+          PW: ${{ secrets.DASHBOARD_PW }}
+        run: |
+          set -euo pipefail
+          echo "Running Zapmail removal check..."
+          body=$(curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/zapmail-removals?action=check&commit=1&pw=${PW}")
+          echo "$body"
+          # A 200 with an {"error": ...} payload is still a failure — fail loudly
+          # so GitHub notifies, rather than logging it and moving on.
+          echo "$body" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+if d.get("error"):
+    sys.exit(f"removal check failed: {d[\"error\"]}")
+print(f"ok - scanned={d.get(\"scanned\")} removed={len(d.get(\"removed\") or [])} due={len(d.get(\"due\") or [])}")
+'
+
+      - name: Daily health snapshot (restores the job the dead cron was meant to run)
+        if: github.event.schedule == '0 2 * * *'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PW }}
+        run: |
+          set -euo pipefail
+          curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}" | head -c 2000
