@@ -39,13 +39,13 @@ jobs:
           echo "$body"
           # A 200 with an {"error": ...} payload is still a failure — fail loudly
           # so GitHub notifies, rather than logging it and moving on.
-          echo "$body" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-if d.get("error"):
-    sys.exit(f"removal check failed: {d[\"error\"]}")
-print(f"ok - scanned={d.get(\"scanned\")} removed={len(d.get(\"removed\") or [])} due={len(d.get(\"due\") or [])}")
-'
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "removal check failed: $(echo "$body" | jq -r '.error')" >&2
+            exit 1
+          fi
+          echo "ok - scanned=$(echo "$body" | jq -r '.scanned // "?"')" \
+               "removed=$(echo "$body" | jq -r '(.removed // []) | length')" \
+               "due=$(echo "$body" | jq -r '(.due // []) | length')"
 
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *'
