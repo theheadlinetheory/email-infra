@@ -347,15 +347,42 @@ function openDcModal(){
     <div class="eye" style="margin-bottom:8px">SMTP/IMAP auth broke — these have silently stopped sending. Reconnect them in SmartLead (Email Accounts → reconnect), or an auto-resolver can retry the connection.</div>
     ${crit.length?`<div style="margin-top:8px;font-weight:700;color:var(--crit)">Critical — in an ACTIVE campaign (${crit.length})</div>${rows(crit,'var(--crit)')}`:''}
     ${idle.length?`<div style="margin-top:14px;font-weight:700;color:var(--mut)">Disconnected but not currently sending (${idle.length})</div>${rows(idle,'var(--mut)')}`:''}
-    <div style="margin-top:16px;display:flex;gap:8px">
-      <a class="btn pri sm" href="https://app.smartlead.ai/app/email-accounts" target="_blank" rel="noopener">Open SmartLead accounts</a>
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn pri sm" onclick="resolveScan()">⚡ Auto-fix (reconnect + escalate)</button>
+      <a class="btn sm" href="https://app.smartlead.ai/app/email-accounts" target="_blank" rel="noopener">Open SmartLead accounts</a>
       <button class="btn sm" onclick="closeDcModal()">Dismiss</button>
-    </div>`;
+    </div>
+    <div class="msg" id="dcfix"></div>`;
   m.onclick=(e)=>{ if(e.target===m) closeDcModal(); };
   m.style.display='flex';
 }
 function closeDcModal(){ document.getElementById('dcmodal').style.display='none'; }
 setInterval(loadDisconnected, 120000);   // re-check every 2 min for mid-session drops
+
+// Auto-resolve: dry-run scan -> show plan -> confirm -> reconnect + escalate
+function _dcEsc(r){
+  const e=r.escalations||{};
+  const d=(e.delete_approvals||[]).length, w=(e.warmup_blocked||[]).length, u=(e.unknown||[]).length;
+  const parts=[];
+  if(d) parts.push(`${d} source-gone (needs delete/replace)`);
+  if(w) parts.push(`${w} warmup-blocked`);
+  if(u) parts.push(`${u} unknown`);
+  return parts.length?('escalate: '+parts.join(' · ')):'no escalations';
+}
+async function resolveScan(){
+  const el=document.getElementById('dcfix'); el.textContent='scanning all SmartLead accounts + classifying… (~1 min)';
+  const r=await (await fetch(api('/api/health-resolve'),{credentials:'include'})).json();
+  if(r.error){ el.textContent='✖ '+r.error; return; }
+  const rc=(r.reconnect_domains||[]).length;
+  if(!rc){ el.innerHTML=`${r.flagged} flagged · <b>0 auto-reconnectable</b> · ${_dcEsc(r)}. Nothing to auto-fix — the flagged inboxes need manual attention (see SmartLead).`; return; }
+  if(!confirm(`Auto-reconnect ${rc} domain(s) with a live Zapmail source (re-export re-auths OAuth, tags preserved)?\n\nThe rest are escalated, not touched: ${_dcEsc(r)}.\n\nContinue?`)){ el.textContent=''; return; }
+  el.textContent=`reconnecting ${rc} domain(s) via Zapmail re-export…`;
+  const d=await (await fetch(api('/api/health-resolve'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})})).json();
+  if(d.error){ el.textContent='✖ '+d.error; return; }
+  const rec=(d.recovered||[]).length, down=(d.reconnect_still_down||[]).length;
+  el.innerHTML=`✓ re-exported ${(d.reexported_domains||[]).length} domain(s) · <b>${rec} recovered</b>${down?` · ${down} still reconnecting (re-check shortly)`:''} · ${_dcEsc(d)}.`;
+  setTimeout(loadDisconnected, 3000);
+}
 
 // ── Buy inboxes & domains ──
 const _v = id => (document.getElementById(id).value||'').trim();
