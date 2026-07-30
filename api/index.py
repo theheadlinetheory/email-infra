@@ -540,6 +540,27 @@ def buy_provision_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-resolve", methods=["GET", "POST", "OPTIONS"])
+def health_resolve():
+    """Auto-resolve flagged SmartLead inboxes: reconnect (re-export) the ones with a
+    live Zapmail source, escalate the rest (source gone -> delete, warmup-block,
+    unknown). GET / POST-without-confirm = dry-run (classify only). POST {confirm:true}
+    re-exports the reconnect bucket and verifies. Never deletes."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    commit = request.method == "POST" and bool((request.get_json(silent=True) or {}).get("confirm"))
+    try:
+        import health_resolve as hr
+        return _cors(jsonify(hr.resolve(dry_run=not commit)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-disconnected")
 def health_disconnected():
     """Inboxes disconnected from SmartLead (smtp auth broken). Splits critical
