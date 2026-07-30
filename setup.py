@@ -66,8 +66,10 @@ PORKBUN_API = "https://api.porkbun.com/api/json/v3"
 PORKBUN_KEY = ENV.get("PORKBUN_API_KEY", "") or os.environ.get("PORKBUN_API_KEY", "")
 PORKBUN_SECRET = ENV.get("PORKBUN_SECRET_KEY", "") or os.environ.get("PORKBUN_SECRET_KEY", "")
 SPACESHIP_API = "https://spaceship.dev/api/v1"
-SPACESHIP_KEY = ENV.get("SPACESHIP_API_KEY", "") or os.environ.get("SPACESHIP_API_KEY", "")
-SPACESHIP_SECRET = ENV.get("SPACESHIP_SECRET_KEY", "") or os.environ.get("SPACESHIP_SECRET_KEY", "")
+# .strip() — a trailing newline pasted into a Vercel env var makes requests raise
+# InvalidHeader ("reserved character(s) in header value").
+SPACESHIP_KEY = (ENV.get("SPACESHIP_API_KEY", "") or os.environ.get("SPACESHIP_API_KEY", "")).strip()
+SPACESHIP_SECRET = (ENV.get("SPACESHIP_SECRET_KEY", "") or os.environ.get("SPACESHIP_SECRET_KEY", "")).strip()
 
 CLOUDNS_NAMESERVERS = [
     "pns61.cloudns.net",
