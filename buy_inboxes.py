@@ -15,7 +15,12 @@ request, so the dashboard splits it:
 This module owns step 1 and the order bookkeeping; steps 2-3 wrap acq_outlook.
 """
 
+from datetime import datetime, timezone
+
+import db as store
 import setup as S
+
+ORDERS_KEY = "buy_orders"          # {orders: [ {id, owner, provider, domains, status, ...} ]}
 
 # --- cost model (previews only; the real charge is confirmed at purchase) ---
 MAILBOX_MO = 3                      # Zapmail mailbox slot, $/month
@@ -145,3 +150,120 @@ def plan(spec):
         "batch_config": _batch_config(owner, client_name, provider, available, per),
         "ready_to_buy": len(available) > 0,
     }
+
+
+# ─────────────────────────── orders + execution ───────────────────────────
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _orders():
+    return (store.get_state(ORDERS_KEY) or {}).get("orders", [])
+
+
+def _save_orders(orders):
+    store.set_state(ORDERS_KEY, {"orders": orders})
+
+
+def _get_order(order_id):
+    return next((o for o in _orders() if o.get("id") == order_id), None)
+
+
+def buy_domains(spec, confirm=False):
+    """PHASE 1 — register the available domains on Spaceship + connect them to
+    Zapmail, and open an order. Dry-run unless confirm=True. SPENDS on domains
+    when confirm=True (the UI's Confirm click is the approval)."""
+    p = plan(spec)
+    available = [c["domain"] for c in p["domains_checked"] if c["available"]]
+    if not available:
+        return {"error": "no available domains to register", "plan": p}
+    if not confirm:
+        return {"dry_run": True, "would_register": available,
+                "cost": p["cost"], "plan": p}
+
+    registered, failed = [], []
+    for d in available:
+        try:
+            res = S.Spaceship.purchase_domain(d)
+            if res.get("success"):
+                registered.append(d)
+                try:
+                    S.Spaceship.set_nameservers(d)
+                except Exception:
+                    pass
+            else:
+                failed.append({"domain": d, "error": str(res.get("error"))[:140]})
+        except Exception as e:
+            failed.append({"domain": d, "error": str(e)[:140]})
+
+    # connect each registered domain to Zapmail (DNS still needs to propagate
+    # before mailboxes can be created — that's what "Provision inboxes" waits on)
+    connected = []
+    for d in registered:
+        try:
+            S.zm_connect_domain_single(d)
+            connected.append(d)
+        except Exception:
+            pass
+
+    orders = _orders()
+    oid = max([o.get("id", 0) for o in orders], default=0) + 1
+    order = {
+        "id": oid, "created": _now(),
+        "owner": spec.get("owner", "acquisition"),
+        "client_name": spec.get("client_name"),
+        "provider": p["provider"],
+        "inboxes_per_domain": p["inboxes_per_domain"],
+        "domains": registered, "connected": connected, "failed": failed,
+        "status": "domains_registered",       # -> provisioning -> live
+        "batch_config": p["batch_config"],
+        "mailboxes_created": [], "exported": [], "tagged": [], "warmed": [],
+    }
+    orders.append(order)
+    _save_orders(orders)
+    return {"ok": True, "order_id": oid, "registered": registered,
+            "connected": connected, "failed": failed, "status": "domains_registered",
+            "note": "Domains registered + connected to Zapmail. Wait ~15-60 min for "
+                    "DNS to propagate, then click 'Provision inboxes now' on the order."}
+
+
+def _zm_domain_state(domains):
+    """Look up each domain in Zapmail: id + DNS-ready flag (mailboxes can only be
+    created once NS resolve). Returns {domain: {id, dns_ready, mailboxes}}."""
+    want = {d.lower() for d in domains}
+    out = {}
+    try:
+        for zd in S.zm_list_domains():
+            name = (zd.get("domain") or "").lower()
+            if name in want:
+                dns_ready = (not zd.get("dnsAuthenticationInProgress")
+                             and not zd.get("dnsBoxInvalidNameServers")
+                             and (zd.get("status") == "ACTIVE"))
+                out[name] = {"id": zd.get("id"), "dns_ready": bool(dns_ready),
+                             "mailboxes": len(zd.get("mailboxes") or [])}
+    except Exception:
+        pass
+    return out
+
+
+def order_readiness(order_id):
+    """Per-domain DNS readiness for an order's 'Provision inboxes now' button."""
+    o = _get_order(order_id)
+    if not o:
+        return {"error": "order not found"}
+    st = _zm_domain_state(o.get("domains") or [])
+    rows = [{"domain": d, "dns_ready": st.get(d.lower(), {}).get("dns_ready", False),
+             "in_zapmail": d.lower() in st} for d in o.get("domains") or []]
+    return {"order_id": order_id, "domains": rows,
+            "all_ready": bool(rows) and all(r["dns_ready"] for r in rows),
+            "ready_count": sum(1 for r in rows if r["dns_ready"])}
+
+
+def list_orders():
+    """All buy-orders (most recent first), each with live DNS readiness."""
+    orders = sorted(_orders(), key=lambda o: o.get("id", 0), reverse=True)
+    for o in orders:
+        if o.get("status") == "domains_registered":
+            o["readiness"] = order_readiness(o["id"])
+    return {"orders": orders}

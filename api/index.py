@@ -476,6 +476,70 @@ def buy_suggest():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/buy-domains", methods=["POST", "OPTIONS"])
+def buy_domains_route():
+    """PHASE 1 — register available domains on Spaceship + connect to Zapmail, open
+    an order. Body {owner, client_name?, provider, inboxes_per_domain, domains, confirm}.
+    confirm=false is a dry-run; confirm=true SPENDS on domains (the Confirm click)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    try:
+        import buy_inboxes as bi
+        res = bi.buy_domains(body, confirm=bool(body.get("confirm")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/buy-orders", methods=["GET"])
+def buy_orders_route():
+    """All buy-orders with live DNS readiness (drives the 'Provision inboxes now' button)."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import buy_inboxes as bi
+        return _cors(jsonify(bi.list_orders()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/buy-provision", methods=["POST", "OPTIONS"])
+def buy_provision_route():
+    """PHASE 2 — provision inboxes for an order once its domains' DNS has resolved.
+    Body {order_id, confirm}. For now returns the readiness/plan; real mailbox
+    creation is enabled after a single-domain test."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    oid = body.get("order_id")
+    if oid is None:
+        return _cors(jsonify({"error": "order_id required"})), 400
+    try:
+        import buy_inboxes as bi
+        ready = bi.order_readiness(int(oid))
+        if ready.get("error"):
+            return _cors(jsonify(ready)), 400
+        # Execution wiring lands after the single-domain test; surface the plan now.
+        ready["note"] = ("Provisioning execution is being validated on a test domain "
+                         "before it spends — DNS readiness shown above.")
+        ready["provision_enabled"] = False
+        return _cors(jsonify(ready))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-disconnected")
 def health_disconnected():
     """Inboxes disconnected from SmartLead (smtp auth broken). Splits critical
