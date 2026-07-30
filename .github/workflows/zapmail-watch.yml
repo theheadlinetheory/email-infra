@@ -30,7 +30,7 @@ jobs:
     steps:
       - name: Zapmail removal check (deletion-date alerts + removal confirmation)
         env:
-          PW: ${{ secrets.DASHBOARD_PW }}
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
           set -euo pipefail
           echo "Running Zapmail removal check..."
@@ -51,7 +51,7 @@ print(f"ok - scanned={d.get(\"scanned\")} removed={len(d.get(\"removed\") or [])
         if: github.event.schedule == '0 2 * * *'
         continue-on-error: true
         env:
-          PW: ${{ secrets.DASHBOARD_PW }}
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
           set -euo pipefail
           curl -sS --max-time 290 \
