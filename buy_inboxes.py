@@ -76,14 +76,26 @@ def suggest_domains(keywords, count=10):
 
 def check_domains(domains):
     """Per-domain Spaceship availability + est price. Read-only."""
-    out = []
+    out, err = [], None
+    configured = True
+    try:
+        configured = S.Spaceship.is_configured()
+    except Exception as e:
+        configured, err = False, f"is_configured: {e}"[:160]
     for d in _norm(domains):
-        try:
-            avail = bool(S.Spaceship.check_domain(d).get("available"))
-        except Exception:
-            avail = None
+        avail = None
+        if configured:
+            try:
+                avail = bool(S.Spaceship.check_domain(d).get("available"))
+            except Exception as e:
+                err = err or f"{type(e).__name__}: {e}"[:160]
         out.append({"domain": d, "tld": _tld(d), "available": avail, "price": _domain_price(d)})
-    return {"domains": out}
+    res = {"domains": out}
+    if not configured:
+        res["error"] = "Spaceship not configured — set SPACESHIP_API_KEY / SPACESHIP_SECRET_KEY in Vercel env"
+    elif err:
+        res["error"] = err
+    return res
 
 
 def _batch_config(owner, client_name, provider, avail_domains, per):
