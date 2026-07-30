@@ -26,6 +26,7 @@ Runs daily by piggybacking the existing health-snapshot cron (Vercel Hobby only
 allows one cron). Also exposed at /api/zapmail-removals for manual runs.
 """
 
+import bisect
 import os
 import time
 from datetime import datetime, timezone
@@ -115,7 +116,10 @@ def snapshot_mailboxes():
                 dom_ids[dn] = dom.get("id")
             for m in (dom.get("mailboxes") or []):
                 email = f"{m.get('username')}@{dn}"
-                out[email] = {"domain": dn, "id": m.get("id"), "status": m.get("status")}
+                out[email] = {"domain": dn, "id": m.get("id"), "status": m.get("status"),
+                              # createdAt is what lets us derive the deletion date
+                              # (see derive_removal_dates)
+                              "created": m.get("createdAt")}
         page += 1
     if failed:
         # Partial scan -> unsafe to diff (would look like mass removals).
@@ -183,6 +187,62 @@ def cancel_domains(domains, dry_run=True, source="dashboard-cancel"):
 
 
 # ---------------------------------------------------------------------------
+# Deletion dates
+#
+# Zapmail's UI shows "scheduled for deletion on <date>" per mailbox, but NO
+# public API field carries it — /domains omits it entirely and there is no
+# subscription->domain join (probed: /mailboxes 500s, /subscriptions/{id},
+# ?includeDomains, /domains/{id}/mailboxes all 404).
+#
+# It is derivable, though. Mailboxes are provisioned seconds after the
+# subscription that pays for them, and Zapmail deletes a scheduled mailbox on
+# that subscription's billing date (`periodEnd`). So: match each mailbox's
+# createdAt to the newest subscription created at-or-before it.
+#
+# Verified against the UI: Lars' 18 mailboxes (subscription created
+# 2026-04-10T01:46:36, mailboxes 01:46:40) derive to 2026-08-09 — exactly the
+# date the Zapmail dashboard shows.
+# ---------------------------------------------------------------------------
+
+def fetch_subscriptions():
+    """ACTIVE subscriptions sorted by creation time, or None if the call failed."""
+    try:
+        r = requests.get(f"{ZBASE}/subscriptions", headers=ZH, timeout=60)
+    except requests.RequestException:
+        return None
+    if r.status_code != 200 or not r.text.strip():
+        return None
+    subs = [s for s in (r.json().get("data") or [])
+            if s.get("subscriptionStatus") == "ACTIVE"
+            and s.get("subscriptionCreationDate") and s.get("periodEnd")]
+    subs.sort(key=lambda s: s["subscriptionCreationDate"])
+    return subs
+
+
+def derive_removal_dates(current, subs=None):
+    """{email: 'YYYY-MM-DD'} — the date each mailbox is due to be deleted.
+
+    Best-effort: a mailbox created long after its subscription (e.g. a
+    replacement slot) can match a newer subscription and come out wrong, so the
+    absence-detection diff stays the source of truth for what ACTUALLY happened.
+    This only drives the heads-up alert."""
+    if subs is None:
+        subs = fetch_subscriptions()
+    if not subs:
+        return {}
+    keys = [s["subscriptionCreationDate"] for s in subs]
+    out = {}
+    for email, info in (current or {}).items():
+        created = (info or {}).get("created")
+        if not created:
+            continue
+        i = bisect.bisect_right(keys, created) - 1
+        if i >= 0:
+            out[email] = subs[i]["periodEnd"][:10]
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Registry (what we've told Zapmail to cancel)
 # ---------------------------------------------------------------------------
 
@@ -207,8 +267,16 @@ def register_domains(domains, source="manual", current=None):
             reg[email] = {
                 "domain": info["domain"], "source": source,
                 "first_seen": _today(), "removed_date": None, "notified": False,
+                "expected_date": None, "date_notified": False,
             }
             added += 1
+    # stamp the derived deletion dates so the pending list shows them immediately
+    try:
+        for email, d in derive_removal_dates(current).items():
+            if email in reg and not reg[email].get("expected_date"):
+                reg[email]["expected_date"] = d
+    except Exception:
+        pass
     _save_registry(reg)
     return {"added": added, "registry_size": len(reg)}
 
@@ -262,6 +330,51 @@ def _format_alert(removed):
         for r in rs:
             lines.append(f"      – {r['email']}")
     return "\n".join(lines)
+
+
+def _format_due_alert(due):
+    """The alert Tim acts on: these mailboxes hit their Zapmail billing date
+    today, so message Zapmail to cut the slot billing."""
+    n = len(due)
+    by_dom = {}
+    for r in due:
+        by_dom.setdefault(r["domain"], []).append(r)
+    dates = sorted({r["date"] for r in due})
+    when = dates[0] if len(dates) == 1 else f"{dates[0]}–{dates[-1]}"
+    lines = [
+        f":calendar: *Zapmail deletion date reached* — {n} mailbox"
+        f"{'es' if n != 1 else ''} scheduled for deletion on {when}.",
+        "*Message Zapmail now to optimise the billing for these slots.*",
+        "",
+    ]
+    for dom in sorted(by_dom):
+        rs = by_dom[dom]
+        lines.append(f"• *{dom}* ({len(rs)} mbx, {rs[0].get('source') or 'unknown'})"
+                     f" — due {rs[0]['date']}")
+    lines += ["", "_Confirmation that they actually disappeared follows in a "
+                  "separate alert once the inventory scan sees them gone._"]
+    return "\n".join(lines)
+
+
+def check_due(reg, dates, dry_run=False):
+    """Fire once per mailbox on/after its scheduled deletion date.
+
+    Uses `<= today` rather than `== today` so a missed run doesn't skip the
+    alert entirely — it arrives late instead of never."""
+    today = _today()
+    due = []
+    for email, e in reg.items():
+        if e.get("removed_date") or e.get("date_notified"):
+            continue
+        d = e.get("expected_date") or dates.get(email)
+        if d and d <= today:
+            due.append({"email": email, "domain": e.get("domain") or email.split("@")[-1],
+                        "date": d, "source": e.get("source")})
+    if due and not dry_run:
+        post_slack(_format_due_alert(due))
+        for x in due:
+            reg[x["email"]]["date_notified"] = True
+    return due
 
 
 # ---------------------------------------------------------------------------
@@ -346,9 +459,22 @@ def check_removals(dry_run=False):
             else:
                 reg[e] = {"domain": r["domain"], "source": "unexpected",
                           "first_seen": _today(), "removed_date": _today(), "notified": True}
-        _save_registry(reg)
+
+    # Refresh the derived deletion dates, then alert on anything that has
+    # reached its date. This is the alert Tim acts on — absence-detection only
+    # confirms afterwards, which is too late to tell Zapmail on the day.
+    try:
+        dates = derive_removal_dates(current)
+    except Exception as e:                       # never let this break the diff
+        dates, result["dates_error"] = {}, f"{type(e).__name__}: {e}"
+    for email, e in reg.items():
+        d = dates.get(email)
+        if d and e.get("expected_date") != d:
+            e["expected_date"] = d
+    result["due"] = check_due(reg, dates, dry_run=dry_run)
 
     if not dry_run:
+        _save_registry(reg)
         store.set_state(SNAP_KEY, {"mailboxes": current, "taken": _now_iso()})
 
     _beat(True, dry_run, scanned=len(current))
@@ -361,13 +487,22 @@ def pending_summary(current=None):
     reg = _registry()
     live = current if current is not None else (store.get_state(SNAP_KEY) or {}).get("mailboxes", {})
     pending, removed = {}, {}
+    by_date, dom_date = {}, {}
     for email, r in reg.items():
         bucket = removed if r.get("removed_date") else pending
         bucket.setdefault(r["domain"], []).append(email)
+        if not r.get("removed_date"):
+            d = r.get("expected_date") or "unknown"
+            by_date.setdefault(d, []).append(email)
+            dom_date[r["domain"]] = d
     return {
         "pending_domains": len(pending),
         "pending_mailboxes": sum(len(v) for v in pending.values()),
         "pending": pending,
+        # when each pending mailbox is due to be deleted (derived — see
+        # derive_removal_dates); this is what the on-the-date alert fires on
+        "due_by_date": {d: len(v) for d, v in sorted(by_date.items())},
+        "domain_due_date": dict(sorted(dom_date.items())),
         "removed_domains": len(removed),
         "removed_mailboxes": sum(len(v) for v in removed.values()),
         "removed": removed,
