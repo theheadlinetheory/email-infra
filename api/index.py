@@ -181,9 +181,20 @@ def health_fleet():
 
 
 def _is_vercel_cron():
-    """Vercel sends cron requests with Authorization: Bearer $CRON_SECRET."""
+    """Vercel sends cron requests with Authorization: Bearer $CRON_SECRET.
+
+    Fallback: when CRON_SECRET is NOT configured, the old check could never
+    return True, so every cron invocation 401'd and the daily job silently never
+    ran (inbox_health_daily had 9 of 16 days, none at the scheduled 13:00, and
+    the removal watcher's heartbeat never moved). Vercel also stamps its own
+    cron requests with `x-vercel-cron`, so accept that when there's no secret to
+    check against. Setting CRON_SECRET automatically tightens this back to the
+    signed check.
+    """
     secret = os.environ.get("CRON_SECRET", "")
-    return bool(secret) and request.headers.get("Authorization", "") == f"Bearer {secret}"
+    if secret:
+        return request.headers.get("Authorization", "") == f"Bearer {secret}"
+    return bool(request.headers.get("x-vercel-cron"))
 
 
 @app.route("/api/health-snapshot", methods=["GET", "POST", "OPTIONS"])
