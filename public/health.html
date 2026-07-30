@@ -141,8 +141,13 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
       <div><span class="eye">Provider</span><br><select id="buyprovider" style="margin-top:3px"><option value="google">Google</option><option value="outlook">Outlook</option></select></div>
       <div><span class="eye">Inboxes / domain</span><br><input id="buyper" type="number" value="3" min="1" max="3" style="width:64px;margin-top:3px"></div>
     </div>
-    <div style="margin-top:10px"><span class="eye">Domains (one per line)</span><br>
-      <textarea id="buydomains" rows="4" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px" placeholder="coolhvacleads2026.info&#10;heatingpros2026zz.com"></textarea>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div><span class="eye">Auto-suggest domains</span><br><select id="buytheme" style="margin-top:3px"><option value="">generic (any service)</option><option value="hvac">HVAC</option><option value="plumbing">Plumbing</option><option value="landscaping">Landscaping</option></select></div>
+      <div><span class="eye">how many</span><br><input id="buysuggestn" type="number" value="12" min="1" max="24" style="width:64px;margin-top:3px"></div>
+      <button class="btn sm" onclick="buySuggest()">✨ Suggest available</button>
+    </div>
+    <div style="margin-top:8px"><span class="eye">Domains (one per line — or use suggest above)</span><br>
+      <textarea id="buydomains" rows="5" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px" placeholder="click ✨ Suggest available, or type one per line"></textarea>
     </div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       <button class="btn sm" onclick="buyCheck()">Check &amp; price</button>
@@ -392,6 +397,18 @@ function buySpec(){
   return { owner:_v('buyowner'), client_name:_v('buyclient'), provider:_v('buyprovider'),
            inboxes_per_domain:+_v('buyper')||3,
            domains:(_v('buydomains').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean)) };
+}
+async function buySuggest(){
+  const el=document.getElementById('buymsg');
+  const n=+_v('buysuggestn')||12, theme=_v('buytheme');
+  el.textContent='generating names + checking Spaceship availability… (~30s)';
+  const r=await (await fetch(api('/api/buy-suggest'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:n,theme})})).json();
+  if(r.error){ el.textContent='✖ '+r.error; return; }
+  const doms=(r.suggestions||[]).map(s=>s.domain);
+  document.getElementById('buydomains').value = doms.join('\n');
+  el.textContent = doms.length
+    ? `✓ ${doms.length} available domains suggested (checked ${r.checked}). Review/edit the list, then Check & price.`
+    : `no available names found (checked ${r.checked}) — try again or a different theme.`;
 }
 async function buyCheck(){
   const el=document.getElementById('buypreview'); const spec=buySpec();

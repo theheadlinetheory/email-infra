@@ -462,7 +462,8 @@ def buy_plan():
 
 @app.route("/api/buy-suggest", methods=["POST", "OPTIONS"])
 def buy_suggest():
-    """Zapmail AI domain-name suggestions from keywords. No spend. Body {keywords, count?}"""
+    """Generate available generic-service domain suggestions (Spaceship-checked).
+    No spend. Body {count?, theme?('hvac'|'plumbing'|'landscaping'), tld?}."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
@@ -470,7 +471,10 @@ def buy_suggest():
     body = request.get_json(silent=True) or {}
     try:
         import buy_inboxes as bi
-        return _cors(jsonify(bi.suggest_domains(body.get("keywords") or "", int(body.get("count") or 10))))
+        return _cors(jsonify(bi.suggest_generic(
+            count=int(body.get("count") or 12),
+            tld=body.get("tld") or "info",
+            theme=body.get("theme"))))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
