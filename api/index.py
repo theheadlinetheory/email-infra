@@ -895,6 +895,7 @@ def _refresh_campaigns(data, req, _time):
                     "total_leads": active_leads,
                     "completed": contacted,
                     "remaining": lead_counts["STARTED"],
+                    "inprogress": lead_counts["INPROGRESS"],
                 }
                 stats_updates[cid] = stat
         except Exception:
@@ -913,12 +914,22 @@ def _refresh_campaigns(data, req, _time):
             existing_stats.append(stat)
     data["acq_campaign_stats"] = existing_stats
 
-    # Auto-pause campaigns that are done (>=95% and <=5 leads remaining)
+    # Auto-pause campaigns that are genuinely DONE — i.e. almost no leads left
+    # that will EVER send another email.
+    #
+    # ⚠️ 2026-07-31 incident: the old check was `remaining (=STARTED) <= 5 AND
+    # completed/total >= 0.95`, where `completed` counted INPROGRESS leads. So a
+    # live campaign that had merely finished STARTING its leads — but still had
+    # thousands of INPROGRESS follow-ups queued — computed as remaining=0,
+    # ratio=1.0 and got PAUSED mid-flight. It fired on every dashboard load
+    # (refresh-stats), silently pausing mature acquisition campaigns (AI-ark
+    # list-1 HVAC + Snow Removal, and likely most "paused-with-followups" acq
+    # campaigns). Fix: leads still able to send = STARTED + INPROGRESS; only pause
+    # when that is ~0. Never pause while follow-ups are in progress.
     for cid, stat in stats_updates.items():
         total_emails = stat.get("total_leads", 0)
-        sent = stat.get("completed", 0)
-        remaining = stat.get("remaining", 0)
-        if total_emails > 0 and remaining <= 5 and sent / total_emails >= 0.95:
+        left_to_send = stat.get("remaining", 0) + stat.get("inprogress", 0)
+        if total_emails > 20 and left_to_send <= 5:
             try:
                 pr = req.post(f"{SMARTLEAD_API}/campaigns/{cid}/status?api_key={SMARTLEAD_KEY}",
                               json={"status": "PAUSED"}, timeout=10)
