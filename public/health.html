@@ -129,7 +129,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
 
   <div class="sect" id="reallocsect" style="display:none"><h2>📋 Campaigns to reallocate in SmartLead</h2><span class="eye" id="reallocsub"></span></div>
-  <div class="note" id="reallocnote" style="display:none">After each reallocation the dashboard moves the campaign's senders, but SmartLead needs a manual <b>Reallocate mailboxes</b> click per campaign to redistribute the lead queue (no API for that step). Work through these one by one and tick each off. Full campaign names — copy straight into SmartLead's search.</div>
+  <div class="note" id="reallocnote" style="display:none">After each reallocation the dashboard moves the campaign's senders, but SmartLead needs a manual <b>Reallocate mailboxes</b> click per campaign to redistribute the lead queue (no API for that step). <b>Click a campaign name</b> to open it directly in SmartLead, hit <b>Reallocate mailboxes</b>, then tick it <b>✓ Done</b> here.</div>
   <div id="realloclist"></div>
 
   <div class="sect"><h2>🛒 Buy inboxes &amp; domains</h2><span class="eye" id="buysub"></span></div>
@@ -306,8 +306,11 @@ function renderRealloc(){
   document.getElementById('reallocsub').textContent=`${REALLOC.length} campaign(s) awaiting reallocation`;
   el.innerHTML='<div class="panel">'+REALLOC.map((c,i)=>{
     const st=c.status==='ACTIVE'?'var(--good)':c.status==='PAUSED'?'var(--warn)':'var(--mut)';
+    const nameCell = c.url
+      ? `<a href="${c.url}" target="_blank" rel="noopener" title="Open in SmartLead → hit 'Reallocate mailboxes'" style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;word-break:break-all;color:var(--accent);text-decoration:none">${c.name} ↗</a>`
+      : `<span style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;word-break:break-all">${c.name} <span class="eye">(not in live list)</span></span>`;
     return `<div style="display:flex;align-items:center;gap:10px;padding:7px 2px;border-top:1px solid var(--line)">
-      <span style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;word-break:break-all">${c.name}</span>
+      ${nameCell}
       <span style="flex:0 0 auto;color:${st};font-size:10.5px;font-family:var(--mono);text-transform:uppercase">${c.status}</span>
       <button class="btn sm" style="flex:0 0 auto" onclick="reallocDone(${i})">✓ Done</button>
     </div>`;

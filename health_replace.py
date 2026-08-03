@@ -137,9 +137,12 @@ def _resolve_campaign_ids(names) -> dict:
 REALLOC_KEY = "reallocate_pending_campaigns"
 
 
-def campaign_status_map() -> dict:
-    """Live SmartLead campaign full-name -> STATUS (uppercase). Used to tell
-    actively-sending (ACTIVE) campaigns from paused/completed ones."""
+SL_CAMPAIGN_URL = "https://app.smartlead.ai/app/email-campaign/{id}/analytics"
+
+
+def campaign_index() -> dict:
+    """Live SmartLead campaigns as {name: {"id", "status"}} in ONE fetch (mindful
+    of the 600 req/min cap). campaign_status_map derives from this."""
     import time
     import requests
     key = _sl_key()
@@ -150,12 +153,19 @@ def campaign_status_map() -> dict:
             r = requests.get("https://server.smartlead.ai/api/v1/campaigns",
                              params={"api_key": key}, timeout=60)
             if r.status_code == 200 and r.text.strip():
-                return {c.get("name"): (c.get("status") or "").upper()
+                return {c.get("name"): {"id": c.get("id"),
+                                        "status": (c.get("status") or "").upper()}
                         for c in (r.json() or []) if c.get("name")}
         except requests.RequestException:
             pass
         time.sleep(5)
     return {}
+
+
+def campaign_status_map() -> dict:
+    """Live SmartLead campaign full-name -> STATUS (uppercase). Used to tell
+    actively-sending (ACTIVE) campaigns from paused/completed ones."""
+    return {n: v["status"] for n, v in campaign_index().items()}
 
 
 def _add_pending_reallocate(names) -> None:
@@ -177,8 +187,14 @@ def reallocation_campaigns() -> dict:
     names = (store.get_state(REALLOC_KEY) or {}).get("campaigns", [])
     if not names:
         return {"campaigns": [], "count": 0}
-    sm = campaign_status_map()
-    rows = [{"name": n, "status": sm.get(n, "MISSING")} for n in names if n in sm]
+    idx = campaign_index()
+    rows = []
+    for n in names:
+        if n not in idx:
+            continue
+        cid = idx[n]["id"]
+        rows.append({"name": n, "status": idx[n]["status"], "id": cid,
+                     "url": SL_CAMPAIGN_URL.format(id=cid) if cid else None})
     rank = {"ACTIVE": 0, "PAUSED": 1, "COMPLETED": 2}
     rows.sort(key=lambda r: (rank.get(r["status"], 3), r["name"]))
     return {"campaigns": rows, "count": len(rows)}
