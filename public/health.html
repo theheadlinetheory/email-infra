@@ -103,6 +103,13 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 .dcbox h2{margin:0 0 4px;color:var(--crit);font-size:19px}
 .dcrow{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px}
 .dcbox .x{float:right;cursor:pointer;color:var(--mut);font-size:20px;line-height:1;background:none;border:none}
+/* Tabs */
+.tabbar{display:flex;gap:2px;flex-wrap:wrap;margin:0 0 16px;border-bottom:1px solid var(--line)}
+.tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--ink2);font-family:var(--sans);font-size:13.5px;font-weight:600;padding:9px 15px;cursor:pointer;margin-bottom:-1px}
+.tab:hover{color:var(--ink)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tabpanel{display:none}
+.tabpanel.active{display:block}
 </style>
 </head>
 <body>
@@ -118,148 +125,169 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 </div></header>
 
 <div class="wrap">
-  <div class="kpis" id="kpis"></div>
-
-  <div class="panel" id="alertpanel" style="display:none"></div>
-
-  <div class="panel costbar" id="costbar" style="display:none"></div>
-
-  <div class="sect" id="domsect"><h2>🔥 Burned domains — reallocate &amp; cancel</h2><span class="eye" id="domsub">loading…</span></div>
-  <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%) for <b>3 straight days</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot, which pings you when they actually drop. A domain is clean to cancel once nothing healthy is left on it (all 3 burned, or the healthy ones reallocated away).</div>
-  <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
-
-  <div class="sect" id="reallocsect" style="display:none"><h2>📋 Campaigns to reallocate in SmartLead</h2><span class="eye" id="reallocsub"></span></div>
-  <div class="note" id="reallocnote" style="display:none">After each reallocation the dashboard moves the campaign's senders, but SmartLead needs a manual <b>Reallocate mailboxes</b> click per campaign to redistribute the lead queue (no API for that step). <b>Click a campaign name</b> to open it directly in SmartLead, hit <b>Reallocate mailboxes</b>, then tick it <b>✓ Done</b> here.</div>
-  <div id="realloclist"></div>
-
-  <div class="sect"><h2>🛒 Buy inboxes &amp; domains</h2><span class="eye" id="buysub"></span></div>
-  <div class="note">Buy new domains (Spaceship) + inboxes (Zapmail) for acquisition or a client. <b>Nothing is charged until you confirm</b> — you see the exact cost first. Two steps: buy domains now, then <b>Provision inboxes</b> per order once DNS resolves (~15–60 min).</div>
-  <div class="panel" id="buypanel">
-    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
-      <div><span class="eye">For</span><br><select id="buyowner" onchange="buyOwnerChange()" style="margin-top:3px"><option value="acquisition">Acquisition</option><option value="client">Client</option></select></div>
-      <div id="buyclientwrap" style="display:none"><span class="eye">Client name</span><br><input id="buyclient" placeholder="e.g. Quantum Heating" style="margin-top:3px"></div>
-      <div><span class="eye">Provider</span><br><select id="buyprovider" style="margin-top:3px"><option value="google">Google</option><option value="outlook">Outlook</option></select></div>
-      <div><span class="eye">Inboxes / domain</span><br><input id="buyper" type="number" value="3" min="1" max="3" style="width:64px;margin-top:3px"></div>
-    </div>
-    <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-      <div><span class="eye">Auto-suggest domains</span><br><select id="buytheme" style="margin-top:3px"><option value="">generic (any service)</option><option value="hvac">HVAC</option><option value="plumbing">Plumbing</option><option value="landscaping">Landscaping</option></select></div>
-      <div><span class="eye">how many</span><br><input id="buysuggestn" type="number" value="12" min="1" max="24" style="width:64px;margin-top:3px"></div>
-      <button class="btn sm" onclick="buySuggest()">✨ Suggest available</button>
-    </div>
-    <div style="margin-top:8px"><span class="eye">Domains (one per line — or use suggest above)</span><br>
-      <textarea id="buydomains" rows="5" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px" placeholder="click ✨ Suggest available, or type one per line"></textarea>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-      <button class="btn sm" onclick="buyCheck()">Check &amp; price</button>
-      <button class="btn pri sm" id="buyconfirm" disabled onclick="buyConfirm()">Confirm &amp; buy domains</button>
-    </div>
-    <div class="msg" id="buymsg"></div>
-    <div id="buypreview" style="margin-top:8px"></div>
-  </div>
-  <div id="buyorders" style="margin-top:10px"></div>
-
-  <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
-  <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
-  <div class="panel tablewrap"><table>
-    <thead><tr>
-      <th>Client</th><th class="num">Sending</th><th class="num">Burned</th><th class="num">Warming</th>
-      <th class="num">Est/day now</th><th class="num">after delete</th><th>If you delete burned</th>
-    </tr></thead>
-    <tbody id="clientrows"></tbody>
-  </table></div>
-
-  <div class="sect"><h2>Burned — cancel queue</h2><span class="eye" id="burnedsub"></span></div>
-  <div class="note">Burned inboxes can't be recovered by warm-up. Select and schedule <b>remove-on-renewal</b> (Zapmail) — you stop paying with zero wasted days. <b>At-risk</b> inboxes below are recovered, not cancelled.</div>
-  <div class="panel"><div class="cqbar">
-    <div><div class="l">Burned</div><div class="v crit" id="burnedcount">0</div></div>
-    <div><div class="l">Selected</div><div class="v" id="selcount">0</div></div>
-    <div class="act">
-      <button class="btn sm" id="selall">Select all</button>
-      <button class="btn sm" id="replacebtn" disabled>Flag for replacement</button>
-      <button class="btn danger sm" id="planbtn" disabled>Plan removal</button>
-      <button class="btn danger sm" id="confirmbtn" disabled>Confirm remove-on-renewal</button>
-    </div>
+  <div class="tabbar">
+    <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
+    <button class="tab" data-tab="clients" onclick="showTab('clients')">Clients (worst)</button>
+    <button class="tab" data-tab="inboxes" onclick="showTab('inboxes')">All inboxes</button>
+    <button class="tab" data-tab="buy" onclick="showTab('buy')">Buy inboxes</button>
+    <button class="tab" data-tab="renewals" onclick="showTab('renewals')">Renewals &amp; reserve</button>
   </div>
 
-  <div class="panel tablewrap" style="margin-top:10px"><table>
-    <thead><tr>
-      <th style="width:36px"></th><th>Burned inbox / domain</th><th>Client</th>
-      <th class="num">Bounce</th><th class="num">Reply</th><th class="num">Renews</th><th class="num">$/mo</th>
-    </tr></thead>
-    <tbody id="burnedlist"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
-  </table></div>
+  <!-- ══ OVERVIEW ══ -->
+  <div class="tabpanel active" data-panel="overview">
+    <div class="kpis" id="kpis"></div>
 
-  <div id="planmsg"></div>
-  <div id="zapmaildraft" style="margin:8px 0"></div>
+    <div class="panel" id="alertpanel" style="display:none"></div>
 
-  <div class="sect"><h2>At-risk — recover</h2><span class="eye" id="atrisksub"></span></div>
-  <div class="note">Declining but not dead. Put them <b>back on warm-up</b> to rebuild reputation. Also reduce/pause them in their SmartLead campaign so they warm without burning further (reallocation is UI-only).</div>
-  <div class="panel"><div class="cqbar">
-    <div class="stat"><span class="l">At-risk</span><span class="v" style="color:var(--serious)" id="atriskcount">0</span></div>
-    <div class="stat"><span class="l">Selected</span><span class="v" id="recselcount">0</span></div>
-    <div class="act">
-      <button class="btn sm" id="recselall">Select all</button>
-      <button class="btn sm" id="recoverbtn" disabled>Put back to warm-up</button>
+    <div class="panel costbar" id="costbar" style="display:none"></div>
+
+    <div class="sect" id="domsect"><h2>🔥 Burned domains — reallocate &amp; cancel</h2><span class="eye" id="domsub">loading…</span></div>
+    <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%) for <b>3 straight days</b> <b>while actively sending</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot. Burned inboxes whose campaign is paused/completed are idle — they show in <b>All inboxes</b>, not here.</div>
+    <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
+
+    <div class="sect" id="reallocsect" style="display:none"><h2>📋 Campaigns to reallocate in SmartLead</h2><span class="eye" id="reallocsub"></span></div>
+    <div class="note" id="reallocnote" style="display:none">After each reallocation the dashboard moves the campaign's senders, but SmartLead needs a manual <b>Reallocate mailboxes</b> click per campaign to redistribute the lead queue (no API for that step). <b>Click a campaign name</b> to open it directly in SmartLead, hit <b>Reallocate mailboxes</b>, then tick it <b>✓ Done</b> here.</div>
+    <div id="realloclist"></div>
+
+    <div class="sect"><h2>At-risk — recover</h2><span class="eye" id="atrisksub"></span></div>
+    <div class="note">Declining but not dead. Put them <b>back on warm-up</b> to rebuild reputation. Also reduce/pause them in their SmartLead campaign so they warm without burning further (reallocation is UI-only).</div>
+    <div class="panel"><div class="cqbar">
+      <div class="stat"><span class="l">At-risk</span><span class="v" style="color:var(--serious)" id="atriskcount">0</span></div>
+      <div class="stat"><span class="l">Selected</span><span class="v" id="recselcount">0</span></div>
+      <div class="act">
+        <button class="btn sm" id="recselall">Select all</button>
+        <button class="btn sm" id="recoverbtn" disabled>Put back to warm-up</button>
+      </div>
+    </div></div>
+    <div class="panel tablewrap" style="margin-top:10px"><table>
+      <thead><tr><th style="width:36px"></th><th>Inbox / domain</th><th>Client</th><th class="num">Reply</th><th class="num">Bounce</th><th class="num">Score</th></tr></thead>
+      <tbody id="atrisklist"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
+    </table></div>
+    <div id="recmsg"></div>
+  </div>
+
+  <!-- ══ CLIENTS (worst) ══ -->
+  <div class="tabpanel" data-panel="clients">
+    <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
+    <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
+    <div class="panel tablewrap"><table>
+      <thead><tr>
+        <th>Client</th><th class="num">Sending</th><th class="num">Burned</th><th class="num">Warming</th>
+        <th class="num">Est/day now</th><th class="num">after delete</th><th>If you delete burned</th>
+      </tr></thead>
+      <tbody id="clientrows"></tbody>
+    </table></div>
+  </div>
+
+  <!-- ══ ALL INBOXES ══ -->
+  <div class="tabpanel" data-panel="inboxes">
+    <div class="sect"><h2>All inboxes</h2><span class="eye" id="allsub"></span></div>
+    <div class="toolbar" id="filters">
+      <button class="chip" data-f="all" aria-pressed="true">All</button>
+      <button class="chip" data-f="healthy" aria-pressed="false">Healthy</button>
+      <button class="chip" data-f="watch" aria-pressed="false">Watch</button>
+      <button class="chip" data-f="at_risk" aria-pressed="false">At-risk</button>
+      <button class="chip" data-f="burned" aria-pressed="false">Burned</button>
+      <button class="chip" data-f="warming" aria-pressed="false">Warming</button>
+      <button class="chip" data-f="insufficient" aria-pressed="false">Low volume</button>
+      <button class="chip" data-f="idle" aria-pressed="false">Idle</button>
     </div>
-  </div></div>
-  <div class="panel tablewrap" style="margin-top:10px"><table>
-    <thead><tr><th style="width:36px"></th><th>Inbox / domain</th><th>Client</th><th class="num">Reply</th><th class="num">Bounce</th><th class="num">Score</th></tr></thead>
-    <tbody id="atrisklist"><tr><td colspan="6" class="empty">loading…</td></tr></tbody>
-  </table></div>
-  <div id="recmsg"></div>
-
-  <div id="planmsg2"></div>
-  <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
-  <div class="note"><b>Reserve-first:</b> when you flag a burned inbox, assign a <b>pre-warmed reserve inbox instantly (0-day)</b> if any are ready — no waiting. Only <b>warm a new one (14 days, cannot send)</b> when the reserve runs low; that path stays locked until warmed. Either way, after swapping, cancel the old inbox. Nothing gets started and forgotten.</div>
-  <div class="panel tablewrap"><table>
-    <thead><tr>
-      <th>Old inbox / domain</th><th>Client</th><th>Status</th><th>Warmup</th><th>Flagged</th><th>Action</th>
-    </tr></thead>
-    <tbody id="reprows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
-  </table></div></div>
-  <div id="planmsg"></div>
-
-  <div class="sect"><h2>Reserve replenishment</h2><span class="eye" id="replsub">plan only</span></div>
-  <div class="note">Keep the warmed reserve topped up so replacements never run dry. This is a <b>plan only — nothing is bought.</b> On execute, the pipeline buys mailbox slots ($3 each), creates inboxes, and starts the 14-day warmup.</div>
-  <div class="panel costbar" id="replbar" style="display:none"></div>
-
-  <div class="sect"><h2>Renewals &amp; decisions</h2><span class="eye" id="rensub">loading…</span></div>
-  <div class="note">Renewal ≈ the monthly anniversary of each inbox's Zapmail creation date. <b>Cancel burned/idle inboxes before they renew</b> so you stop paying for dead infrastructure. Healthy inboxes renew as normal.</div>
-  <div class="panel costbar" id="renbar" style="display:none"></div>
-  <div class="toolbar" id="renfilters">
-    <button class="chip" data-rf="urgent" aria-pressed="true">Renewing ≤7d</button>
-    <button class="chip" data-rf="burned" aria-pressed="false">Burned</button>
-    <button class="chip" data-rf="idle" aria-pressed="false">Idle</button>
-    <button class="chip" data-rf="all" aria-pressed="false">All</button>
-    <button class="btn sm" id="renrefresh" style="margin-left:auto">Re-pull Zapmail</button>
+    <div class="panel tablewrap"><table>
+      <thead><tr>
+        <th></th><th>Inbox / Domain</th><th>Source</th><th>Client</th><th>Grp</th>
+        <th>Status</th><th class="num">Score</th>
+        <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Placement</th><th class="num">Sent 3d</th>
+        <th>Why</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
+    </table></div>
   </div>
-  <div class="panel tablewrap"><table>
-    <thead><tr>
-      <th>Inbox / Domain</th><th>Client</th><th>Status</th><th class="num">Renews</th><th class="num">$/mo</th><th>Decision</th>
-    </tr></thead>
-    <tbody id="renrows"><tr><td colspan="6" class="empty">Loading renewals…</td></tr></tbody>
-  </table></div>
 
-  <div class="sect"><h2>All inboxes</h2><span class="eye" id="allsub"></span></div>
-  <div class="toolbar" id="filters">
-    <button class="chip" data-f="all" aria-pressed="true">All</button>
-    <button class="chip" data-f="healthy" aria-pressed="false">Healthy</button>
-    <button class="chip" data-f="watch" aria-pressed="false">Watch</button>
-    <button class="chip" data-f="at_risk" aria-pressed="false">At-risk</button>
-    <button class="chip" data-f="burned" aria-pressed="false">Burned</button>
-    <button class="chip" data-f="warming" aria-pressed="false">Warming</button>
-    <button class="chip" data-f="insufficient" aria-pressed="false">Low volume</button>
-    <button class="chip" data-f="idle" aria-pressed="false">Idle</button>
+  <!-- ══ BUY INBOXES ══ -->
+  <div class="tabpanel" data-panel="buy">
+    <div class="sect"><h2>🛒 Buy inboxes &amp; domains</h2><span class="eye" id="buysub"></span></div>
+    <div class="note">Buy new domains (Spaceship) + inboxes (Zapmail) for acquisition or a client. <b>Nothing is charged until you confirm</b> — you see the exact cost first. Two steps: buy domains now, then <b>Provision inboxes</b> per order once DNS resolves (~15–60 min).</div>
+    <div class="panel" id="buypanel">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+        <div><span class="eye">For</span><br><select id="buyowner" onchange="buyOwnerChange()" style="margin-top:3px"><option value="acquisition">Acquisition</option><option value="client">Client</option></select></div>
+        <div id="buyclientwrap" style="display:none"><span class="eye">Client name</span><br><input id="buyclient" placeholder="e.g. Quantum Heating" style="margin-top:3px"></div>
+        <div><span class="eye">Provider</span><br><select id="buyprovider" style="margin-top:3px"><option value="google">Google</option><option value="outlook">Outlook</option></select></div>
+        <div><span class="eye">Inboxes / domain</span><br><input id="buyper" type="number" value="3" min="1" max="3" style="width:64px;margin-top:3px"></div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div><span class="eye">Auto-suggest domains</span><br><select id="buytheme" style="margin-top:3px"><option value="">generic (any service)</option><option value="hvac">HVAC</option><option value="plumbing">Plumbing</option><option value="landscaping">Landscaping</option></select></div>
+        <div><span class="eye">how many</span><br><input id="buysuggestn" type="number" value="12" min="1" max="24" style="width:64px;margin-top:3px"></div>
+        <button class="btn sm" onclick="buySuggest()">✨ Suggest available</button>
+      </div>
+      <div style="margin-top:8px"><span class="eye">Domains (one per line — or use suggest above)</span><br>
+        <textarea id="buydomains" rows="5" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px" placeholder="click ✨ Suggest available, or type one per line"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn sm" onclick="buyCheck()">Check &amp; price</button>
+        <button class="btn pri sm" id="buyconfirm" disabled onclick="buyConfirm()">Confirm &amp; buy domains</button>
+      </div>
+      <div class="msg" id="buymsg"></div>
+      <div id="buypreview" style="margin-top:8px"></div>
+    </div>
+    <div id="buyorders" style="margin-top:10px"></div>
   </div>
-  <div class="panel tablewrap"><table>
-    <thead><tr>
-      <th></th><th>Inbox / Domain</th><th>Source</th><th>Client</th><th>Grp</th>
-      <th>Status</th><th class="num">Score</th>
-      <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Placement</th><th class="num">Sent 3d</th>
-      <th>Why</th>
-    </tr></thead>
-    <tbody id="rows"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
-  </table></div>
+
+  <!-- ══ RENEWALS & RESERVE ══ -->
+  <div class="tabpanel" data-panel="renewals">
+    <div class="sect"><h2>Burned — cancel queue</h2><span class="eye" id="burnedsub"></span></div>
+    <div class="note">Burned inboxes can't be recovered by warm-up. Select and schedule <b>remove-on-renewal</b> (Zapmail) — you stop paying with zero wasted days. <b>At-risk</b> inboxes (Overview) are recovered, not cancelled.</div>
+    <div class="panel"><div class="cqbar">
+      <div><div class="l">Burned</div><div class="v crit" id="burnedcount">0</div></div>
+      <div><div class="l">Selected</div><div class="v" id="selcount">0</div></div>
+      <div class="act">
+        <button class="btn sm" id="selall">Select all</button>
+        <button class="btn sm" id="replacebtn" disabled>Flag for replacement</button>
+        <button class="btn danger sm" id="planbtn" disabled>Plan removal</button>
+        <button class="btn danger sm" id="confirmbtn" disabled>Confirm remove-on-renewal</button>
+      </div>
+    </div>
+    <div class="panel tablewrap" style="margin-top:10px"><table>
+      <thead><tr>
+        <th style="width:36px"></th><th>Burned inbox / domain</th><th>Client</th>
+        <th class="num">Bounce</th><th class="num">Reply</th><th class="num">Renews</th><th class="num">$/mo</th>
+      </tr></thead>
+      <tbody id="burnedlist"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+    </table></div>
+    </div>
+    <div id="planmsg"></div>
+    <div id="zapmaildraft" style="margin:8px 0"></div>
+
+    <div class="sect"><h2>Replacements in flight</h2><span class="eye" id="repsub"></span></div>
+    <div class="note"><b>Reserve-first:</b> when you flag a burned inbox, assign a <b>pre-warmed reserve inbox instantly (0-day)</b> if any are ready — no waiting. Only <b>warm a new one (14 days, cannot send)</b> when the reserve runs low; that path stays locked until warmed. Either way, after swapping, cancel the old inbox. Nothing gets started and forgotten.</div>
+    <div class="panel tablewrap"><table>
+      <thead><tr>
+        <th>Old inbox / domain</th><th>Client</th><th>Status</th><th>Warmup</th><th>Flagged</th><th>Action</th>
+      </tr></thead>
+      <tbody id="reprows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+    <div id="planmsg2"></div>
+
+    <div class="sect"><h2>Reserve replenishment</h2><span class="eye" id="replsub">plan only</span></div>
+    <div class="note">Keep the warmed reserve topped up so replacements never run dry. This is a <b>plan only — nothing is bought.</b> On execute, the pipeline buys mailbox slots ($3 each), creates inboxes, and starts the 14-day warmup.</div>
+    <div class="panel costbar" id="replbar" style="display:none"></div>
+
+    <div class="sect"><h2>Renewals &amp; decisions</h2><span class="eye" id="rensub">loading…</span></div>
+    <div class="note">Renewal ≈ the monthly anniversary of each inbox's Zapmail creation date. <b>Cancel burned/idle inboxes before they renew</b> so you stop paying for dead infrastructure. Healthy inboxes renew as normal.</div>
+    <div class="panel costbar" id="renbar" style="display:none"></div>
+    <div class="toolbar" id="renfilters">
+      <button class="chip" data-rf="urgent" aria-pressed="true">Renewing ≤7d</button>
+      <button class="chip" data-rf="burned" aria-pressed="false">Burned</button>
+      <button class="chip" data-rf="idle" aria-pressed="false">Idle</button>
+      <button class="chip" data-rf="all" aria-pressed="false">All</button>
+      <button class="btn sm" id="renrefresh" style="margin-left:auto">Re-pull Zapmail</button>
+    </div>
+    <div class="panel tablewrap"><table>
+      <thead><tr>
+        <th>Inbox / Domain</th><th>Client</th><th>Status</th><th class="num">Renews</th><th class="num">$/mo</th><th>Decision</th>
+      </tr></thead>
+      <tbody id="renrows"><tr><td colspan="6" class="empty">Loading renewals…</td></tr></tbody>
+    </table></div>
+  </div>
 </div>
 
 <script>
@@ -1048,6 +1076,15 @@ on('planbtn', ()=>burn(false));
 on('confirmbtn', ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
 });
+
+// ── Tabs ──
+function showTab(name){
+  document.querySelectorAll('.tabpanel').forEach(p=>p.classList.toggle('active', p.dataset.panel===name));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  try{ localStorage.setItem('ih_tab', name); }catch(e){}
+  window.scrollTo(0,0);
+}
+try{ const _t=localStorage.getItem('ih_tab'); if(_t && document.querySelector('.tab[data-tab="'+_t+'"]')) showTab(_t); }catch(e){}
 
 load();
 loadReplacements();
