@@ -80,9 +80,14 @@ def domain_view() -> dict:
 
     domains = []
     for dom, rows in by_dom.items():
-        burned = [r for r in rows if r.get("status") == BURNED]
+        # A burned inbox only matters here if it's ACTUALLY SENDING (in an active
+        # campaign). One that was burned and then had its campaign paused/completed
+        # is IDLE now — its bounce/reply are just stale metrics; it doesn't need
+        # reallocating and the domain shouldn't be cancel-flagged just because it
+        # stopped sending. Those show as idle in the All-inboxes view, not here.
+        burned = [r for r in rows if r.get("status") == BURNED and _active(r.get("campaigns"))]
         if not burned:
-            continue  # only surface domains with burned mailboxes
+            continue  # no actively-sending burned inbox on this domain — skip
         at_risk = [r for r in rows if r.get("status") == AT_RISK]
         healthy = [r for r in rows if r.get("status") not in (BURNED, AT_RISK)]
         niche = hr._niche(dom)

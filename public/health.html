@@ -557,8 +557,10 @@ async function reallocateDomain(domain){
     c.url?`<a href="${c.url}" target="_blank" rel="noopener" style="color:var(--accent)">${c.name} ↗</a>`:c.name).join('<br>');
   el.innerHTML=`✓ reallocated ${r.swapped}. Now go hit <b>Reallocate mailboxes</b> in SmartLead on:<br>`+
     (links||'<span class="eye">(no active campaign to reallocate — nothing to do)</span>')+
-    `<br><span class="eye">then cancel the domain.</span>`;
-  setTimeout(()=>{loadDomains();loadRealloc();},1600);
+    `<br><span class="eye">then come back and cancel the domain.</span>`;
+  // Keep this card + its link on screen. Only refresh the checklist panel — DON'T
+  // re-render the domain cards (that was wiping the link before you could click it).
+  loadRealloc();
 }
 async function cancelDomain(domain){
   const d=DOMAINS.find(x=>x.domain===domain); if(!d)return;
