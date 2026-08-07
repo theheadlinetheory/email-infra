@@ -141,6 +141,8 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 
     <div class="panel costbar" id="costbar" style="display:none"></div>
 
+    <div class="panel" id="esppanel" style="display:none"></div>
+
     <div class="sect" id="domsect"><h2>🔥 Burned domains — reallocate &amp; cancel</h2><span class="eye" id="domsub">loading…</span></div>
     <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%) for <b>3 straight days</b> <b>while actively sending</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot. Burned inboxes whose campaign is paused/completed are idle — they show in <b>All inboxes</b>, not here.</div>
     <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
@@ -316,7 +318,41 @@ async function load(){
     try { loadRealloc(); } catch(e){ console.error('loadRealloc', e); }
     try { loadDisconnected(); } catch(e){ console.error('loadDisconnected', e); }
     try { loadBuyOrders(); } catch(e){ console.error('loadBuyOrders', e); }
+    try { loadEsp(); } catch(e){ console.error('loadEsp', e); }
   }catch(e){ document.getElementById('rows').innerHTML='<tr><td colspan=12 class=empty>'+e+'</td></tr>'; }
+}
+
+// ── Inbox-provider (ESP) matching on acquisition campaigns ──
+async function loadEsp(){
+  const el=document.getElementById('esppanel'); if(!el) return;
+  try{
+    const r=await fetch(api('/api/enforce-esp-matching'),{credentials:'include'}); if(!r.ok) return;
+    const d=await r.json(); renderEsp(d);
+  }catch(e){ console.error('loadEsp',e); }
+}
+function renderEsp(d){
+  const el=document.getElementById('esppanel'); if(!el) return;
+  const on=(d.already_on||0)+((d.enabled_now||[]).length);
+  const scope=d.in_scope||0;
+  const when=d.ran_at? new Date(d.ran_at).toLocaleString():'never';
+  el.style.display='';
+  el.innerHTML='<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
+    '<b>📬 Inbox-provider matching</b>'+
+    '<span class="eye">Gmail→Gmail, Outlook→Outlook — auto-enabled on every acquisition campaign (runs each sync). '+
+    'ON for <b>'+on+'/'+scope+'</b> live acq campaigns · last checked '+when+'</span>'+
+    '<button class="btn sm" id="espbtn" onclick="enforceEsp()" style="margin-left:auto">Enforce now</button>'+
+    '</div><div id="espmsg" class="eye" style="margin-top:6px"></div>';
+}
+async function enforceEsp(){
+  const btn=document.getElementById('espbtn'), msg=document.getElementById('espmsg');
+  if(btn){ btn.disabled=true; btn.textContent='Enforcing…'; }
+  try{
+    const r=await fetch(api('/api/enforce-esp-matching'),{method:'POST',credentials:'include'});
+    const d=await r.json();
+    if(msg) msg.textContent='Enabled '+((d.enabled_now||[]).length)+' now · '+(d.already_on||0)+' already on'+((d.failed||[]).length?(' · '+d.failed.length+' failed'):'');
+    renderEsp(d);
+  }catch(e){ if(msg) msg.textContent='Error: '+e; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='Enforce now'; } }
 }
 
 // ── Campaigns awaiting SmartLead "Reallocate mailboxes" (full-name checklist) ──

@@ -131,6 +131,82 @@ def _api_get(url, params=None, timeout=15, headers=None):
     return None
 
 
+def _api_post(url, params=None, json_body=None, timeout=20):
+    """SmartLead API POST with the same 429 backoff as _api_get. Returns response or None."""
+    backoff = 10
+    for attempt in range(5):
+        _rate.wait()
+        try:
+            r = requests.post(url, params=params, json=json_body, timeout=timeout)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            if attempt < 4:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+                continue
+            return None
+        if r.status_code == 429:
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            continue
+        return r
+    return None
+
+
+def enforce_esp_matching(campaigns=None, progress_cb=None):
+    """Ensure AI ESP / inbox-provider matching (Gmail->Gmail, Outlook->Outlook) is ON
+    for every acquisition campaign. SmartLead exposes it as `enable_ai_esp_matching`
+    and POST /campaigns/{id}/settings is a partial merge (only that flag changes).
+
+    Runs on every sync, so any NEW acquisition campaign is auto-enabled the next time
+    the dashboard syncs. Scope: ACTIVE / PAUSED / DRAFTED acquisition campaigns
+    (COMPLETED/STOPPED are historical — nothing to send, so we skip them). Idempotent:
+    campaigns already ON are left alone.
+    """
+    if campaigns is None:
+        r = _api_get(f"{SMARTLEAD_API}/campaigns", {"api_key": SMARTLEAD_KEY}, timeout=60)
+        campaigns = r.json() if (r and r.status_code == 200 and r.text.strip()) else []
+
+    def _is_acq(c):
+        nm = (c.get("name") or "").lower()
+        return "acquisition" in nm and "subsequence" not in nm
+
+    targets = [c for c in campaigns if _is_acq(c)
+               and (c.get("status") or "").upper() in ("ACTIVE", "PAUSED", "DRAFTED")]
+    need = [c for c in targets if c.get("enable_ai_esp_matching") is not True]
+
+    enabled, failed = [], []
+    for i, c in enumerate(need):
+        if progress_cb:
+            progress_cb(i, len(need))
+        cid = c.get("id")
+        resp = _api_post(f"{SMARTLEAD_API}/campaigns/{cid}/settings",
+                         params={"api_key": SMARTLEAD_KEY},
+                         json_body={"enable_ai_esp_matching": True})
+        if resp is not None and resp.status_code == 200:
+            enabled.append({"id": cid, "name": c.get("name"), "status": c.get("status")})
+        else:
+            failed.append({"id": cid, "name": c.get("name"),
+                           "code": (resp.status_code if resp is not None else None)})
+        time.sleep(0.1)
+
+    result = {
+        "acq_total": len([c for c in campaigns if _is_acq(c)]),
+        "in_scope": len(targets),
+        "already_on": len(targets) - len(need),
+        "enabled_now": enabled,
+        "failed": failed,
+        "ran_at": datetime.now().isoformat(),
+    }
+    try:
+        store.set_state("esp_matching_enforcement", result)
+    except Exception:
+        pass
+    if enabled or failed:
+        print(f"  ESP matching: enabled {len(enabled)}, already on "
+              f"{result['already_on']}, failed {len(failed)}")
+    return result
+
+
 def fetch_campaign_accounts(progress_cb=None):
     """Fetch all active/paused campaigns and their email accounts.
     Returns email -> list of {id, name, status} campaign info.
@@ -529,6 +605,15 @@ def sync(progress_cb=None):
         _report(pct, f"Fetching acquisition campaign stats ({i + 1}/{total})...")
     overview["acq_campaign_stats"] = fetch_acq_campaign_stats(progress_cb=_acq_progress)
     _report(95, f"Got stats for {len(overview['acq_campaign_stats'])} acquisition campaigns")
+
+    _report(95, "Enforcing inbox-provider (ESP) matching on acquisition campaigns...")
+    try:
+        esp = enforce_esp_matching()
+        overview["esp_matching"] = esp
+        _report(95, f"ESP matching on for {esp['already_on'] + len(esp['enabled_now'])}/"
+                    f"{esp['in_scope']} acq campaigns (+{len(esp['enabled_now'])} this run)")
+    except Exception as e:
+        print(f"  ESP matching enforcement failed: {e}")
 
     _report(96, "Writing cache...")
     store.cache_set("overview_v2", overview)
