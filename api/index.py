@@ -565,6 +565,30 @@ def health_resolve():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/enforce-esp-matching", methods=["GET", "POST", "OPTIONS"])
+def enforce_esp_matching_route():
+    """Inbox-provider (ESP) matching for acquisition campaigns.
+    GET  -> last enforcement result (from state).
+    POST -> run enforcement now: turn ON `enable_ai_esp_matching` for every
+            ACTIVE/PAUSED/DRAFTED acquisition campaign that has it off.
+    This also runs automatically on every sync, so new acquisition campaigns get it."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    if request.method == "GET":
+        import db as store
+        return _cors(jsonify(store.get_state("esp_matching_enforcement") or {"ran_at": None}))
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import sync as _sync
+        return _cors(jsonify(_sync.enforce_esp_matching()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-disconnected")
 def health_disconnected():
     """Inboxes disconnected from SmartLead (smtp auth broken). Splits critical
