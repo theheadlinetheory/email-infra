@@ -212,14 +212,18 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <div class="panel" id="buypanel">
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
         <div><span class="eye">For</span><br><select id="buyowner" onchange="buyOwnerChange()" style="margin-top:3px"><option value="acquisition">Acquisition</option><option value="client">Client</option></select></div>
-        <div id="buyclientwrap" style="display:none"><span class="eye">Client name</span><br><input id="buyclient" placeholder="e.g. Quantum Heating" style="margin-top:3px"></div>
+        <div id="buyclientwrap" style="display:none;gap:12px;align-items:flex-end">
+          <div><span class="eye">Client name</span><br><input id="buyclient" placeholder="e.g. Quantum Heating" style="margin-top:3px"></div>
+          <div><span class="eye">Client's real domain / brand</span><br><input id="buyclientdomain" placeholder="e.g. quantumheating.com" style="margin-top:3px"></div>
+        </div>
         <div><span class="eye">Provider</span><br><select id="buyprovider" style="margin-top:3px"><option value="google">Google</option><option value="outlook">Outlook</option></select></div>
         <div><span class="eye">Inboxes / domain</span><br><input id="buyper" type="number" value="3" min="1" max="3" style="width:64px;margin-top:3px"></div>
       </div>
       <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-        <div><span class="eye">Auto-suggest domains</span><br><select id="buytheme" style="margin-top:3px"><option value="">generic (any service)</option><option value="hvac">HVAC</option><option value="plumbing">Plumbing</option><option value="landscaping">Landscaping</option></select></div>
+        <div id="buythemewrap"><span class="eye">Auto-suggest domains</span><br><select id="buytheme" style="margin-top:3px"><option value="">generic (any service)</option><option value="hvac">HVAC</option><option value="plumbing">Plumbing</option><option value="landscaping">Landscaping</option></select></div>
         <div><span class="eye">how many</span><br><input id="buysuggestn" type="number" value="12" min="1" max="24" style="width:64px;margin-top:3px"></div>
         <button class="btn sm" onclick="buySuggest()">✨ Suggest available</button>
+        <span class="eye" id="buysuggesthint">generic service names</span>
       </div>
       <div style="margin-top:8px"><span class="eye">Domains (one per line — or use suggest above)</span><br>
         <textarea id="buydomains" rows="5" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px" placeholder="click ✨ Suggest available, or type one per line"></textarea>
@@ -459,7 +463,14 @@ async function resolveScan(){
 // ── Buy inboxes & domains ──
 const _v = id => (document.getElementById(id).value||'').trim();
 let BUYPLAN=null;
-function buyOwnerChange(){ document.getElementById('buyclientwrap').style.display = _v('buyowner')==='client'?'':'none'; }
+function buyOwnerChange(){
+  const cl = _v('buyowner')==='client';
+  document.getElementById('buyclientwrap').style.display = cl?'flex':'none';
+  const th=document.getElementById('buythemewrap'); if(th) th.style.display = cl?'none':'';
+  const hint=document.getElementById('buysuggesthint'); if(hint) hint.textContent = cl
+    ? 'brand-derived domains from the client’s real domain above'
+    : 'generic service names';
+}
 function buySpec(){
   return { owner:_v('buyowner'), client_name:_v('buyclient'), provider:_v('buyprovider'),
            inboxes_per_domain:+_v('buyper')||3,
@@ -468,14 +479,20 @@ function buySpec(){
 async function buySuggest(){
   const el=document.getElementById('buymsg');
   const n=+_v('buysuggestn')||12, theme=_v('buytheme');
-  el.textContent='generating names + checking Spaceship availability… (~30s)';
-  const r=await (await fetch(api('/api/buy-suggest'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:n,theme})})).json();
+  const clientMode=_v('buyowner')==='client';
+  const brand=clientMode ? (_v('buyclientdomain')||_v('buyclient')).trim() : '';
+  if(clientMode && !brand){ el.textContent='✖ enter the client’s real domain / brand first'; return; }
+  const body = brand ? {count:n, brand} : {count:n, theme};
+  el.textContent = brand
+    ? `generating brand domains for “${brand}” + checking Spaceship… (~30s)`
+    : 'generating names + checking Spaceship availability… (~30s)';
+  const r=await (await fetch(api('/api/buy-suggest'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(r.error){ el.textContent='✖ '+r.error; return; }
   const doms=(r.suggestions||[]).map(s=>s.domain);
   document.getElementById('buydomains').value = doms.join('\n');
   el.textContent = doms.length
-    ? `✓ ${doms.length} available domains suggested (checked ${r.checked}). Review/edit the list, then Check & price.`
-    : `no available names found (checked ${r.checked}) — try again or a different theme.`;
+    ? `✓ ${doms.length} available ${brand?'brand':''} domains suggested (checked ${r.checked}). Review/edit the list, then Check & price.`
+    : `no available names found (checked ${r.checked}) — try again${brand?' or tweak the brand':' or a different theme'}.`;
 }
 async function buyCheck(){
   const el=document.getElementById('buypreview'); const spec=buySpec();
