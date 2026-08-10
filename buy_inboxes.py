@@ -16,6 +16,7 @@ This module owns step 1 and the order bookkeeping; steps 2-3 wrap acq_outlook.
 """
 
 import random
+import re
 from datetime import datetime, timezone
 
 import db as store
@@ -130,6 +131,81 @@ def suggest_generic(count=12, tld="info", theme=None, max_checks=None):
         except Exception:
             pass
     return {"suggestions": out, "checked": checked, "found": len(out)}
+
+
+# Brand-derived domain suggester (for a specific client's custom infrastructure).
+# Cold-email domains never use the client's real domain; they're recognisable
+# variants on an alt TLD (getquantumheating.info, quantumheatingpros.info, ...).
+_SVC_WORDS = {"hvac", "heating", "cooling", "air", "airconditioning", "plumbing",
+              "plumbers", "plumber", "landscaping", "landscape", "lawn", "lawncare",
+              "roofing", "electric", "electrical", "services", "service", "solutions",
+              "inc", "llc", "co", "company", "group", "the", "and"}
+_CLIENT_PREFIX = ["get", "try", "go", "my", "join", "team", "use", "with", "meet",
+                  "hello", "the"]
+_CLIENT_SUFFIX = ["pros", "hq", "group", "team", "mail", "hub", "co", "care", "works",
+                  "direct", "online", "now", "today", "service", "services", "email",
+                  "reach", "connect"]
+
+
+def _brand_roots(brand):
+    """Reduce a client brand or real domain to 1-2 root tokens to build variants from.
+    'quantumheating.com' / 'Quantum Heating HVAC' -> ['quantumheating', 'quantum']."""
+    b = (brand or "").strip().lower()
+    b = re.sub(r"^https?://", "", b)
+    b = re.sub(r"^www\.", "", b)
+    if "." in b and " " not in b:                 # looks like a domain -> take the SLD
+        b = b.split("/")[0]
+        parts = b.split(".")
+        b = parts[-2] if len(parts) >= 2 else parts[0]
+    full = re.sub(r"[^a-z0-9]+", "", b)
+    if not full:
+        return []
+    core = full                                    # brand minus a trailing service word
+    for w in sorted(_SVC_WORDS, key=len, reverse=True):
+        if core.endswith(w) and len(core) - len(w) >= 4:
+            core = core[:-len(w)]
+            break
+    roots = [full]
+    if core != full and len(core) >= 4:
+        roots.append(core)
+    return roots
+
+
+def suggest_client_domains(brand, count=12, tld="info", max_checks=None):
+    """Brand-derived custom domains for one client, seeded from their brand/real
+    domain. Returns `count` that are actually available on Spaceship (with price).
+    Read-only — no spend. Mirrors suggest_generic but keeps the brand recognisable."""
+    roots = _brand_roots(brand)
+    if not roots:
+        return {"error": "client brand or domain required", "suggestions": []}
+    tld = (tld or "info").lstrip(".").lower()
+    combos = []
+    for r in roots:
+        combos.append(r)                           # bare brand on an alt TLD
+        combos += [f"{r}{s}" for s in _CLIENT_SUFFIX]
+        combos += [f"{p}{r}" for p in _CLIENT_PREFIX]
+    seen, cand = set(), []
+    for nm in combos:
+        if 6 <= len(nm) <= 30 and nm not in seen:
+            seen.add(nm)
+            cand.append(nm)
+    random.shuffle(cand)
+    max_checks = max_checks or max(count * 4, 45)
+    out, checked, chk_seen = [], 0, set()
+    for nm in cand:
+        if len(out) >= count or checked >= max_checks:
+            break
+        d = f"{nm}.{tld}"
+        if d in chk_seen:
+            continue
+        chk_seen.add(d)
+        checked += 1
+        try:
+            if bool(S.Spaceship.check_domain(d).get("available")):
+                out.append({"domain": d, "price": _domain_price(d)})
+        except Exception:
+            pass
+    return {"suggestions": out, "checked": checked, "found": len(out), "roots": roots}
 
 
 def check_domains(domains):

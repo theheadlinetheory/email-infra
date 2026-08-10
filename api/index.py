@@ -462,8 +462,10 @@ def buy_plan():
 
 @app.route("/api/buy-suggest", methods=["POST", "OPTIONS"])
 def buy_suggest():
-    """Generate available generic-service domain suggestions (Spaceship-checked).
-    No spend. Body {count?, theme?('hvac'|'plumbing'|'landscaping'), tld?}."""
+    """Generate available domain suggestions (Spaceship-checked). No spend.
+    Body {count?, tld?, ...}. If `brand` (a client's brand or real domain) is
+    given, returns BRAND-DERIVED domains for that client; otherwise generic-
+    service names, flavoured by `theme?('hvac'|'plumbing'|'landscaping')`."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
@@ -471,10 +473,12 @@ def buy_suggest():
     body = request.get_json(silent=True) or {}
     try:
         import buy_inboxes as bi
-        return _cors(jsonify(bi.suggest_generic(
-            count=int(body.get("count") or 12),
-            tld=body.get("tld") or "info",
-            theme=body.get("theme"))))
+        count = int(body.get("count") or 12)
+        tld = body.get("tld") or "info"
+        brand = (body.get("brand") or "").strip()
+        if brand:
+            return _cors(jsonify(bi.suggest_client_domains(brand=brand, count=count, tld=tld)))
+        return _cors(jsonify(bi.suggest_generic(count=count, tld=tld, theme=body.get("theme"))))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
