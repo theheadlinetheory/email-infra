@@ -171,10 +171,10 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   <!-- ══ CLIENTS (worst) ══ -->
   <div class="tabpanel" data-panel="clients">
     <div class="sect"><h2>By client — delete safety</h2><span class="eye">≈15 sends/inbox/day · floor 500/day · warming = replacements coming</span></div>
-    <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending.</div>
+    <div class="note">Before deleting a client's burned inboxes, check this. If deleting drops a client below its daily floor and there aren't enough warming replacements, <b>warm replacements first</b> — don't cut their sending. <b>Click a client name</b> to see all its inboxes (including idle/unallocated) in the All-inboxes tab.</div>
     <div class="panel tablewrap"><table>
       <thead><tr>
-        <th>Client</th><th class="num">Sending</th><th class="num">Burned</th><th class="num">Warming</th>
+        <th>Client</th><th class="num">Sending</th><th class="num">Idle</th><th class="num">Burned</th><th class="num">Warming</th>
         <th class="num">Est/day now</th><th class="num">after delete</th><th>If you delete burned</th>
       </tr></thead>
       <tbody id="clientrows"></tbody>
@@ -193,6 +193,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
       <button class="chip" data-f="warming" aria-pressed="false">Warming</button>
       <button class="chip" data-f="insufficient" aria-pressed="false">Low volume</button>
       <button class="chip" data-f="idle" aria-pressed="false">Idle</button>
+      <select id="clientfilter" onchange="setClientFilter(this.value)" title="Filter by client / group" style="margin-left:auto;font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer"><option value="all">All clients / groups</option></select>
     </div>
     <div class="panel tablewrap"><table>
       <thead><tr>
@@ -302,7 +303,7 @@ const PW = qs.get('pw') || '';
 const api = p => p + (PW ? (p.includes('?')?'&':'?') + 'pw=' + encodeURIComponent(PW) : '');
 const RANK = {burned:5,at_risk:4,watch:3,healthy:2,warming:1,insufficient:0,idle:-1};
 const LABEL = {healthy:'Healthy',watch:'Watch',at_risk:'At-risk',burned:'Burned',warming:'Warming',insufficient:'Low-vol',idle:'Idle'};
-let FLEET = [], filter = 'all';
+let FLEET = [], filter = 'all', clientFilter = 'all';
 const selected = new Set();
 const recSel = new Set();
 let burnedExpanded = false, renExpanded = false, atriskExpanded = false;
@@ -662,6 +663,22 @@ async function cancelDomain(domain){
   setTimeout(()=>{loadDomains();},1600);
 }
 
+function populateClientFilter(){
+  const sel=document.getElementById('clientfilter'); if(!sel) return;
+  const names=[...new Set(FLEET.map(x=>x.client||'(none)'))].sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML='<option value="all">All clients / groups</option>'+names.map(nm=>{
+    const n=FLEET.filter(x=>(x.client||'(none)')===nm).length;
+    const v=nm.replace(/"/g,'&quot;');
+    return `<option value="${v}"${nm===clientFilter?' selected':''}>${nm} (${n})</option>`;
+  }).join('');
+  sel.value=clientFilter;
+}
+function setClientFilter(v){ clientFilter=v; render(FLEET,{}); }
+function showClientInboxes(name){
+  clientFilter=name; filter='all';
+  document.querySelectorAll('#filters .chip').forEach(x=>x.setAttribute('aria-pressed', x.dataset.f==='all'?'true':'false'));
+  showTab('inboxes'); render(FLEET,{});
+}
 function render(fleet, counts){
   const c = k => fleet.filter(x=>x.status===k).length;
   document.getElementById('kpis').innerHTML = [
@@ -679,9 +696,12 @@ function render(fleet, counts){
   try { renderCost({burned: c('burned'), idle: c('idle')}); } catch(e){ console.error('renderCost', e); }
   try { renderClients(); } catch(e){ console.error('renderClients', e); }
 
-  const shown = fleet.filter(x=> filter==='all' ? true : x.status===filter)
+  populateClientFilter();
+  const shown = fleet.filter(x=> (filter==='all' || x.status===filter)
+                                 && (clientFilter==='all' || (x.client||'(none)')===clientFilter))
                      .sort((a,b)=>(RANK[b.status]||0)-(RANK[a.status]||0) || (a.score??999)-(b.score??999));
-  document.getElementById('allsub').textContent = shown.length+' of '+fleet.length;
+  document.getElementById('allsub').textContent = shown.length+' of '+fleet.length
+    + (clientFilter==='all'?'':' · '+clientFilter);
   document.getElementById('rows').innerHTML = shown.length ? shown.map(row).join('')
     : '<tr><td colspan=12 class=empty>none</td></tr>';
   updateSel();
@@ -779,8 +799,9 @@ function renderClients(){
     .sort((a,b)=> b.sev-a.sev || b.s.burned-a.s.burned);
   document.getElementById('clientrows').innerHTML = rows.map(r=>`
     <tr>
-      <td>${r.c}</td>
+      <td><a onclick="showClientInboxes('${r.c.replace(/'/g,"\\'")}')" title="see this client's inboxes" style="cursor:pointer;text-decoration:underline">${r.c}</a></td>
       <td class="num">${r.sending}</td>
+      <td class="num" style="color:${r.s.idle?'var(--info)':'var(--mut)'}">${r.s.idle||'—'}</td>
       <td class="num" style="color:${r.s.burned?'var(--crit)':'inherit'}">${r.s.burned||'—'}</td>
       <td class="num" style="color:${r.s.warming?'var(--info)':'inherit'}">${r.s.warming||'—'}</td>
       <td class="num">${r.capNow.toLocaleString()}</td>
