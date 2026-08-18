@@ -179,3 +179,109 @@ def reassign(account_id, email, client, ab="A", dry_run=True) -> dict:
     except Exception:
         pass
     return {"dry_run": False, "ok": ok, "http": r.status_code, "set_tags": tag_ids, **plan}
+
+
+# ---------------------------------------------------------------------------
+# Retirement — the other half of a replacement.
+#
+# reassign() moves the REPLACEMENT into the client's group. Nothing used to move
+# the burned inbox OUT. That left every burned inbox still wearing its client
+# tag, so any campaign built from that client's group afterwards silently
+# re-recruited dead senders (2026-08-18: 23 dead inboxes were back in 9 ACTIVE
+# campaigns this way, all in campaigns created AFTER their swap).
+# ---------------------------------------------------------------------------
+
+RETIRED_TAG_NAME = "Retired - burned"
+
+
+def _all_tags():
+    return _gql("{ tags { id name color } }").get("data", {}).get("tags", []) or []
+
+
+def _tag_by_name(name, tags=None):
+    tags = _all_tags() if tags is None else tags
+    want = (name or "").strip().lower()
+    return next((t["id"] for t in tags if (t.get("name") or "").strip().lower() == want), None)
+
+
+def untag_client(account_id, email="", dry_run=True) -> dict:
+    """Strip a burned inbox's client / group tags, keeping only its provenance
+    (Zapmail + the date tag) plus a 'Retired - burned' marker.
+
+    This is what stops a dead inbox being picked up again when the next campaign
+    is built from the client's group."""
+    if not get_jwt():
+        return {"error": "no SmartLead token — set SMARTLEAD_JWT, or "
+                         "SMARTLEAD_LOGIN_EMAIL/PASSWORD for auto-refresh"}
+    cur = _account_tags(account_id)
+    keep, dropped = [], []
+    for t in cur:
+        name = t.get("name", "")
+        if t["id"] == ZAPMAIL_TAG_ID or _DATE_RE.match(name) or name == RETIRED_TAG_NAME:
+            keep.append(t["id"])
+        else:
+            dropped.append(name)
+    plan = {"account_id": account_id, "email": email,
+            "current_tags": [t.get("name") for t in cur], "dropping": dropped}
+    if dry_run:
+        return {"dry_run": True, **plan}
+    if not dropped:
+        return {"ok": True, "noop": "no client tags to drop", **plan}
+
+    tags = _all_tags()
+    rid = _tag_by_name(RETIRED_TAG_NAME, tags) or _create_tag(RETIRED_TAG_NAME, tags)
+    tag_ids = keep + ([rid] if rid and rid not in keep else [])
+
+    import requests
+
+    def _post():
+        return requests.post(f"{SL_INTERNAL}/email-account/save-management-details",
+                             headers=_headers(),
+                             json={"id": int(account_id), "tags": tag_ids}, timeout=30)
+    r = _post()
+    if r.status_code in (401, 403):
+        get_jwt(force=True)          # stale token — mint a fresh one, retry once
+        r = _post()
+    ok = r.status_code == 200
+    try:
+        store.log_monitor_event("smartlead_untag", {
+            "email": email, "account_id": account_id, "dropped": dropped, "http": r.status_code})
+    except Exception:
+        pass
+    return {"ok": ok, "http": r.status_code, "set_tags": tag_ids, **plan}
+
+
+def delete_account(account_id, email="", dry_run=True) -> dict:
+    """Delete an email account from SmartLead outright.
+
+    DELETE /api/v1/email-accounts/{id} — public API (api_key auth, no JWT), and it
+    detaches the account from any campaigns on the way out. Irreversible: the
+    account's history goes with it, so only call this once the mailbox itself is
+    gone at the provider (see health_replace.retire_inbox)."""
+    import os
+    plan = {"account_id": account_id, "email": email}
+    if dry_run:
+        return {"dry_run": True, **plan}
+    key = (os.environ.get("SMARTLEAD_API_KEY", "") or os.environ.get("SMARTLEAD_KEY", "")).strip()
+    if not key:
+        return {"error": "SMARTLEAD_API_KEY not set", **plan}
+    import time
+    import requests
+    code, body = None, ""
+    for i in range(4):
+        try:
+            r = requests.delete(f"https://server.smartlead.ai/api/v1/email-accounts/{int(account_id)}",
+                                params={"api_key": key}, timeout=60)
+            code, body = r.status_code, r.text[:200]
+            if code != 429:
+                break
+        except requests.RequestException as e:
+            code, body = None, f"{type(e).__name__}: {e}"
+        time.sleep(3 + i * 2)
+    ok = code == 200
+    try:
+        store.log_monitor_event("smartlead_account_deleted", {
+            "email": email, "account_id": account_id, "http": code, "ok": ok})
+    except Exception:
+        pass
+    return {"ok": ok, "http": code, "response": body, **plan}

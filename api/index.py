@@ -672,6 +672,38 @@ def health_reallocate_campaigns():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-retire", methods=["POST", "OPTIONS"])
+def health_retire():
+    """Retire burned inboxes: detach from every campaign, strip their client/group
+    tags so no future campaign can recruit them, and optionally delete the
+    SmartLead account. Body {emails:[...], delete: bool, confirm: bool}.
+    confirm=false is a dry-run. Pass delete=true only for mailboxes Zapmail has
+    already removed — the swap flow and the removal watcher do this automatically,
+    this endpoint is for clearing a backlog by hand."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or []
+    if not emails:
+        return _cors(jsonify({"error": "emails required"})), 400
+    dry = not bool(body.get("confirm"))
+    try:
+        import health_replace as hr
+        if body.get("delete"):
+            return _cors(jsonify(hr.purge_removed_accounts(
+                emails, dry_run=dry, force=bool(body.get("force")))))
+        out = [hr.retire_inbox(e, dry_run=dry) for e in emails]
+        return _cors(jsonify({"count": len(out), "results": out,
+                              **({"dry_run": True} if dry else {})}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-cancel-domain", methods=["POST", "OPTIONS"])
 def health_cancel_domain():
     """Schedule whole-domain removal in Zapmail (mailboxes deleted on next billing

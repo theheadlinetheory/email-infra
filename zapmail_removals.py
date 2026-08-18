@@ -450,6 +450,24 @@ def check_removals(dry_run=False):
     if removed and not dry_run:
         delivery = post_slack(_format_alert(removed))
         result["slack"] = delivery
+        # The mailbox is gone at Zapmail, so its SmartLead account can never
+        # authenticate again — it would sit there flagged "needs attention"
+        # forever (and still be recruitable into a new campaign) unless we
+        # delete it here. This is the backstop for domain-level cancels, which
+        # take out mailboxes that were never individually swapped.
+        try:
+            import health_replace as hr
+            purge = hr.purge_removed_accounts([r["email"] for r in removed], dry_run=False)
+            result["smartlead_purge"] = purge
+            if purge.get("skipped_too_many"):
+                post_slack(
+                    f":warning: Skipped the SmartLead cleanup for "
+                    f"{purge['skipped_too_many']} removed mailboxes — that is over the "
+                    f"{purge['limit']} safety limit, so this looks more like a broken "
+                    f"Zapmail inventory scan than a real mass cancellation. Nothing was "
+                    f"deleted; check the scan, then purge with force.")
+        except Exception as e:                   # never let cleanup break detection
+            result["smartlead_purge"] = {"error": f"{type(e).__name__}: {e}"}
         # mark registry entries removed+notified
         for r in removed:
             e = r["email"]
