@@ -557,9 +557,19 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
                     "retag": retag, "campaign_swap": camp, "forwarding": fwd}
         job["status"] = "swapped"
         job["swapped_at"] = datetime.now().strftime("%Y-%m-%d")
+        # retire the burned inbox: detach it from every campaign (not just the
+        # ones snapshotted on the job) and strip its client tags, so a campaign
+        # built later from this client's group can't recruit it again. The
+        # SmartLead account itself is deleted later, once Zapmail has actually
+        # removed the mailbox (purge_removed_accounts).
+        try:
+            job["retire"] = retire_inbox(job["old_email"], campaigns=job.get("campaigns"),
+                                         delete=False, dry_run=False)
+        except Exception as e:                       # never fail a good swap on cleanup
+            job["retire"] = {"error": f"{type(e).__name__}: {e}"}
         _save(st)
         return {"ok": True, "job": _annotate(job), "retag": retag,
-                "campaign_swap": camp, "forwarding": fwd}
+                "campaign_swap": camp, "forwarding": fwd, "retire": job["retire"]}
     elif action == "cancel":
         job["status"] = "cancelled"
     else:
@@ -752,3 +762,107 @@ def replace_all_burned(client: str, confirm: bool = False) -> dict:
             "niche": want,
             "note": f"Swapped {swapped} inbox(es). Now hit 'Reallocate mailboxes' once on "
                     f"{client}'s campaign in SmartLead, then cancel the old inboxes."}
+
+
+# ---------------------------------------------------------------------------
+# Retiring a burned inbox
+#
+# A replacement used to only push the RESERVE inbox in; the burned one was left
+# behind wearing the client's group tag and still attached to whatever campaigns
+# it happened to be in. Two failure modes followed, both seen live on
+# 2026-08-18:
+#   1. New campaigns built from the client's group re-recruited the dead inbox —
+#      7 of 9 affected campaigns were created AFTER the swap.
+#   2. Zapmail cancels are per-DOMAIN, so cancelling a domain killed mailboxes
+#      that were still senders on a live campaign, and SmartLead kept retrying
+#      their dead OAuth token forever ("needs attention", 75 accounts).
+#
+# retire_inbox() closes both: strip the client tags + detach from every campaign
+# the moment it's replaced, then delete the SmartLead account once the mailbox
+# is actually gone at Zapmail (purge_removed_accounts, called by the removal
+# watcher). Deleting only at that point keeps replies to already-sent mail
+# reachable for as long as the mailbox still exists.
+# ---------------------------------------------------------------------------
+
+def _fleet_campaigns(email: str) -> list:
+    """Campaign names the last snapshot saw this inbox in (the fleet row's list
+    can arrive JSON-serialized — normalise it)."""
+    data, _ = store.cache_get("health_fleet")
+    for r in (data or {}).get("inboxes", []):
+        if (r.get("email") or "").lower() == (email or "").lower():
+            c = r.get("campaigns") or []
+            if isinstance(c, str):
+                import json
+                try:
+                    c = json.loads(c)
+                except Exception:
+                    c = [c] if c.strip() else []
+            return c if isinstance(c, list) else []
+    return []
+
+
+def retire_inbox(email: str, campaigns=None, delete: bool = False,
+                 account_id=None, dry_run: bool = True) -> dict:
+    """Take a burned inbox fully out of service.
+
+      1. detach it from every campaign we know it's in (job list + last snapshot)
+      2. strip its client / group tags so no future campaign can recruit it
+      3. delete the SmartLead account, if `delete` (only once the mailbox is gone)
+
+    Safe to re-run: each step no-ops when there's nothing left to do."""
+    import health_smartlead as hsl
+    acct_id = account_id or _overview_account_id(email)
+    names = list(dict.fromkeys(list(campaigns or []) + _fleet_campaigns(email)))
+    out = {"email": email, "account_id": acct_id, "campaigns": names, "delete": delete}
+    if not acct_id:
+        return {"error": f"could not resolve a SmartLead account id for {email}", **out}
+    if dry_run:
+        return {"dry_run": True, **out}
+
+    out["detached"] = remove_account_from_campaigns(acct_id, names, dry_run=False)
+    out["untag"] = hsl.untag_client(acct_id, email, dry_run=False)
+    if delete:
+        out["deleted"] = hsl.delete_account(acct_id, email, dry_run=False)
+    out["ok"] = not out["untag"].get("error") and (not delete or out["deleted"].get("ok"))
+    return out
+
+
+MAX_AUTO_PURGE = 25
+
+
+def purge_removed_accounts(emails, dry_run: bool = True, force: bool = False) -> dict:
+    """Delete the SmartLead accounts of mailboxes that no longer exist at Zapmail.
+
+    Called by the removal watcher when it sees a mailbox actually disappear. Until
+    this ran, a cancelled mailbox sat in SmartLead failing its OAuth refresh
+    forever — that is exactly the "needs attention" backlog (75 accounts, every
+    single one already cancelled).
+
+    Deletion is irreversible and the trigger is a snapshot diff, so an unusually
+    large batch is treated as a broken inventory scan rather than a real mass
+    cancellation: past MAX_AUTO_PURGE it refuses and asks for `force`. (The
+    inventory only covers Zapmail's GOOGLE provider — an OUTLOOK-side change
+    could otherwise read as hundreds of removals.)"""
+    import health_smartlead as hsl
+    emails = list(emails or [])
+    if len(emails) > MAX_AUTO_PURGE and not force and not dry_run:
+        return {"deleted": 0, "skipped_too_many": len(emails), "limit": MAX_AUTO_PURGE,
+                "error": f"{len(emails)} accounts is more than MAX_AUTO_PURGE "
+                         f"({MAX_AUTO_PURGE}) — refusing to bulk-delete automatically. "
+                         f"Verify the Zapmail inventory scan, then re-run with force."}
+    done, missing, failed = [], [], []
+    for e in emails or []:
+        acct_id = _overview_account_id(e)
+        if not acct_id:
+            missing.append(e)           # already gone from SmartLead, or not synced yet
+            continue
+        if dry_run:
+            done.append({"email": e, "account_id": acct_id, "dry_run": True})
+            continue
+        # strip tags first so a failed delete still can't be re-recruited
+        hsl.untag_client(acct_id, e, dry_run=False)
+        res = hsl.delete_account(acct_id, e, dry_run=False)
+        (done if res.get("ok") else failed).append({"email": e, "account_id": acct_id, **res})
+    return {"deleted": len(done), "not_in_smartlead": len(missing),
+            "failed": len(failed), "details": done, "errors": failed,
+            **({"dry_run": True} if dry_run else {})}
