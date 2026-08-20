@@ -110,6 +110,24 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tabpanel{display:none}
 .tabpanel.active{display:block}
+/* Acquisition capacity */
+.capbar{display:flex;height:26px;border-radius:7px;overflow:hidden;border:1px solid var(--line2);background:var(--surface2)}
+.capbar span{display:block;height:100%}
+.capbar span.sending{background:var(--good)}
+.capbar span.stranded{background:var(--crit)}
+.capbar span.parked{background:var(--warn)}
+.capbar span.unassigned{background:var(--accent)}
+.capbar span.blocked{background:var(--mut)}
+.caplegend{display:flex;flex-wrap:wrap;gap:14px;margin-top:11px;font-family:var(--mono);font-size:11px;color:var(--ink2)}
+.caplegend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle;font-style:normal}
+.cpill{font-family:var(--mono);font-size:10.5px;font-weight:600;text-transform:uppercase;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.cpill.sending{background:var(--good-bg);color:var(--good)}
+.cpill.stranded{background:var(--crit-bg);color:var(--crit)}
+.cpill.parked{background:var(--warn-bg);color:var(--warn)}
+.cpill.unassigned{background:var(--info-bg);color:var(--accent)}
+.cpill.blocked{background:var(--mut-bg);color:var(--mut)}
+.kpi .v.warnv{color:var(--warn)} .kpi .v.critv{color:var(--crit)} .kpi .v.goodv{color:var(--good)}
+.kpi .s{font-family:var(--mono);font-size:10.5px;color:var(--mut);margin-top:3px}
 </style>
 </head>
 <body>
@@ -129,6 +147,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <button class="tab active" data-tab="overview" onclick="showTab('overview')">Overview</button>
     <button class="tab" data-tab="clients" onclick="showTab('clients')">Clients (worst)</button>
     <button class="tab" data-tab="inboxes" onclick="showTab('inboxes')">All inboxes</button>
+    <button class="tab" data-tab="capacity" onclick="showTab('capacity')">Acquisition capacity</button>
     <button class="tab" data-tab="buy" onclick="showTab('buy')">Buy inboxes</button>
     <button class="tab" data-tab="renewals" onclick="showTab('renewals')">Renewals &amp; reserve</button>
   </div>
@@ -203,6 +222,69 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
         <th>Why</th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <!-- ══ ACQUISITION CAPACITY ══ -->
+  <div class="tabpanel" data-panel="capacity">
+    <div class="sect"><h2>⚡ Acquisition sending capacity</h2><span class="eye" id="capsub">loading…</span></div>
+    <div class="note">Every acquisition inbox we pay for, and whether it is actually pushing mail.
+      <b>Capacity</b> is the sum of each inbox's real SmartLead daily cap. <b>Deployed</b> is the slice pointed at a live campaign that still has leads queued.
+      <b>Stranded</b> is the expensive one — inboxes sitting in an <b>ACTIVE campaign that has run out of leads</b>: SmartLead never releases them, so they look busy and send nothing.
+      Pick idle inboxes below, choose a campaign, and move them. Removing a sender from a live campaign that still has leads needs an explicit override, and a live campaign can never be taken to zero senders.</div>
+
+    <div class="kpis" id="capkpis"></div>
+    <div class="panel" id="capbarpanel" style="display:none;margin-top:14px;padding:15px 17px"></div>
+
+    <div class="sect"><h2>Campaigns</h2><span class="eye" id="capcampsub"></span></div>
+    <div class="note">Live campaigns first. <b>Runway</b> = leads left ÷ this campaign's acquisition capacity per day — under a day and it is about to run dry; <b>Wants</b> is how many more senders would clear the queue inside a week. A live campaign showing <b>0 leads</b> is stranding every sender on it.</div>
+    <div class="panel tablewrap"><table>
+      <thead><tr>
+        <th>Campaign</th><th>Status</th><th class="num">Acq senders</th><th class="num">Cap/day</th>
+        <th class="num">Leads left</th><th class="num">Runway</th><th class="num">Wants</th><th></th>
+      </tr></thead>
+      <tbody id="capcamprows"><tr><td colspan="8" class="empty">loading…</td></tr></tbody>
+    </table></div>
+
+    <div class="sect"><h2>Free capacity — allocate</h2><span class="eye" id="capfreesub"></span></div>
+    <div class="toolbar" id="capfilters">
+      <button class="chip" data-cf="idle" aria-pressed="true">Idle only</button>
+      <button class="chip" data-cf="stranded" aria-pressed="false">Stranded</button>
+      <button class="chip" data-cf="parked" aria-pressed="false">Parked</button>
+      <button class="chip" data-cf="unassigned" aria-pressed="false">Unassigned</button>
+      <button class="chip" data-cf="sending" aria-pressed="false">Sending</button>
+      <button class="chip" data-cf="blocked" aria-pressed="false">Blocked</button>
+      <button class="chip" data-cf="all" aria-pressed="false">All</button>
+      <select id="capgroupfilter" onchange="renderCapInboxes()" title="Filter by acquisition group" style="margin-left:auto;font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer"><option value="all">All groups</option></select>
+      <select id="capespfilter" onchange="renderCapInboxes()" title="Filter by mailbox provider" style="font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer"><option value="all">Any provider</option><option value="GMAIL">Gmail</option><option value="OUTLOOK">Outlook</option></select>
+    </div>
+
+    <div class="panel"><div class="cqbar" style="flex-wrap:wrap;row-gap:10px">
+      <div><div class="l">Selected</div><div class="v" id="capselcount">0</div></div>
+      <div><div class="l">Capacity moved</div><div class="v" id="capselcap">0/day</div></div>
+      <div style="flex:1 1 260px;min-width:220px">
+        <div class="l">Move into campaign</div>
+        <select id="captarget" style="width:100%;margin-top:3px;font-family:var(--mono);font-size:11.5px;background:var(--surface2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px">
+          <option value="">— pick a campaign —</option>
+        </select>
+      </div>
+      <div class="act" style="flex-wrap:wrap">
+        <label class="eye" style="display:flex;align-items:center;gap:5px;cursor:pointer" title="Required to pull a sender off a campaign that still has leads queued">
+          <input type="checkbox" id="capoverride" class="chk" style="accent-color:var(--warn)"> allow pulling from live campaigns
+        </label>
+        <button class="btn sm" id="capplanbtn" disabled onclick="capPlan()">Preview move</button>
+        <button class="btn pri sm" id="capgobtn" disabled onclick="capApply()">Confirm move</button>
+      </div>
+    </div></div>
+    <div id="capplan" style="margin-top:10px"></div>
+
+    <div class="panel tablewrap" style="margin-top:10px"><table>
+      <thead><tr>
+        <th style="width:36px"><input type="checkbox" class="chk" id="capselall" title="Select all shown"></th>
+        <th>Inbox / domain</th><th>Group</th><th>ESP</th><th>State</th>
+        <th class="num">Cap/day</th><th class="num">Sent 7d</th><th>Campaign(s)</th><th>Why</th>
+      </tr></thead>
+      <tbody id="caprows"><tr><td colspan="9" class="empty">loading…</td></tr></tbody>
     </table></div>
   </div>
 
@@ -1151,6 +1233,304 @@ on('confirmbtn', ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
 });
 
+// ══ Acquisition capacity ══════════════════════════════════════════════════
+// Utilisation, not deliverability: which acquisition inboxes we pay for are
+// actually pushing mail, and which are free for Lars to point at a new campaign.
+let CAP=null, capFilter='idle', capSel=new Set(), capBusy=false;
+// Confirm is gated on a *previewed* plan: capPlanOk is set only by a dry-run
+// that came back actionable, and cleared by anything that invalidates it
+// (new selection, different target, override toggled). Without this flag the
+// updateCapSel() call in capCall's finally block re-disables the button the
+// instant a good preview renders.
+let capPlanOk=false;
+const CAP_STATES=['sending','stranded','parked','unassigned','blocked'];
+const CAP_LABEL={sending:'Sending',stranded:'Stranded',parked:'Parked',unassigned:'Unassigned',blocked:'Blocked'};
+
+async function loadCapacity(live){
+  const sub=document.getElementById('capsub');
+  if(sub) sub.textContent = live? 'refreshing from SmartLead…' : 'loading…';
+  try{
+    const r=await fetch(api('/api/acq-capacity'+(live?'?live=1':'')),{credentials:'include'});
+    const d=await r.json();
+    if(d.error){ if(sub) sub.textContent=d.error; return; }
+    CAP=d;
+    // drop selections that no longer exist or are no longer movable
+    const live_emails=new Set(d.inboxes.map(i=>i.email));
+    capSel.forEach(e=>{ if(!live_emails.has(e)) capSel.delete(e); });
+    renderCapacity();
+  }catch(e){ if(sub) sub.textContent='Error: '+e; }
+}
+
+function renderCapacity(){
+  if(!CAP) return;
+  const s=CAP.summary;
+  document.getElementById('capsub').innerHTML =
+    s.inboxes+' acquisition inboxes · snapshot '+(CAP.synced_at||'').slice(0,10)+
+    (CAP.live?' · campaign statuses live':'')+
+    ' <button class="btn sm" style="margin-left:8px" onclick="loadCapacity(true)">Refresh live</button>';
+
+  const pct=s.utilisation_pct;
+  const kcls=pct>=85?'goodv':pct>=65?'':'warnv';
+  document.getElementById('capkpis').innerHTML=[
+    kpi('Capacity / day', s.total_capacity, s.inboxes+' inboxes we pay for'),
+    kpi('Usable / day', s.usable_capacity, s.blocked_inboxes+' blocked out'),
+    kpi('Deployed / day', s.deployed_capacity, s.allocation_pct+'% of usable'),
+    kpi('Actually sending', s.actual_per_day, s.window_days+'d avg', kcls),
+    kpi('Utilisation', pct+'%', 'of everything we pay for', kcls),
+    kpi('Idle / day', s.idle_capacity, s.idle_inboxes+' inboxes free', s.idle_capacity>0?'critv':'goodv'),
+  ].join('');
+
+  // stacked capacity bar
+  const tot=s.total_capacity||1;
+  const seg=CAP_STATES.map(st=>{
+    const c=(s.by_state[st]||{}).capacity||0;
+    return c? `<span class="${st}" style="width:${(100*c/tot).toFixed(2)}%" title="${CAP_LABEL[st]}: ${c}/day"></span>`:'';
+  }).join('');
+  const leg=CAP_STATES.map(st=>{
+    const b=s.by_state[st]||{inboxes:0,capacity:0};
+    const col={sending:'--good',stranded:'--crit',parked:'--warn',unassigned:'--accent',blocked:'--mut'}[st];
+    return `<span><i style="background:var(${col})"></i>${CAP_LABEL[st]} — <b>${b.inboxes}</b> inbox${b.inboxes===1?'':'es'} · ${b.capacity}/day</span>`;
+  }).join('');
+  const strandCap=(s.by_state.stranded||{}).capacity||0;
+  const p=document.getElementById('capbarpanel'); p.style.display='';
+  // Note: the projection is stated in terms of ALLOCATION (capacity pointed at a
+  // live queue), not measured sends — idle capacity by definition fills the gap
+  // between deployed and usable, so quoting a sends-based figure here would both
+  // overstate the win and can exceed 100%.
+  p.innerHTML=`<div class="capbar">${seg}</div><div class="caplegend">${leg}</div>`+
+    (s.idle_capacity? `<div class="eye" style="margin-top:11px">Putting the idle <b>${s.idle_capacity}/day</b> into live campaigns takes allocation from
+      <b>${s.allocation_pct}%</b> to <b>100%</b> of usable capacity`+
+      (strandCap? ` — <b style="color:var(--crit)">${strandCap}/day of it is stranded in live campaigns that have run out of leads</b>, so it never shows up as idle in SmartLead`:'')+
+      `.</div>`:'')+
+    (s.blocked_capacity? `<div class="eye" style="margin-top:6px">A further <b>${s.blocked_capacity}/day</b> across ${s.blocked_inboxes} burned or disconnected inbox${s.blocked_inboxes===1?'':'es'} is billed but unusable — reallocation cannot fix those, replace or cancel them.</div>`:'');
+
+  renderCapCampaigns();
+  fillCapSelects();
+  renderCapInboxes();
+}
+
+function kpi(label,val,sub,cls){
+  return `<div class="kpi"><div class="l">${label}</div><div class="v ${cls||''}">${val}</div><div class="s">${sub||''}</div></div>`;
+}
+
+function renderCapCampaigns(){
+  const rows=CAP.campaigns||[];
+  const active=rows.filter(c=>c.status==='ACTIVE');
+  const stranding=active.filter(c=>c.stranding);
+  document.getElementById('capcampsub').textContent =
+    `${active.length} live · ${stranding.length} live with no leads left`;
+  const el=document.getElementById('capcamprows');
+  if(!rows.length){ el.innerHTML='<tr><td colspan="8" class="empty">No acquisition campaigns.</td></tr>'; return; }
+  el.innerHTML=rows.map(c=>{
+    const scol=c.status==='ACTIVE'?'var(--good)':c.status==='PAUSED'?'var(--warn)':'var(--mut)';
+    const name=c.url?`<a href="${c.url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${esc(c.name)} ↗</a>`
+                    :`<span>${esc(c.name)}</span>`;
+    const blocked=c.senders_blocked?` <span class="eye" title="burned or SMTP-down — contributing nothing">(${c.senders_blocked} dead)</span>`:'';
+    const rem=c.remaining==null?'<span class="eye">—</span>'
+             :c.remaining===0&&c.status==='ACTIVE'?'<span style="color:var(--crit);font-weight:700">0</span>':c.remaining;
+    const run=c.runway_days==null?'<span class="eye">—</span>'
+             :c.runway_days<1?`<span style="color:var(--crit)">${c.runway_days}d</span>`
+             :c.runway_days<3?`<span style="color:var(--warn)">${c.runway_days}d</span>`:c.runway_days+'d';
+    const want=c.wants_senders?`<span style="color:var(--warn);font-weight:700">+${c.wants_senders}</span>`:'<span class="eye">—</span>';
+    const act=c.stranding
+      ? `<button class="btn sm" onclick="capSelectCampaign(${JSON.stringify(c.name).replace(/"/g,'&quot;')})">Free its ${c.senders_usable} sender${c.senders_usable===1?'':'s'}</button>`
+      : (c.wants_senders? `<button class="btn sm" onclick="capTarget(${c.id})">Fill it</button>`:'');
+    return `<tr${c.stranding?' style="background:var(--crit-bg)"':''}>
+      <td>${name}${c.acquisition?'':' <span class="tag" title="not named as an acquisition campaign">client?</span>'}</td>
+      <td><span style="color:${scol};font-family:var(--mono);font-size:10.5px">${c.status}</span></td>
+      <td class="num">${c.senders}${blocked}</td><td class="num">${c.capacity}</td>
+      <td class="num">${rem}</td><td class="num">${run}</td><td class="num">${want}</td>
+      <td class="num">${act}</td></tr>`;
+  }).join('');
+}
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function fillCapSelects(){
+  const g=document.getElementById('capgroupfilter'), cur=g.value;
+  const groups=[...new Set((CAP.inboxes||[]).map(i=>i.group).filter(Boolean))].sort();
+  g.innerHTML='<option value="all">All groups</option>'+groups.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
+  if(groups.includes(cur)) g.value=cur;
+
+  // ESP comes from the sync; hide the filter entirely until a sync has populated
+  // it, rather than offering a Gmail/Outlook choice that would match nothing.
+  const esps=[...new Set((CAP.inboxes||[]).map(i=>i.esp).filter(Boolean))].sort();
+  const ef=document.getElementById('capespfilter');
+  if(!esps.length){ ef.style.display='none'; ef.value='all'; }
+  else{
+    ef.style.display='';
+    const ec=ef.value;
+    ef.innerHTML='<option value="all">Any provider</option>'+esps.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    if(esps.includes(ec)) ef.value=ec;
+  }
+
+  const t=document.getElementById('captarget'), tc=t.value;
+  // Only campaigns we can actually resolve an id for. ACTIVE first, then the
+  // rest — a paused campaign is a legitimate target (Lars fills it, then starts it).
+  const opts=(CAP.campaigns||[]).filter(c=>c.id);
+  t.innerHTML='<option value="">— pick a campaign —</option>'+opts.map(c=>{
+    const bits=[c.status];
+    if(c.remaining!=null) bits.push(c.remaining+' leads');
+    bits.push(c.senders+' senders');
+    return `<option value="${c.id}">${esc(c.name)}  ·  ${bits.join(' · ')}</option>`;
+  }).join('');
+  if(tc && opts.some(c=>String(c.id)===tc)) t.value=tc;
+}
+
+function capMatchesFilter(i){
+  if(capFilter==='all') return true;
+  if(capFilter==='idle') return i.state==='stranded'||i.state==='parked'||i.state==='unassigned';
+  return i.state===capFilter;
+}
+
+function renderCapInboxes(){
+  if(!CAP) return;
+  const grp=document.getElementById('capgroupfilter').value;
+  const esp=document.getElementById('capespfilter').value;
+  const list=(CAP.inboxes||[]).filter(i=>capMatchesFilter(i)
+    && (grp==='all'||i.group===grp) && (esp==='all'||(i.esp||'')===esp));
+  const cap=list.reduce((n,i)=>n+i.per_day,0);
+  document.getElementById('capfreesub').textContent=`${list.length} shown · ${cap}/day`;
+  const el=document.getElementById('caprows');
+  if(!list.length){ el.innerHTML='<tr><td colspan="9" class="empty">Nothing matches.</td></tr>'; }
+  else el.innerHTML=list.map(i=>{
+    const camps=(i.campaigns||[]).length
+      ? (i.campaigns||[]).map(c=>{
+          const on=(i.active_campaigns||[]).includes(c);
+          return `<div style="font-family:var(--mono);font-size:11px;color:${on?'var(--ink2)':'var(--mut)'}">${on?'▶':'⏸'} ${esc(c)}</div>`;
+        }).join('')
+      : '<span class="eye">—</span>';
+    const dis=i.state==='blocked'?' disabled title="cannot send — fix or replace it first"':'';
+    return `<tr>
+      <td><input type="checkbox" class="chk capchk" data-e="${esc(i.email)}" ${capSel.has(i.email)?'checked':''}${dis}></td>
+      <td><div class="em">${esc(i.email)}</div><div class="dom">${esc(i.domain)}</div></td>
+      <td><span class="tag">${esc(i.group)}</span></td>
+      <td><span class="eye">${esc(i.esp||'?')}</span></td>
+      <td><span class="cpill ${i.state}">${CAP_LABEL[i.state]}</span></td>
+      <td class="num">${i.per_day}</td>
+      <td class="num">${i.sent_7d}</td>
+      <td>${camps}</td>
+      <td class="reasons">${esc((i.why||[]).join('; '))}</td></tr>`;
+  }).join('');
+  el.querySelectorAll('.capchk').forEach(cb=>cb.addEventListener('change',()=>{
+    cb.checked? capSel.add(cb.dataset.e) : capSel.delete(cb.dataset.e);
+    capInvalidatePlan();
+  }));
+  const all=document.getElementById('capselall');
+  const sel=list.filter(i=>i.state!=='blocked');
+  all.checked = sel.length>0 && sel.every(i=>capSel.has(i.email));
+  updateCapSel();
+}
+
+function capInvalidatePlan(){
+  capPlanOk=false;
+  const box=document.getElementById('capplan'); if(box) box.innerHTML='';
+  updateCapSel();
+}
+
+function updateCapSel(){
+  const byEmail={}; (CAP&&CAP.inboxes||[]).forEach(i=>byEmail[i.email]=i);
+  const cap=[...capSel].reduce((n,e)=>n+((byEmail[e]||{}).per_day||0),0);
+  document.getElementById('capselcount').textContent=capSel.size;
+  document.getElementById('capselcap').textContent=cap+'/day';
+  const t=document.getElementById('captarget').value;
+  document.getElementById('capplanbtn').disabled = !(capSel.size && t) || capBusy;
+  document.getElementById('capgobtn').disabled = !capPlanOk || capBusy;
+}
+
+// "Free its N senders" on a stranded campaign — select exactly that campaign's
+// usable senders so Lars can point them somewhere in one move.
+function capSelectCampaign(name){
+  const c=(CAP.campaigns||[]).find(x=>x.name===name); if(!c) return;
+  const byEmail={}; (CAP.inboxes||[]).forEach(i=>byEmail[i.email]=i);
+  capSel.clear();
+  (c.emails||[]).forEach(e=>{ if((byEmail[e]||{}).state!=='blocked') capSel.add(e); });
+  capFilter='all';
+  document.querySelectorAll('#capfilters .chip').forEach(ch=>ch.setAttribute('aria-pressed', ch.dataset.cf==='all'));
+  document.getElementById('capgroupfilter').value='all';
+  document.getElementById('capespfilter').value='all';
+  capPlanOk=false; document.getElementById('capplan').innerHTML='';
+  renderCapInboxes();
+  document.getElementById('capfreesub').scrollIntoView({behavior:'smooth',block:'center'});
+}
+function capTarget(id){
+  document.getElementById('captarget').value=String(id);
+  updateCapSel();
+  document.getElementById('captarget').scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+async function capPlan(){ await capCall(false); }
+async function capApply(){
+  const t=document.getElementById('captarget');
+  const name=t.options[t.selectedIndex].text.split('  ·  ')[0];
+  if(!confirm(`Move ${capSel.size} inbox(es) into "${name}"?\n\nThey are removed from their current campaigns and added to this one in SmartLead.`)) return;
+  await capCall(true);
+}
+
+async function capCall(confirmIt){
+  const box=document.getElementById('capplan');
+  const to=parseInt(document.getElementById('captarget').value,10);
+  if(!capSel.size||!to) return;
+  capBusy=true;
+  const btns=['capplanbtn','capgobtn'].map(id=>document.getElementById(id));
+  btns.forEach(b=>b.disabled=true);
+  box.innerHTML='<div class="msg">'+(confirmIt?'Moving…':'Checking…')+'</div>';
+  try{
+    const r=await fetch(api('/api/acq-allocate'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({emails:[...capSel], to_campaign_id:to,
+        override_active:document.getElementById('capoverride').checked,
+        confirm:!!confirmIt})});
+    const d=await r.json();
+    renderCapPlan(d, confirmIt);
+    if(confirmIt && d.ok){ capSel.clear(); await loadCapacity(true); loadRealloc(); }
+  }catch(e){ box.innerHTML='<div class="msg" style="color:var(--crit)">Error: '+e+'</div>'; }
+  finally{ capBusy=false; updateCapSel(); }
+}
+
+function renderCapPlan(d, applied){
+  const box=document.getElementById('capplan');
+  if(d.error && !d.fatal){ box.innerHTML=`<div class="panel" style="padding:13px 16px;border-color:var(--crit)"><b style="color:var(--crit)">${esc(d.error)}</b></div>`; return; }
+  const bits=[];
+  if(applied){
+    bits.push(`<div style="font-size:14px;font-weight:650;color:${d.ok?'var(--good)':'var(--crit)'}">${d.ok?'✅ Moved':'⚠ Partly failed'}</div>`);
+    if(d.message) bits.push(`<div class="eye" style="margin-top:5px">${esc(d.message)}</div>`);
+    if(d.capacity_moved) bits.push(`<div class="eye">+${d.capacity_moved}/day now pointed at a live queue.</div>`);
+    const rf=(d.results||{}).remove_failed||[], af=(d.results||{}).add_failed||[];
+    [...af,...rf].forEach(f=>bits.push(`<div class="eye" style="color:var(--crit)">HTTP ${f.http} — ${esc((f.emails||[]).join(', '))}${f.campaign?(' on '+esc(f.campaign)):''}</div>`));
+  } else {
+    const t=d.target||{};
+    bits.push(`<div style="font-size:14px;font-weight:650">Preview</div>`);
+    if(t.name) bits.push(`<div class="eye" style="margin-top:5px"><b>${esc(t.name)}</b> — ${t.senders_now} senders (${t.capacity_now}/day) → <b style="color:var(--good)">${t.senders_after} senders (${t.capacity_after}/day)</b></div>`);
+    bits.push(`<div class="eye">Adding <b>${(d.adds||[]).length}</b>, detaching from <b>${(d.removes||[]).length}</b> campaign slot(s).</div>`);
+    const byC={}; (d.removes||[]).forEach(r=>{ byC[r.campaign]=(byC[r.campaign]||0)+1; });
+    Object.entries(byC).forEach(([c,n])=>bits.push(`<div class="eye" style="margin-left:10px">− ${n} from ${esc(c)}</div>`));
+  }
+  (d.fatal||[]).forEach(f=>bits.push(`<div style="margin-top:7px;color:var(--crit);font-size:12.5px">⛔ ${esc(f)}</div>`));
+  (d.blocked||[]).forEach(b=>bits.push(`<div class="eye" style="color:var(--serious)">skipped ${esc(b.email)} — ${esc(b.reason)}</div>`));
+  (d.warnings||[]).forEach(w=>bits.push(`<div class="eye" style="color:var(--warn)">⚠ ${esc(w)}</div>`));
+  box.innerHTML=`<div class="panel" style="padding:13px 16px;border-color:${(d.fatal||[]).length?'var(--crit)':'var(--line2)'}">${bits.join('')}</div>`;
+  capPlanOk = !applied && !!d.actionable;
+  document.getElementById('capgobtn').disabled = !capPlanOk;
+}
+
+// capacity-tab wiring
+document.querySelectorAll('#capfilters .chip').forEach(ch=>ch.addEventListener('click',()=>{
+  capFilter=ch.dataset.cf;
+  document.querySelectorAll('#capfilters .chip').forEach(o=>o.setAttribute('aria-pressed', o===ch));
+  renderCapInboxes();
+}));
+document.getElementById('captarget').addEventListener('change', capInvalidatePlan);
+document.getElementById('capoverride').addEventListener('change', capInvalidatePlan);
+document.getElementById('capselall').addEventListener('change',e=>{
+  const grp=document.getElementById('capgroupfilter').value, esp=document.getElementById('capespfilter').value;
+  (CAP&&CAP.inboxes||[]).filter(i=>capMatchesFilter(i) && (grp==='all'||i.group===grp)
+      && (esp==='all'||(i.esp||'')===esp) && i.state!=='blocked')
+    .forEach(i=> e.target.checked? capSel.add(i.email) : capSel.delete(i.email));
+  capPlanOk=false; document.getElementById('capplan').innerHTML='';
+  renderCapInboxes();
+});
+
 // ── Tabs ──
 function showTab(name){
   document.querySelectorAll('.tabpanel').forEach(p=>p.classList.toggle('active', p.dataset.panel===name));
@@ -1164,6 +1544,7 @@ load();
 loadReplacements();
 loadRenewals();
 loadReplenish();
+loadCapacity();
 </script>
 </body>
 </html>
