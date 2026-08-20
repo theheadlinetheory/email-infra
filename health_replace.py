@@ -181,22 +181,33 @@ def _add_pending_reallocate(names) -> None:
 
 
 def reallocation_campaigns() -> dict:
-    """Campaigns awaiting a manual SmartLead 'Reallocate mailboxes' after swaps —
-    the full-name checklist to work through one by one. Annotated with live status
-    (ACTIVE first); campaigns no longer in the live list are dropped."""
+    """Campaigns awaiting a manual SmartLead 'Reallocate mailboxes' after swaps.
+
+    ONLY ACTIVE campaigns are returned: 'Reallocate mailboxes' redistributes a
+    campaign's LIVE lead queue onto its senders — a paused or completed campaign
+    isn't sending, so a reallocate there is a no-op. Including them just piled up
+    stale noise (paused/completed clients that never clear) and buried the few
+    live campaigns that actually need the click. Also self-prunes the stored
+    state to live ACTIVE campaigns so it can't grow unbounded."""
     names = (store.get_state(REALLOC_KEY) or {}).get("campaigns", [])
     if not names:
         return {"campaigns": [], "count": 0}
     idx = campaign_index()
-    rows = []
+    rows, keep = [], []
     for n in names:
-        if n not in idx:
-            continue
+        st = idx.get(n, {}).get("status")
+        if st != "ACTIVE":
+            continue  # gone from SmartLead, paused, or completed → no reallocate needed
+        keep.append(n)
         cid = idx[n]["id"]
-        rows.append({"name": n, "status": idx[n]["status"], "id": cid,
+        rows.append({"name": n, "status": "ACTIVE", "id": cid,
                      "url": SL_CAMPAIGN_URL.format(id=cid) if cid else None})
-    rank = {"ACTIVE": 0, "PAUSED": 1, "COMPLETED": 2}
-    rows.sort(key=lambda r: (rank.get(r["status"], 3), r["name"]))
+    if len(keep) != len(names):                      # prune stale entries once
+        try:
+            store.set_state(REALLOC_KEY, {"campaigns": sorted(keep)})
+        except Exception:
+            pass                                     # display filter still applies
+    rows.sort(key=lambda r: r["name"])
     return {"campaigns": rows, "count": len(rows)}
 
 
