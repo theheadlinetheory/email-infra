@@ -296,15 +296,34 @@ def daily_rows(dates: list[str], attrs: dict) -> list[dict]:
 
 
 def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
-                    end_day: str | None = None) -> dict:
+                    end_day: str | None = None, include_today: bool = True) -> dict:
     """Rewrite the last `days` complete days of daily rows with true per-day
     numbers. Idempotent — upserts on (email, date), so re-running repairs rather
-    than duplicates."""
+    than duplicates.
+
+    `include_today` also refreshes the in-progress day. It is not part of the
+    scoring window (see complete_days) and its total will keep climbing until
+    the day closes, but writing it keeps the invariant that NO row in this table
+    is ever stale: without it, the last row written by the old 7-day-total code
+    would sit there holding a week of sending under today's date until tomorrow's
+    run finally overwrote it.
+
+    Only the complete days are returned in `sent_by_date`, so today's partial
+    total can never be mistaken for a quiet day and drag the window selection
+    back a day.
+    """
     dates = complete_days(days, end_day)
     rows = daily_rows(dates, attrs)
-    store.upsert_health_daily(rows)
-    return {"days": dates, "rows": len(rows),
-            "sent_by_date": _sent_by_date(rows)}
+    out = {"days": dates, "rows": len(rows), "sent_by_date": _sent_by_date(rows)}
+
+    if include_today:
+        partial = daily_rows([end_day or today_local()], attrs)
+        store.upsert_health_daily(rows + partial)
+        out["rows"] += len(partial)
+        out["partial_day"] = end_day or today_local()
+    else:
+        store.upsert_health_daily(rows)
+    return out
 
 
 def _sent_by_date(rows: list[dict]) -> dict:
