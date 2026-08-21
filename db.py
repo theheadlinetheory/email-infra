@@ -645,12 +645,48 @@ def get_group_history(group_id: int = None, limit: int = 100) -> list[dict]:
 # Health V1  (inbox_health_daily / inbox_health_status / inbox_health_config)
 # ---------------------------------------------------------------------------
 
-def upsert_health_daily(rows: list[dict]) -> None:
-    """Upsert per-inbox per-day metric rows (unique on email+date)."""
+_health_daily_cols: set | None = None
+
+
+def health_daily_columns() -> set:
+    """Columns that actually exist on inbox_health_daily right now.
+
+    PostgREST rejects the WHOLE batch if the payload names a column the table
+    does not have. The per-day count columns (bounced/replied/unique_lead_count,
+    added 2026-08-21) need a DDL migration that cannot be run through this API,
+    so the writer filters against reality instead of assuming: it works before
+    the migration and starts persisting counts by itself the moment it is
+    applied. Cached per process — the shape does not change mid-run.
+    """
+    global _health_daily_cols
+    if _health_daily_cols is None:
+        try:
+            probe = _request("GET", "/inbox_health_daily",
+                             params={"select": "*", "limit": "1"})
+            _health_daily_cols = set(probe[0].keys()) if probe else set()
+        except Exception:
+            _health_daily_cols = set()
+    return _health_daily_cols
+
+
+def upsert_health_daily(rows: list[dict], chunk: int = 1000) -> None:
+    """Upsert per-inbox per-day metric rows (unique on email+date).
+
+    Chunked: the snapshot refreshes ~10 complete days at once, which is ~16,000
+    rows for a 1,600-inbox fleet. That is a multi-megabyte body in a single POST
+    — enough to hit PostgREST/proxy limits and fail the whole write. Splitting
+    keeps each request small, and because the operation is an idempotent upsert
+    a partial failure can simply be re-run.
+    """
     if not rows:
         return
-    _request("POST", "/inbox_health_daily", params={"on_conflict": "email,date"},
-             json_body=rows, headers={"Prefer": "resolution=merge-duplicates"})
+    cols = health_daily_columns()
+    if cols:
+        rows = [{k: v for k, v in r.items() if k in cols} for r in rows]
+    for i in range(0, len(rows), chunk):
+        _request("POST", "/inbox_health_daily", params={"on_conflict": "email,date"},
+                 json_body=rows[i:i + chunk],
+                 headers={"Prefer": "resolution=merge-duplicates"})
 
 
 def get_health_daily(email: str, limit: int = 14) -> list[dict]:

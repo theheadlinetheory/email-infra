@@ -218,9 +218,24 @@ def _worse(a, b):
 
 
 def rolling(daily_rows, days=3):
-    """Aggregate the most recent `days` daily snapshot rows for one inbox into
-    window signals. Each row: {date, reply_rate, bounce_rate, ooo_rate, sent}.
-    Returns (window_signals, prev_window_reply) for trend.
+    """Aggregate the most recent `days` daily rows for one inbox into window
+    signals. Each row: {date, reply_rate, bounce_rate, ooo_rate, sent, ...}.
+
+    Rates are POOLED from counts when the row carries them —
+    100 * sum(bounced) / sum(unique_lead_count) — not averaged across days.
+    Averaging daily rates weights a day that sent 3 emails the same as one that
+    sent 15, so a single bounce on a near-idle day (1/3 = 33%) can drag an inbox
+    to At-risk on its own. Pooling weights by volume, which is what the
+    thresholds in DEFAULT_CONFIG were tuned against.
+
+    The denominator is `unique_lead_count`, NOT `sent`, because that is how
+    SmartLead itself computes these rates — verified across a 7-day window where
+    621/621 inboxes matched bounced/unique_lead_count and only 213 matched
+    bounced/sent. Using sends would shift every rate down and silently move the
+    burn line.
+
+    Falls back to averaging the stored rate columns for rows written before
+    counts were collected, so old history still scores rather than vanishing.
     """
     rows = sorted([r for r in daily_rows if r.get("date")], key=lambda r: r["date"])
     recent = rows[-days:]
@@ -230,13 +245,25 @@ def rolling(daily_rows, days=3):
         vals = [r[key] for r in rs if r.get(key) is not None]
         return round(sum(vals) / len(vals), 2) if vals else None
 
+    def _sum(rs, key):
+        return sum(int(r.get(key) or 0) for r in rs)
+
+    def _pooled(rs, numerator, rate_key):
+        """Volume-weighted rate over the window, or None when we have no counts."""
+        if not any(r.get(numerator) is not None for r in rs):
+            return _avg(rs, rate_key)          # pre-counts history
+        leads = _sum(rs, "unique_lead_count") or _sum(rs, "sent")
+        if not leads:
+            return None
+        return round(100.0 * _sum(rs, numerator) / leads, 2)
+
     sig = {
-        "reply": _avg(recent, "reply_rate"),
-        "bounce": _avg(recent, "bounce_rate"),
+        "reply": _pooled(recent, "replied", "reply_rate"),
+        "bounce": _pooled(recent, "bounced", "bounce_rate"),
         "ooo": _avg(recent, "ooo_rate"),
         "placement": _avg(recent, "placement"),
-        "sent_3d": sum(int(r.get("sent") or 0) for r in recent),
-        "reply_prev": _avg(prior, "reply_rate"),
+        "sent_3d": _sum(recent, "sent"),
+        "reply_prev": _pooled(prior, "replied", "reply_rate"),
     }
     return sig
 
