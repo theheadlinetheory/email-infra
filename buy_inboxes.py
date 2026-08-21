@@ -148,27 +148,46 @@ _CLIENT_SUFFIX = ["pros", "hq", "group", "team", "mail", "hub", "co", "care", "w
 
 
 def _brand_roots(brand):
-    """Reduce a client brand or real domain to 1-2 root tokens to build variants from.
-    'quantumheating.com' / 'Quantum Heating HVAC' -> ['quantumheating', 'quantum']."""
+    """Reduce a client brand/domain to SEVERAL short, recognisable root tokens to
+    build variants from. Multi-word brands are tokenised so long names still yield
+    many under-30-char roots (a single 29-char concatenation would let no
+    prefix/suffix variant fit, so only 1 domain came back).
+
+    'Quantum Heating' -> ['quantumheating','quantum','heating']
+    'Merry & Bright Christmas Lights' ->
+      ['merrybright','brightchristmas','christmaslights','merrylights',
+       'merry','bright','christmas','lights']
+    'quantumheating.com' -> ['quantumheating','quantum']  (domain SLD, best-effort)"""
     b = (brand or "").strip().lower()
     b = re.sub(r"^https?://", "", b)
     b = re.sub(r"^www\.", "", b)
-    if "." in b and " " not in b:                 # looks like a domain -> take the SLD
+    if "." in b and not re.search(r"[\s&]", b):   # a bare domain -> take the SLD label
         b = b.split("/")[0]
         parts = b.split(".")
         b = parts[-2] if len(parts) >= 2 else parts[0]
-    full = re.sub(r"[^a-z0-9]+", "", b)
-    if not full:
-        return []
-    core = full                                    # brand minus a trailing service word
-    for w in sorted(_SVC_WORDS, key=len, reverse=True):
-        if core.endswith(w) and len(core) - len(w) >= 4:
-            core = core[:-len(w)]
-            break
-    roots = [full]
-    if core != full and len(core) >= 4:
-        roots.append(core)
-    return roots
+    _JOIN = {"and", "the", "of", "a", "an", "for", "your", "co", "inc", "llc"}
+    words = [w for w in re.split(r"[^a-z0-9]+", b) if w]
+    # a single concatenated token (e.g. a domain) — best-effort split on 'and'
+    if len(words) == 1 and "and" in words[0] and len(words[0]) > 12:
+        words = [p for p in words[0].split("and") if p] or words
+    words = [w for w in words if w not in _JOIN] or words   # drop pure joiners only
+    if not words:
+        full = re.sub(r"[^a-z0-9]+", "", b)
+        return [full] if full else []
+    roots = []
+    for i in range(len(words) - 1):                # adjacent word pairs — keep service
+        roots.append(words[i] + words[i + 1])      # words here (quantum+heating) for brand
+    if len(words) >= 3:
+        roots.append(words[0] + words[-1])         # first + last
+    for w in words:                                # distinctive single words, but NOT a
+        if len(w) >= 4 and w not in _SVC_WORDS:    # bare service word (heatingpros isn't a brand)
+            roots.append(w)
+    roots.append("".join(words))                   # full concatenation, fallback
+    out = []
+    for r in roots:                                # dedupe; keep root short enough that
+        if r and r not in out and 3 <= len(r) <= 22:   # a suffix still fits under 30
+            out.append(r)
+    return out or [re.sub(r"[^a-z0-9]+", "", b)]
 
 
 def suggest_client_domains(brand, count=12, tld="info", max_checks=None):

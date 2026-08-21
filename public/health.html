@@ -352,6 +352,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
         <div id="buyclientwrap" style="display:none;gap:12px;align-items:flex-end">
           <div><span class="eye">Client name</span><br><input id="buyclient" placeholder="e.g. Quantum Heating" style="margin-top:3px"></div>
           <div><span class="eye">Client's real domain / brand</span><br><input id="buyclientdomain" placeholder="e.g. quantumheating.com" style="margin-top:3px"></div>
+          <div><span class="eye">Domain style</span><br><select id="buyclientstyle" onchange="buyOwnerChange()" style="margin-top:3px"><option value="brand">Client-branded</option><option value="generic">Generic</option></select></div>
         </div>
         <div><span class="eye">Provider</span><br><select id="buyprovider" style="margin-top:3px"><option value="google">Google</option><option value="outlook">Outlook</option></select></div>
         <div><span class="eye">Inboxes / domain</span><br><input id="buyper" type="number" value="3" min="1" max="3" style="width:64px;margin-top:3px"></div>
@@ -658,10 +659,12 @@ let BUYPLAN=null;
 function buyOwnerChange(){
   const cl = _v('buyowner')==='client';
   document.getElementById('buyclientwrap').style.display = cl?'flex':'none';
-  const th=document.getElementById('buythemewrap'); if(th) th.style.display = cl?'none':'';
-  const hint=document.getElementById('buysuggesthint'); if(hint) hint.textContent = cl
-    ? 'brand-derived domains from the client’s real domain above'
-    : 'generic service names';
+  const branded = cl && (_v('buyclientstyle')||'brand')==='brand';
+  // theme dropdown (generic niche) shows for acquisition OR client+generic — not client+branded
+  const th=document.getElementById('buythemewrap'); if(th) th.style.display = branded?'none':'';
+  const hint=document.getElementById('buysuggesthint'); if(hint) hint.textContent =
+    branded ? 'brand-derived from the client name / domain above'
+            : (cl ? 'generic service names (for this client)' : 'generic service names');
 }
 function buySpec(){
   return { owner:_v('buyowner'), client_name:_v('buyclient'), provider:_v('buyprovider'),
@@ -672,8 +675,11 @@ async function buySuggest(){
   const el=document.getElementById('buymsg');
   const n=+_v('buysuggestn')||12, theme=_v('buytheme');
   const clientMode=_v('buyowner')==='client';
-  const brand=clientMode ? (_v('buyclientdomain')||_v('buyclient')).trim() : '';
-  if(clientMode && !brand){ el.textContent='✖ enter the client’s real domain / brand first'; return; }
+  const branded = clientMode && (_v('buyclientstyle')||'brand')==='brand';
+  // brand-derived: prefer the client NAME (it tokenizes into many short roots),
+  // fall back to the real domain. Generic mode sends no brand -> generic suggester.
+  const brand = branded ? (_v('buyclient')||_v('buyclientdomain')).trim() : '';
+  if(branded && !brand){ el.textContent='✖ enter the client name or real domain first'; return; }
   const body = brand ? {count:n, brand} : {count:n, theme};
   el.textContent = brand
     ? `generating brand domains for “${brand}” + checking Spaceship… (~30s)`
