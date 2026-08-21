@@ -236,6 +236,47 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <div class="kpis" id="capkpis"></div>
     <div class="panel" id="capbarpanel" style="display:none;margin-top:14px;padding:15px 17px"></div>
 
+    <div class="panel" id="capdefs" style="margin-top:14px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+        <b>What the five states mean</b>
+        <span class="eye">every acquisition inbox is in exactly one of these</span>
+        <button class="btn sm" style="margin-left:auto" onclick="toggleDefs()" id="capdefsbtn">Hide</button>
+      </div>
+      <div id="capdefsbody" class="tablewrap"><table>
+        <thead><tr><th style="width:120px">State</th><th style="width:150px">What it means</th><th>Plain English</th><th style="width:230px">What to do</th></tr></thead>
+        <tbody>
+          <tr><td><span class="cpill sending">Sending</span></td>
+              <td>In a live campaign that still has leads</td>
+              <td>Working normally. Mail is going out today.</td>
+              <td class="eye">Nothing — leave it alone.</td></tr>
+          <tr style="background:var(--crit-bg)"><td><span class="cpill stranded">Stranded</span></td>
+              <td>In a live campaign with <b>0 leads left</b></td>
+              <td><b>The expensive one.</b> The campaign is still switched ON but has run out of people to email. SmartLead does not hand the inbox back, so it looks busy in SmartLead while sending nothing. You would never spot this by looking at the campaign list.</td>
+              <td class="eye">Free it and put it on a campaign that still has leads. Safe — there is nothing left for it to send.</td></tr>
+          <tr><td><span class="cpill parked">Parked</span></td>
+              <td>Only in paused / completed campaigns</td>
+              <td>The campaign it belongs to was switched off or finished. Not sending, and honestly showing as not sending.</td>
+              <td class="eye">Free reuse. Move it whenever you need senders.</td></tr>
+          <tr><td><span class="cpill unassigned">Unassigned</span></td>
+              <td>In no campaign at all</td>
+              <td>Never attached to anything, or detached and never re-used. Pure spare stock.</td>
+              <td class="eye">Use these first — nothing to detach from.</td></tr>
+          <tr><td><span class="cpill blocked">Blocked</span></td>
+              <td>Burned, or SMTP disconnected</td>
+              <td>Cannot send no matter which campaign you put it in. We are still paying for it.</td>
+              <td class="eye"><b>Moving it will not help.</b> Replace or cancel it (Renewals &amp; reserve tab).</td></tr>
+        </tbody>
+      </table>
+      <div style="padding:11px 16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink2)">
+        <b>"Idle" is not a sixth state.</b> It is the shorthand for the three you can reclaim —
+        <span class="cpill stranded">Stranded</span> <span class="cpill parked">Parked</span> <span class="cpill unassigned">Unassigned</span>
+        — which is what the <b>Idle / day</b> figure and the <b>Idle only</b> filter both mean.
+        <span class="eye">Note: the <b>All inboxes</b> tab also has a status called "Idle", but that one answers a different question —
+        whether an inbox is healthy enough to judge. An inbox can be Sending here and still show as low-volume there.</span>
+      </div>
+      </div>
+    </div>
+
     <div class="sect"><h2>Campaigns</h2><span class="eye" id="capcampsub"></span></div>
     <div class="note">Live campaigns first. <b>Runway</b> = leads left ÷ this campaign's acquisition capacity per day — under a day and it is about to run dry; <b>Wants</b> is how many more senders would clear the queue inside a week. A live campaign showing <b>0 leads</b> is stranding every sender on it.</div>
     <div class="panel tablewrap"><table>
@@ -255,11 +296,12 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
       <button class="chip" data-cf="sending" aria-pressed="false">Sending</button>
       <button class="chip" data-cf="blocked" aria-pressed="false">Blocked</button>
       <button class="chip" data-cf="all" aria-pressed="false">All</button>
+      <button class="chip" data-cf="selected" aria-pressed="false" id="capselchip" style="display:none">Selected only</button>
       <select id="capgroupfilter" onchange="renderCapInboxes()" title="Filter by acquisition group" style="margin-left:auto;font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer"><option value="all">All groups</option></select>
       <select id="capespfilter" onchange="renderCapInboxes()" title="Filter by mailbox provider" style="font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer"><option value="all">Any provider</option><option value="GMAIL">Gmail</option><option value="OUTLOOK">Outlook</option></select>
     </div>
 
-    <div class="panel"><div class="cqbar" style="flex-wrap:wrap;row-gap:10px">
+    <div class="panel" id="capallocpanel"><div id="caphint" style="display:none"></div><div class="cqbar" style="flex-wrap:wrap;row-gap:10px">
       <div><div class="l">Selected</div><div class="v" id="capselcount">0</div></div>
       <div><div class="l">Capacity moved</div><div class="v" id="capselcap">0/day</div></div>
       <div style="flex:1 1 260px;min-width:220px">
@@ -1247,6 +1289,7 @@ const CAP_STATES=['sending','stranded','parked','unassigned','blocked'];
 const CAP_LABEL={sending:'Sending',stranded:'Stranded',parked:'Parked',unassigned:'Unassigned',blocked:'Blocked'};
 
 async function loadCapacity(live){
+  try{ capHint(); }catch(e){}
   const sub=document.getElementById('capsub');
   if(sub) sub.textContent = live? 'refreshing from SmartLead…' : 'loading…';
   try{
@@ -1389,6 +1432,7 @@ function fillCapSelects(){
 }
 
 function capMatchesFilter(i){
+  if(capFilter==='selected') return capSel.has(i.email);
   if(capFilter==='all') return true;
   if(capFilter==='idle') return i.state==='stranded'||i.state==='parked'||i.state==='unassigned';
   return i.state===capFilter;
@@ -1439,6 +1483,30 @@ function capInvalidatePlan(){
   updateCapSel();
 }
 
+// Says what to do next at every point in the flow. Without it the page gives no
+// feedback between "selected 3 inboxes" and "Preview move" being clickable, and
+// the disabled button reads as a broken screen rather than a missing input.
+function capHint(){
+  const el=document.getElementById('caphint'); if(!el) return;
+  const t=document.getElementById('captarget');
+  const tgt=t&&t.value;
+  let msg='', tone='var(--accent)';
+  if(!capSel.size){
+    msg='<b>Step 1.</b> Tick the inboxes you want to move — or hit <b>Free its N senders</b> on a stranded campaign above to grab all of its senders at once.';
+    tone='var(--mut)';
+  } else if(!tgt){
+    msg=`<b>Step 2.</b> ${capSel.size} inbox${capSel.size===1?'':'es'} selected. Now pick the campaign to move them into, in <b>Move into campaign</b> below.`;
+  } else if(!capPlanOk){
+    msg='<b>Step 3.</b> Hit <b>Preview move</b> to see exactly what would change. Nothing is sent to SmartLead until you confirm.';
+  } else {
+    msg='<b>Step 4.</b> Check the preview, then <b>Confirm move</b>.';
+    tone='var(--good)';
+  }
+  el.style.display='';
+  el.innerHTML=`<div style="padding:10px 16px;border-bottom:1px solid var(--line);color:${tone};font-size:12.5px">${msg}</div>`;
+  if(t) t.style.borderColor = (capSel.size && !tgt) ? 'var(--accent)' : 'var(--line)';
+}
+
 function updateCapSel(){
   const byEmail={}; (CAP&&CAP.inboxes||[]).forEach(i=>byEmail[i.email]=i);
   const cap=[...capSel].reduce((n,e)=>n+((byEmail[e]||{}).per_day||0),0);
@@ -1447,6 +1515,9 @@ function updateCapSel(){
   const t=document.getElementById('captarget').value;
   document.getElementById('capplanbtn').disabled = !(capSel.size && t) || capBusy;
   document.getElementById('capgobtn').disabled = !capPlanOk || capBusy;
+  const chip=document.getElementById('capselchip');
+  if(chip) chip.style.display = capSel.size? '' : 'none';
+  capHint();
 }
 
 // "Free its N senders" on a stranded campaign — select exactly that campaign's
@@ -1456,13 +1527,17 @@ function capSelectCampaign(name){
   const byEmail={}; (CAP.inboxes||[]).forEach(i=>byEmail[i.email]=i);
   capSel.clear();
   (c.emails||[]).forEach(e=>{ if((byEmail[e]||{}).state!=='blocked') capSel.add(e); });
-  capFilter='all';
-  document.querySelectorAll('#capfilters .chip').forEach(ch=>ch.setAttribute('aria-pressed', ch.dataset.cf==='all'));
+  setCapFilter('selected');
   document.getElementById('capgroupfilter').value='all';
   document.getElementById('capespfilter').value='all';
   capPlanOk=false; document.getElementById('capplan').innerHTML='';
   renderCapInboxes();
-  document.getElementById('capfreesub').scrollIntoView({behavior:'smooth',block:'center'});
+  document.getElementById('capallocpanel').scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+function setCapFilter(f){
+  capFilter=f;
+  document.querySelectorAll('#capfilters .chip').forEach(ch=>ch.setAttribute('aria-pressed', ch.dataset.cf===f));
 }
 function capTarget(id){
   document.getElementById('captarget').value=String(id);
@@ -1527,8 +1602,7 @@ function renderCapPlan(d, applied){
 
 // capacity-tab wiring
 document.querySelectorAll('#capfilters .chip').forEach(ch=>ch.addEventListener('click',()=>{
-  capFilter=ch.dataset.cf;
-  document.querySelectorAll('#capfilters .chip').forEach(o=>o.setAttribute('aria-pressed', o===ch));
+  setCapFilter(ch.dataset.cf);
   renderCapInboxes();
 }));
 document.getElementById('captarget').addEventListener('change', capInvalidatePlan);
@@ -1541,6 +1615,15 @@ document.getElementById('capselall').addEventListener('change',e=>{
   capPlanOk=false; document.getElementById('capplan').innerHTML='';
   renderCapInboxes();
 });
+
+function toggleDefs(){
+  const b=document.getElementById('capdefsbody'), btn=document.getElementById('capdefsbtn');
+  const hide = b.style.display!=='none';
+  b.style.display = hide? 'none':'';
+  btn.textContent = hide? 'Show':'Hide';
+  try{ localStorage.setItem('ih_capdefs', hide?'0':'1'); }catch(e){}
+}
+try{ if(localStorage.getItem('ih_capdefs')==='0') toggleDefs(); }catch(e){}
 
 // ── Tabs ──
 function showTab(name){
