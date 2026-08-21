@@ -1,15 +1,29 @@
 """Health V1 — daily snapshot job.
 
-Reads per-inbox metrics from the already-fresh `overview_v2` cache (the same
-data the live dashboard shows), snapshots them per-inbox per-day, and re-scores
-every inbox off its trailing 3-day window.
+Records TRUE per-day metrics for every inbox, then re-scores each one over its
+trailing 3-SENDING-day window.
 
-Why the cache and not SmartLead directly: overview_v2 already carries per-inbox
-bounce_rate / reply_rate / sent / smtp_ok, refreshed by the normal sync. The
-internal name-wise-health-metrics endpoint needs an expiring JWT (and was found
-broken in prod), so V1 rides on the stable, working cache instead. No token, no
-timeout risk. OOO/placement aren't in the cache yet -> the model scores on
-reply+bounce (renormalised), exactly the two signals prioritised on the call.
+Where the numbers come from, and why it changed (2026-08-21). This job used to
+take its metrics from the `overview_v2` cache, on the reasoning that the cache
+was already fresh and the internal metrics endpoint needed an expiring JWT. That
+was a bad trade: the cache's per-inbox `sent` is a SEVEN-day rolling total, it
+was written as a single day's row, and three such rows were then summed into
+`sent_3d` — roughly 8x reality, which left the `min_sent_3d` volume gate firing
+for 3 inboxes out of 1,794. Worse, consecutive dates held identical values, so
+health_alerts' day-over-day comparison could never see a change.
+
+Metrics now come from health_daily, which asks SmartLead for exactly the window
+being reasoned about and stores one real day per row. The JWT problem is solved
+properly there (auto-mint via login credentials, and a thin response raises
+instead of being mistaken for a quiet fleet) rather than avoided.
+
+Division of responsibility, kept strict so neither can corrupt the other:
+  * overview_v2  -> attribution only (client, group, domain, smtp, warmup, the
+                    campaigns an inbox sits in). See attrs_from_overview.
+  * health_daily -> every metric. Nothing else may supply sent/bounce/reply.
+
+OOO/placement still aren't collected here; placement is written separately by
+health_placement.py, so this job never writes that column.
 
 No inbox is deleted here — this is read-only measurement. Acting on burned
 inboxes is health_actions.py, behind an explicit confirm.
@@ -32,6 +46,22 @@ def _num(v):
         return float(v)
     except (ValueError, TypeError):
         return None
+
+
+def attrs_from_overview(overview: dict) -> dict:
+    """{email: attribution} for every inbox — client, group, domain, smtp, warmup.
+
+    The overview cache is the ONLY source for who an inbox belongs to. It is not
+    a source for how much it sent: its `sent` is a 7-day rolling total (see
+    health_daily's module docstring), which is what made `sent_3d` read ~8x high
+    for the first six weeks of Health V1. Metrics now come from health_daily;
+    this function exists to keep the two strictly apart.
+    """
+    return {r["email"]: {
+        "client": r["client"], "group_letter": r["group_letter"],
+        "source": r["source"], "domain": r["domain"],
+        "smtp_ok": r["smtp_ok"], "warmup_reputation": r["warmup_reputation"],
+    } for r in build_fleet_from_overview(overview)}
 
 
 def build_fleet_from_overview(overview: dict) -> list[dict]:
@@ -93,26 +123,23 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     if not fleet:
         return {"ok": False, "error": "no inboxes in overview", "date": today}
 
-    # 1) upsert today's per-inbox daily rows
-    daily_rows = [{
-        "email": r["email"], "date": today,
-        "client": r["client"], "group_letter": r["group_letter"],
-        "source": r["source"], "domain": r["domain"],
-        "reply_rate": r["reply_rate"], "bounce_rate": r["bounce_rate"],
-        "ooo_rate": None,
-        # NOTE: `placement` is deliberately omitted — it's written separately by
-        # health_placement.py (SmartLead warmup landing). Sending placement:None
-        # here would clobber it on every snapshot (merge-duplicates only touches
-        # the columns present in the payload).
-        "sent": r["sent"], "smtp_ok": r["smtp_ok"],
-        "warmup_reputation": r["warmup_reputation"],
-    } for r in fleet]
-    store.upsert_health_daily(daily_rows)
+    # 1) Record TRUE per-day metrics for the recent complete days, then pick the
+    #    scoring window from real sending days.
+    #
+    #    This replaces the original approach of writing the overview cache's
+    #    per-inbox `sent` as "today's" row. That value is a SEVEN-day rolling
+    #    total, so every row held a week of sending under a single date, three of
+    #    them were summed into `sent_3d`, and consecutive dates ended up holding
+    #    IDENTICAL numbers (which also flatlined health_alerts' day-over-day
+    #    comparison). See health_daily for the full account.
+    import health_daily as hd
+    hist_info = hd.refresh_history(attrs_from_overview(overview))
+    window_sig, window_dates = hd.window_signals(sent_by_date=hist_info["sent_by_date"])
 
-    # 2) re-score each inbox off its trailing 3-day window
-    #    (one bulk fetch of the last week, not one query per inbox)
+    # 2) re-score each inbox off that window
+    #    (one bulk fetch of recent history, not one query per inbox)
     from datetime import timedelta
-    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
     history = store.get_health_daily_bulk(since)
 
     status_rows = []
@@ -131,7 +158,18 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
 
     for r in fleet:
         rows = history.get(r["email"], [])
+        # Prefer SmartLead's OWN aggregate for the scoring window: one call over
+        # the whole range means the rates are computed against its de-duplicated
+        # lead set. Re-pooling our stored daily rows would double-count any lead
+        # contacted on more than one day in the window. `rolling` stays as the
+        # fallback for an inbox missing from the window response (it sent
+        # nothing) so it still gets its trend and prior-window figures.
+        w = window_sig.get(r["email"])
         sig = hm.rolling(rows, days=3)
+        if w:
+            sig.update({k: w[k] for k in ("reply", "bounce", "sent_3d")})
+        else:
+            sig["sent_3d"] = 0                 # absent from the window = no sends
         sig["in_warmup"] = r["in_warmup"]
         sig["smtp_ok"] = r["smtp_ok"]
         sig["in_campaign"] = r["in_campaign"]
@@ -186,9 +224,15 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         "generated_at": datetime.now().isoformat(),
         "date": today, "counts": counts, "inboxes": fleet_out,
         "alerts": alerts, "alert_summary": alert_summary,
+        # The exact days "3d" refers to. Published so the UI can state the window
+        # instead of implying "the last three days" — which is wrong whenever the
+        # window reaches back over a weekend to find three real sending days.
+        "window_dates": window_dates,
+        "window_sent": hist_info["sent_by_date"],
     })
 
-    return {"ok": True, "date": today, "inboxes": len(status_rows), "counts": counts}
+    return {"ok": True, "date": today, "inboxes": len(status_rows), "counts": counts,
+            "window_dates": window_dates, "daily_rows_written": hist_info["rows"]}
 
 
 if __name__ == "__main__":

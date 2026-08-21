@@ -71,3 +71,19 @@ on conflict (key) do nothing;
 alter table inbox_health_daily  disable row level security;
 alter table inbox_health_status disable row level security;
 alter table inbox_health_config disable row level security;
+
+-- ── 2026-08-21: true per-day counts ────────────────────────────────────────
+-- Health V1 originally stored only RATES per day, and its `sent` was actually a
+-- 7-day rolling total written under a single date (see health_daily.py). Rates
+-- were then averaged across days, which weights a day that sent 3 emails the
+-- same as one that sent 15.
+--
+-- Storing the raw counts lets rates be POOLED by volume instead —
+-- 100 * sum(bounced) / sum(unique_lead_count), matching how SmartLead computes
+-- them (verified: 621/621 inboxes match that denominator over a 7-day window,
+-- only 213 match bounced/sent). Safe to re-run.
+alter table inbox_health_daily add column if not exists bounced           int;
+alter table inbox_health_daily add column if not exists replied           int;
+alter table inbox_health_daily add column if not exists opened            int;
+alter table inbox_health_daily add column if not exists positive_replied  int;
+alter table inbox_health_daily add column if not exists unique_lead_count int;
