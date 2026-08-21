@@ -1513,15 +1513,25 @@ function fillCapSelects(){
   }
 
   const t=document.getElementById('captarget'), tc=t.value;
-  // Only campaigns we can actually resolve an id for. ACTIVE first, then the
-  // rest — a paused campaign is a legitimate target (Lars fills it, then starts it).
-  const opts=(CAP.campaigns||[]).filter(c=>c.id);
-  t.innerHTML='<option value="">— pick a campaign —</option>'+opts.map(c=>{
-    const bits=[c.status];
-    if(c.remaining!=null) bits.push(c.remaining+' leads');
-    bits.push(c.senders+' senders');
-    return `<option value="${c.id}">${esc(c.name)}  ·  ${bits.join(' · ')}</option>`;
-  }).join('');
+  // Comes from `targets`, NOT from the campaign table. The table lists where
+  // senders already are; this lists where they can GO — which has to include a
+  // campaign holding none, because a campaign Lars just built is DRAFTED and
+  // empty by definition, and that is the whole workflow this tab exists for.
+  const opts=(CAP.targets||CAP.campaigns||[]).filter(c=>c.id);
+  const grouped={ACTIVE:[],DRAFTED:[],PAUSED:[]};
+  opts.forEach(c=>{ (grouped[c.status]||(grouped[c.status]=[])).push(c); });
+  const LABEL={ACTIVE:'Live campaigns',DRAFTED:'New / not started yet',PAUSED:'Paused'};
+  let html='<option value="">— pick a campaign —</option>';
+  ['ACTIVE','DRAFTED','PAUSED'].forEach(st=>{
+    const g=grouped[st]; if(!g||!g.length) return;
+    html+=`<optgroup label="${LABEL[st]} (${g.length})">`+g.map(c=>{
+      const bits=[];
+      if(c.remaining!=null) bits.push(c.remaining+' new leads');
+      bits.push(c.senders+' sender'+(c.senders===1?'':'s'));
+      return `<option value="${c.id}">${esc(c.name)}  ·  ${bits.join(' · ')}</option>`;
+    }).join('')+'</optgroup>';
+  });
+  t.innerHTML=html;
   if(tc && opts.some(c=>String(c.id)===tc)) t.value=tc;
 }
 

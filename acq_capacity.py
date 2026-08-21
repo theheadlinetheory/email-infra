@@ -140,12 +140,16 @@ def _campaign_facts(overview: dict, live: bool) -> dict:
             "total_leads": s.get("total_leads"),
             "senders_cached": s.get("accounts"),
         }
+    # The campaign index is refreshed on EVERY build, not just the live path.
+    # It is one call, and without it a campaign created since the last sync is
+    # invisible as a destination — which is precisely the moment someone opens
+    # this tab. Lead queues stay on the live path; they cost a call per campaign.
+    for name, info in (_live_campaign_index() or {}).items():
+        row = facts.setdefault(name, {"remaining": None, "in_progress": None,
+                                      "total_leads": None, "senders_cached": None})
+        row["id"] = info["id"]
+        row["status"] = info["status"]
     if live:
-        for name, info in (_live_campaign_index() or {}).items():
-            row = facts.setdefault(name, {"remaining": None, "in_progress": None,
-                                          "total_leads": None, "senders_cached": None})
-            row["id"] = info["id"]
-            row["status"] = info["status"]
         # refresh both lead queues for live acquisition campaigns — the stranded
         # call turns on these two numbers, so they must not be a day stale
         targets = {n: f["id"] for n, f in facts.items()
@@ -476,6 +480,7 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
     }
 
     campaigns = _campaign_rows(inboxes, facts)
+    targets = _target_rows(facts, campaigns)
     summary["starved_senders"] = sum(c["wants_senders"] for c in campaigns)
     summary["starved_capacity"] = summary["starved_senders"] * DEFAULT_PER_DAY
 
@@ -486,6 +491,7 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
         "summary": summary,
         "inboxes": sorted(inboxes, key=lambda x: (_state_order(x["state"]), x["email"])),
         "campaigns": campaigns,
+        "targets": targets,
         "state_labels": STATE_LABEL,
     }
 
@@ -499,6 +505,43 @@ def is_acquisition_campaign(name: str) -> bool:
     not there would hide senders we own."""
     n = (name or "").lower()
     return "acquisition" in n and "subsequence" not in n
+
+
+# Statuses a campaign can be in and still legitimately take on senders. DRAFTED
+# matters most: a campaign Lars has just built is DRAFTED until he starts it, and
+# the whole point of the tab is putting idle inboxes onto exactly that. COMPLETED
+# and STOPPED are excluded — adding senders there sends nothing.
+TARGET_STATUSES = ("ACTIVE", "PAUSED", "DRAFTED")
+
+
+def _target_rows(facts: dict, rows: list[dict]) -> list[dict]:
+    """Campaigns offered as a destination in the allocate dropdown.
+
+    Deliberately NOT the same list as the campaign table. The table answers
+    "where are my senders now", so it shows the campaigns that hold them. This
+    answers "where could they go", which includes campaigns holding none — a
+    brand-new DRAFTED campaign holds nothing by definition, and excluding it made
+    the tab unable to do the one job it was built for.
+    """
+    by_name = {r["name"]: r for r in rows}
+    out = []
+    for name, f in facts.items():
+        status = (f.get("status") or "").upper()
+        if status not in TARGET_STATUSES or not f.get("id"):
+            continue
+        if not is_acquisition_campaign(name) and name not in by_name:
+            continue                      # never offer a client campaign
+        r = by_name.get(name) or {}
+        out.append({
+            "name": name, "id": f["id"], "status": status,
+            "senders": r.get("senders", 0),
+            "remaining": f.get("remaining"),
+            "in_progress": f.get("in_progress"),
+            "acquisition": is_acquisition_campaign(name),
+        })
+    order = {"ACTIVE": 0, "DRAFTED": 1, "PAUSED": 2}
+    out.sort(key=lambda r: (order.get(r["status"], 9), r["name"]))
+    return out
 
 
 def _campaign_rows(inboxes: list[dict], facts: dict) -> list[dict]:
@@ -585,6 +628,10 @@ def plan(emails: list[str], to_campaign_id=None, from_campaign_id=None,
     by_email = {i["email"]: i for i in rep["inboxes"]}
     by_name = {c["name"]: c for c in rep["campaigns"]}
     by_cid = {c["id"]: c for c in rep["campaigns"] if c.get("id")}
+    # a DRAFTED/PAUSED campaign holding no senders is a valid destination but is
+    # absent from the campaign table, so fold the target list in behind it
+    for t in rep.get("targets") or []:
+        by_cid.setdefault(t["id"], {**t, "capacity": 0, "emails": []})
 
     target = by_cid.get(to_campaign_id) if to_campaign_id else None
     source = by_cid.get(from_campaign_id) if from_campaign_id else None
