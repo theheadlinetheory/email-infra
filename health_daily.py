@@ -5,10 +5,14 @@ Why this module exists (2026-08-21). The scorer used to get its numbers from the
 `sync.fetch_health_metrics()` called with NO dates — which defaults to a SEVEN-DAY
 window. That 7-day total was then stored as a single day's row, and
 `health_model.rolling(days=3)` SUMMED three of those rows. The result called
-`sent_3d` was therefore roughly three overlapping 7-day totals — about 8x reality
-(fleet median read 78 when the true 3-day figure is nearer 30) — so the
-`min_sent_3d` volume gate almost never fired: 3 inboxes out of 1,794 were ever
-marked "low volume".
+`sent_3d` was therefore roughly three overlapping 7-day totals: across sending
+inboxes the median read 169 where the truth is 45, i.e. 3.8x. So the
+`min_sent_3d` volume gate almost never fired — 3 inboxes out of 1,794 were ever
+marked "low volume", against a true 190 of 928 sending inboxes (20%).
+
+The 45 is the tell: an acquisition inbox is capped at 15 sends a day, so 3 days
+can never exceed 45. The corrected median lands exactly on the cap; the old 169
+implied 56 a day through a 15-a-day throttle, which was never possible.
 
 The stored rows were wrong a second way too: because every snapshot wrote the
 same 7-day total under a different date, consecutive dates held IDENTICAL values
@@ -321,8 +325,14 @@ def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
         store.upsert_health_daily(rows + partial)
         out["rows"] += len(partial)
         out["partial_day"] = end_day or today_local()
+        all_rows = rows + partial
     else:
         store.upsert_health_daily(rows)
+        all_rows = rows
+    try:
+        publish_daily_sends(all_rows)
+    except Exception:
+        pass                                   # a cache miss only costs speed
     return out
 
 
@@ -331,6 +341,39 @@ def _sent_by_date(rows: list[dict]) -> dict:
     for r in rows:
         out[r["date"]] = out.get(r["date"], 0) + (r.get("sent") or 0)
     return out
+
+
+DAILY_SENDS_CACHE = "daily_sends"
+
+
+def publish_daily_sends(rows: list[dict]) -> dict:
+    """Cache {date: {total, acquisition}} for cheap reads by the capacity tab.
+
+    The alternative is re-deriving it from inbox_health_daily on every page
+    load, which is ~12,000 rows across a dozen paged requests and took eleven
+    seconds. The snapshot already holds these rows in memory, so publishing the
+    two totals it can compute for free turns that into a single-row read.
+    """
+    out: dict = {}
+    for r in rows:
+        d = out.setdefault(r["date"], {"total": 0, "acquisition": 0})
+        n = int(r.get("sent") or 0)
+        d["total"] += n
+        if "acquisition" in (r.get("client") or "").lower():
+            d["acquisition"] += n
+    store.cache_set(DAILY_SENDS_CACHE, out)
+    return out
+
+
+def cached_daily_sends(bucket: str = "total") -> dict:
+    """{date: sends} from the published cache, or {} when it hasn't run yet."""
+    try:
+        data, _ = store.cache_get(DAILY_SENDS_CACHE)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {d: (v or {}).get(bucket, 0) for d, v in data.items()}
 
 
 def _self_test() -> None:
