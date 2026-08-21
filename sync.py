@@ -373,6 +373,11 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
                 "in_campaign": len(acct_camps) > 0,
                 "campaign_names": [c["name"] for c in acct_camps],
                 "warmup_reputation": warmup_reputation,
+                # real per-inbox daily send cap + provider. The capacity tab sums
+                # message_per_day rather than assuming 15/inbox, so a throttle
+                # change in SmartLead shows up instead of silently skewing it.
+                "message_per_day": a.get("message_per_day"),
+                "esp": a.get("type"),
             })
         account_details.sort(key=lambda x: x["email"])
         rep_values = [ad["warmup_reputation"] for ad in account_details if ad["warmup_reputation"] is not None]

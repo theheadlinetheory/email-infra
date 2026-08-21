@@ -623,6 +623,60 @@ def health_domains():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/acq-capacity")
+def acq_capacity_route():
+    """Acquisition sending capacity vs actual usage, and which inboxes are idle.
+
+    ?live=1 re-pulls the SmartLead campaign list so campaign statuses are current
+    (the cached ones are only as fresh as the last sync). One extra API call.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import acq_capacity as ac
+        live = request.args.get("live") in ("1", "true", "yes")
+        res = ac.build(live=live)
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/acq-allocate", methods=["POST", "OPTIONS"])
+def acq_allocate_route():
+    """Move acquisition inboxes between campaigns.
+
+    Body {emails:[...], to_campaign_id, from_campaign_id?, override_active?, confirm}.
+    confirm=false (the default) is a dry-run returning the full plan plus every
+    safety rail it trips. With no from_campaign_id the inbox is detached from all
+    of its current campaigns, so it can never end up sending from two at once.
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or []
+    if not emails:
+        return _cors(jsonify({"error": "emails required"})), 400
+    to_id = body.get("to_campaign_id")
+    from_id = body.get("from_campaign_id")
+    if not to_id and not from_id:
+        return _cors(jsonify({"error": "to_campaign_id or from_campaign_id required"})), 400
+    override = bool(body.get("override_active"))
+    try:
+        import acq_capacity as ac
+        fn = ac.apply if body.get("confirm") else ac.plan
+        res = fn(emails, to_campaign_id=to_id, from_campaign_id=from_id,
+                 override_active=override)
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-reallocate", methods=["POST", "OPTIONS"])
 def health_reallocate():
     """Reallocate an explicit set of burned inboxes: remove each from its campaign(s)
