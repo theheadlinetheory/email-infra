@@ -64,7 +64,12 @@ TZ = "America/New_York"          # the timezone SmartLead buckets days by
 MIN_RECORDS = 50
 
 WINDOW_DAYS = 3                  # the scoring window, matching min_sent_3d
-HISTORY_DAYS = 10                # how many complete days of daily rows we keep fresh
+# Must be >= the lookback health_snapshot passes to get_health_daily_bulk (14),
+# or the scorer can still read un-repaired rows. It did: repairing 10 days left
+# 2026-08-09 and earlier holding the old 7-day totals, and `rolling`'s PRIOR
+# window (rows[-6:-3]) reaches back that far to compute the reply trend. The
+# repaired days looked right while the trend was still being drawn from garbage.
+HISTORY_DAYS = 14                # how many complete days of daily rows we keep fresh
 
 # Count columns we persist per day. Rates are derived from these, never averaged.
 COUNT_FIELDS = ("sent", "bounced", "replied", "opened",
