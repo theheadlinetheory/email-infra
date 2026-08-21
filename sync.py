@@ -538,6 +538,12 @@ def fetch_acq_campaign_stats(progress_cb=None):
             "id": cid, "name": camp["name"], "status": camp.get("status", ""),
             "accounts": acct_count,
             "total_leads": active_leads, "completed": contacted, "remaining": lead_counts["STARTED"],
+            # INPROGRESS = contacted and still mid-sequence, i.e. follow-ups are
+            # still owed to them. It used to be folded into `completed` and lost,
+            # which made a campaign with no NEW leads look finished when it was
+            # still sending. Its senders are not free. Kept separate.
+            "in_progress": lead_counts["INPROGRESS"],
+            "finished": lead_counts["COMPLETED"],
             "total_sent": total_sent, "total_opened": total_opened,
             "total_replied": total_replied, "total_bounced": total_bounced,
         })
