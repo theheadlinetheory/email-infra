@@ -718,6 +718,31 @@ def get_health_daily_bulk(since_date: str) -> dict:
     return out
 
 
+def get_health_daily_sends(since_date: str) -> list[dict]:
+    """(email, date, sent) only, since `since_date`.
+
+    A narrow twin of get_health_daily_bulk for callers that just want volume.
+    The full version selects `*` — 15 columns over ~11,000 rows — which took
+    nearly 9 seconds and made the capacity page feel broken. Three columns is
+    the same rows at a fraction of the payload.
+    """
+    rows, offset = [], 0
+    while True:
+        page = _request("GET", "/inbox_health_daily", params={
+            "select": "email,date,sent", "date": f"gte.{since_date}",
+            "order": "date.desc", "limit": "1000", "offset": str(offset),
+        })
+        if not page:
+            break
+        rows.extend(page)
+        # Advance by what came BACK, not by what was asked for. PostgREST caps a
+        # page at its own max-rows (1000 here) whatever `limit` says, so a loop
+        # that compares against the requested size stops after the first page
+        # and silently returns a truncated result.
+        offset += len(page)
+    return rows
+
+
 def upsert_health_status(rows: list[dict]) -> None:
     """Upsert current computed status rows (primary key = email)."""
     if not rows:

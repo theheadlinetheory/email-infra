@@ -1271,12 +1271,18 @@ function renderCapacity(){
 
   const pct=s.utilisation_pct;
   const kcls=pct>=85?'goodv':pct>=65?'':'warnv';
+  // Judge headroom by the WORKING-day figure. The calendar-day number averages
+  // in weekends we never send on, so it always looks like there is more spare
+  // capacity than a Monday campaign could ever actually use.
+  const wpct=s.sending_day_pct!=null?s.sending_day_pct:pct;
+  const wcls=wpct>=85?'goodv':wpct>=65?'':'warnv';
   document.getElementById('capkpis').innerHTML=[
     kpi('Capacity / day', s.total_capacity, s.inboxes+' inboxes we pay for'),
     kpi('Usable / day', s.usable_capacity, s.blocked_inboxes+' blocked out'),
     kpi('Deployed / day', s.deployed_capacity, s.allocation_pct+'% of usable'),
-    kpi('Actually sending', s.actual_per_day, s.window_days+'d avg', kcls),
-    kpi('Utilisation', pct+'%', 'of everything we pay for', kcls),
+    kpi('Sending / working day', s.actual_per_sending_day!=null?s.actual_per_sending_day:s.actual_per_day,
+        (s.sending_days!=null? s.sending_days+' of '+s.window_days+' days had sends':s.window_days+'d avg'), wcls),
+    kpi('Weekday utilisation', (s.sending_day_pct!=null?s.sending_day_pct:pct)+'%', 'real headroom is 100 minus this', wcls),
     kpi('Idle / day', s.idle_capacity, s.idle_inboxes+' inboxes free', s.idle_capacity>0?'critv':'goodv'),
   ].join('');
 
@@ -1302,6 +1308,11 @@ function renderCapacity(){
       <b>${s.allocation_pct}%</b> to <b>100%</b> of usable capacity`+
       (strandCap? ` — <b style="color:var(--crit)">${strandCap}/day of it is stranded in live campaigns that have run out of leads</b>, so it never shows up as idle in SmartLead`:'')+
       `.</div>`:'')+
+    `<div class="eye" style="margin-top:6px">Across the whole week including weekends we average
+      <b>${s.actual_per_day}/day</b> (<b>${s.utilisation_pct}%</b> of what we pay for)`+
+      (s.sending_day_pct!=null&&s.sending_days!=null? ` — but we only sent on <b>${s.sending_days}</b> of the last
+      <b>${s.window_days}</b> days, and on those we ran at <b>${s.sending_day_pct}%</b>.
+      The gap between the two is the weekend, not spare weekday capacity.`:'')+`</div>`+
     (s.blocked_capacity? `<div class="eye" style="margin-top:6px">A further <b>${s.blocked_capacity}/day</b> across ${s.blocked_inboxes} burned or disconnected inbox${s.blocked_inboxes===1?'':'es'} is billed but unusable — reallocation cannot fix those, replace or cancel them.</div>`:'');
 
   renderCapCampaigns();

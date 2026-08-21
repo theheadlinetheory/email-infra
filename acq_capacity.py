@@ -28,10 +28,13 @@ Capacity is sum(message_per_day) read from SmartLead per inbox, NOT a hardcoded
 fact 15, but a per-inbox throttle change would silently invalidate every number
 on the page, so we read the real value and fall back to 15 only when absent.
 
-Actual usage comes from the trailing 7-day send total divided by 7. It is NOT
-`sent_3d` from the health fleet: that field sums three daily snapshots each of
-which already holds a SEVEN-day rolling total, so it over-counts by ~7x. See
-`usage()` for the note. Nothing here writes to the health scoring path.
+Actual usage comes from TRUE per-day rows (health_daily), reported on two bases:
+per CALENDAR day, which is what we pay for, and per SENDING day, which is what a
+working day looks like. They differ by a lot — Saturdays are zero and Sundays
+trickle — and quoting only the calendar figure reads as ~35% spare headroom when
+a weekday is actually running at 81%. See `usage()`.
+
+Nothing here writes to the health scoring path.
 """
 
 from __future__ import annotations
@@ -47,7 +50,8 @@ SL = "https://server.smartlead.ai/api/v1"
 SL_CAMPAIGN_URL = "https://app.smartlead.ai/app/email-campaign/{id}/analytics"
 
 DEFAULT_PER_DAY = 15          # Zapmail/SmartLead default; used only when the real value is missing
-USAGE_WINDOW_DAYS = 7         # the window `account_details.sent` covers
+USAGE_WINDOW_DAYS = 7         # how many complete days of true daily rows we average over
+LIVE_DAY_FRACTION = 0.20      # a day counts as a sending day at >=20% of a median day
 TARGET_BURN_DAYS = 7          # a campaign's queue "should" clear in about a week
 MIN_SENDERS_ACTIVE = 1        # an ACTIVE campaign may never be taken below this
 
@@ -229,19 +233,82 @@ def _classify(inbox: dict, facts: dict) -> tuple:
 # --- report ---------------------------------------------------------------
 
 def usage(inboxes: list[dict]) -> dict:
-    """Real send volume per day, from the trailing 7-day totals.
+    """Real send volume per day, from TRUE daily rows.
 
-    Deliberately not `sent_3d`: that sums three daily health snapshots whose
-    `sent` field is itself a 7-day rolling total (sync.fetch_health_metrics
-    defaults to a 7-day window), so it reads ~7x high. `account_details.sent` is
-    that same 7-day total taken once, which divided by 7 is an honest daily rate.
+    Reported on two bases, because they answer different questions and quoting
+    only one is misleading:
+
+      per_calendar_day  total / every day in the window. The money question —
+                        we pay for the mailboxes seven days a week.
+      per_sending_day   total / the days we actually sent. The operational
+                        question — what a working day really looks like.
+
+    They are far apart, and the gap is the weekend: Saturdays are hard zero and
+    Sundays trickle. Quoting only the calendar figure said 65% utilisation and
+    implied ~35% headroom, when a weekday actually runs at 81% — barely 19%
+    spare. Sending a Monday campaign into "headroom" that only exists on a
+    Saturday is exactly the wrong move, so the tab shows both.
+
+    Falls back to the overview cache's 7-day totals if daily rows aren't
+    available yet (a fresh database, or before the first repaired snapshot).
     """
+    emails = {i["email"] for i in inboxes}
+    by_date = _daily_totals(emails)
+    if by_date:
+        vals = sorted(v for v in by_date.values() if v > 0)
+        median = vals[len(vals) // 2] if vals else 0
+        sending = {d: v for d, v in by_date.items() if v >= median * LIVE_DAY_FRACTION}
+        total = sum(by_date.values())
+        return {
+            "source": "daily",
+            "window_days": len(by_date),
+            "sending_days": len(sending),
+            "sent_window": total,
+            "per_calendar_day": round(total / len(by_date)),
+            "per_sending_day": round(sum(sending.values()) / len(sending)) if sending else 0,
+            "per_day": round(total / len(by_date)),      # kept for callers
+            "by_date": dict(sorted(by_date.items())),
+        }
     sent_7d = sum(i["sent_7d"] for i in inboxes)
     return {
+        "source": "overview_7d",
         "window_days": USAGE_WINDOW_DAYS,
+        "sending_days": None,
         "sent_window": sent_7d,
+        "per_calendar_day": round(sent_7d / USAGE_WINDOW_DAYS),
+        "per_sending_day": None,
         "per_day": round(sent_7d / USAGE_WINDOW_DAYS),
+        "by_date": {},
     }
+
+
+def _daily_totals(emails: set, days: int = USAGE_WINDOW_DAYS) -> dict:
+    """{date: sends} over the last `days` COMPLETE days, from inbox_health_daily.
+
+    Complete days only: today is still filling up, and averaging a part-day in
+    with whole ones drags the rate down for no reason other than the hour the
+    page was opened.
+    """
+    try:
+        import health_daily as hd
+        wanted = set(hd.complete_days(days))
+    except Exception:
+        return {}
+    # published by the snapshot — one row instead of ~12,000
+    cached = hd.cached_daily_sends("acquisition")
+    hit = {d: n for d, n in cached.items() if d in wanted}
+    if len(hit) == len(wanted):
+        return hit
+    try:
+        rows = store.get_health_daily_sends(min(wanted))
+    except Exception:
+        return hit                              # partial beats nothing
+    out: dict = {}
+    for r in rows:
+        d = r.get("date")
+        if d in wanted and r.get("email") in emails:
+            out[d] = out.get(d, 0) + int(r.get("sent") or 0)
+    return out
 
 
 def _health_by_email() -> dict:
@@ -320,9 +387,13 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
         "deployed_capacity": deployed,
         "idle_capacity": idle_capacity,
         "idle_inboxes": sum(by_state[s]["inboxes"] for s in IDLE_STATES),
-        "actual_per_day": use["per_day"],
+        "actual_per_day": use["per_calendar_day"],
+        "actual_per_sending_day": use["per_sending_day"],
         "sent_window": use["sent_window"],
         "window_days": use["window_days"],
+        "sending_days": use["sending_days"],
+        "usage_source": use["source"],
+        "sent_by_date": use["by_date"],
         # Two different questions, deliberately kept apart:
         #  utilisation = sends actually leaving / EVERYTHING we pay for. This is
         #    the money question ("are we using what we buy"), so its denominator
@@ -334,7 +405,10 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
         # Measuring utilisation against `usable` instead would mix the two bases
         # and can print >100%, since the 7-day send window includes days when
         # now-stranded campaigns still had leads.
-        "utilisation_pct": round(100 * use["per_day"] / total_capacity) if total_capacity else 0,
+        "utilisation_pct": round(100 * use["per_calendar_day"] / total_capacity) if total_capacity else 0,
+        # what a WORKING day looks like — the number to judge real headroom by
+        "sending_day_pct": (round(100 * use["per_sending_day"] / total_capacity)
+                            if total_capacity and use["per_sending_day"] else None),
         "allocation_pct": round(100 * deployed / usable_capacity) if usable_capacity else 0,
         "by_state": by_state,
     }
