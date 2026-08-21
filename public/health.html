@@ -234,7 +234,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <div class="sect"><h2>⚡ Acquisition sending capacity</h2><span class="eye" id="capsub">loading…</span></div>
     <div class="note">Every acquisition inbox we pay for, and whether it is actually pushing mail.
       <b>Capacity</b> is the sum of each inbox's real SmartLead daily cap. <b>Deployed</b> is the slice pointed at a live campaign that still has leads queued.
-      <b>Stranded</b> is the expensive one — inboxes sitting in an <b>ACTIVE campaign that has run out of leads</b>: SmartLead never releases them, so they look busy and send nothing.
+      <b>Stranded</b> is the expensive one — inboxes in an <b>ACTIVE campaign with nothing left to send at all</b>: no new leads <i>and</i> no follow-ups due. SmartLead never releases them, so they look busy and send nothing. A campaign that is merely out of <i>new</i> leads is still working through its follow-ups and keeps its senders.
       Pick idle inboxes below, choose a campaign, and move them. Removing a sender from a live campaign that still has leads needs an explicit override, and a live campaign can never be taken to zero senders.</div>
 
     <div class="kpis" id="capkpis"></div>
@@ -250,13 +250,13 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
         <thead><tr><th style="width:120px">State</th><th style="width:150px">What it means</th><th>Plain English</th><th style="width:230px">What to do</th></tr></thead>
         <tbody>
           <tr><td><span class="cpill sending">Sending</span></td>
-              <td>In a live campaign that still has leads</td>
-              <td>Working normally. Mail is going out today.</td>
-              <td class="eye">Nothing — leave it alone.</td></tr>
+              <td>In a live campaign with <b>either</b> queue non-empty</td>
+              <td>Working normally. That means new leads still to contact <b>or</b> leads part-way through the sequence still owed follow-ups — <b>either one counts</b>. A campaign that has run out of new leads is usually still sending follow-ups for weeks.</td>
+              <td class="eye">Nothing — leave it alone. Its senders are committed until the sequences finish.</td></tr>
           <tr style="background:var(--crit-bg)"><td><span class="cpill stranded">Stranded</span></td>
-              <td>In a live campaign with <b>0 leads left</b></td>
-              <td><b>The expensive one.</b> The campaign is still switched ON but has run out of people to email. SmartLead does not hand the inbox back, so it looks busy in SmartLead while sending nothing. You would never spot this by looking at the campaign list.</td>
-              <td class="eye">Free it and put it on a campaign that still has leads. Safe — there is nothing left for it to send.</td></tr>
+              <td>In a live campaign with <b>both</b> queues empty — no new leads <b>and</b> no follow-ups due</td>
+              <td><b>The expensive one.</b> The campaign is still switched ON but has nothing left to send to anybody. SmartLead does not hand the inbox back, so it looks busy while sending nothing. You would never spot this from the campaign list.</td>
+              <td class="eye">Free it and put it on a campaign that still has work. Safe — there is genuinely nothing left for it to send.</td></tr>
           <tr><td><span class="cpill parked">Parked</span></td>
               <td>Only in paused / completed campaigns</td>
               <td>The campaign it belongs to was switched off or finished. Not sending, and honestly showing as not sending.</td>
@@ -277,18 +277,26 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
         — which is what the <b>Idle / day</b> figure and the <b>Idle only</b> filter both mean.
         <span class="eye">Note: the <b>All inboxes</b> tab also has a status called "Idle", but that one answers a different question —
         whether an inbox is healthy enough to judge. An inbox can be Sending here and still show as low-volume there.</span>
+        <div style="margin-top:9px;padding-top:9px;border-top:1px solid var(--line)">
+          <b>Why "no leads left" does not mean free.</b> A campaign has two queues — new leads never contacted, and leads
+          mid-sequence still owed follow-ups. A campaign typically runs out of new leads long before it finishes following up:
+          <b>AI-ark HVAC list 1</b> has <b>0</b> new leads and <b>5,528</b> leads still awaiting follow-ups, and is sending every day.
+          Its senders are needed exactly where they are. Only when <b>both</b> queues hit zero does an inbox become reclaimable.
+        </div>
       </div>
       </div>
     </div>
 
     <div class="sect"><h2>Campaigns</h2><span class="eye" id="capcampsub"></span></div>
-    <div class="note">Live campaigns first. <b>Runway</b> = leads left ÷ this campaign's acquisition capacity per day — under a day and it is about to run dry; <b>Wants</b> is how many more senders would clear the queue inside a week. A live campaign showing <b>0 leads</b> is stranding every sender on it.</div>
+    <div class="note">Live campaigns first. A campaign has two queues: <b>New leads</b> never contacted, and <b>Follow-ups due</b> — leads part-way through the sequence that are still owed later emails.
+      <b>Either one keeps its senders busy.</b> A campaign out of new leads but still owing follow-ups is marked <i>finishing follow-ups</i>: those senders are working and are not offered for reallocation, because pulling them would cut live sequences off mid-flight.
+      Only a campaign with <b>both</b> queues at zero is stranding its senders. <b>Runway</b> = new leads ÷ this campaign's capacity per day; <b>Wants</b> is how many more senders would clear the new-lead queue inside a week.</div>
     <div class="panel tablewrap"><table>
       <thead><tr>
         <th>Campaign</th><th>Status</th><th class="num">Acq senders</th><th class="num">Cap/day</th>
-        <th class="num">Leads left</th><th class="num">Runway</th><th class="num">Wants</th><th></th>
+        <th class="num">New leads</th><th class="num">Follow-ups due</th><th class="num">Runway</th><th class="num">Wants</th><th></th>
       </tr></thead>
-      <tbody id="capcamprows"><tr><td colspan="8" class="empty">loading…</td></tr></tbody>
+      <tbody id="capcamprows"><tr><td colspan="9" class="empty">loading…</td></tr></tbody>
     </table></div>
 
     <div class="sect"><h2>Free capacity — allocate</h2><span class="eye" id="capfreesub"></span></div>
@@ -1448,29 +1456,38 @@ function renderCapCampaigns(){
   const rows=CAP.campaigns||[];
   const active=rows.filter(c=>c.status==='ACTIVE');
   const stranding=active.filter(c=>c.stranding);
+  const fuOnly=active.filter(c=>c.followups_only);
   document.getElementById('capcampsub').textContent =
-    `${active.length} live · ${stranding.length} live with no leads left`;
+    `${active.length} live · ${fuOnly.length} finishing follow-ups · ${stranding.length} truly idle`;
   const el=document.getElementById('capcamprows');
-  if(!rows.length){ el.innerHTML='<tr><td colspan="8" class="empty">No acquisition campaigns.</td></tr>'; return; }
+  if(!rows.length){ el.innerHTML='<tr><td colspan="9" class="empty">No acquisition campaigns.</td></tr>'; return; }
   el.innerHTML=rows.map(c=>{
     const scol=c.status==='ACTIVE'?'var(--good)':c.status==='PAUSED'?'var(--warn)':'var(--mut)';
     const name=c.url?`<a href="${c.url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${esc(c.name)} ↗</a>`
                     :`<span>${esc(c.name)}</span>`;
     const blocked=c.senders_blocked?` <span class="eye" title="burned or SMTP-down — contributing nothing">(${c.senders_blocked} dead)</span>`:'';
     const rem=c.remaining==null?'<span class="eye">—</span>'
-             :c.remaining===0&&c.status==='ACTIVE'?'<span style="color:var(--crit);font-weight:700">0</span>':c.remaining;
+             :c.remaining===0&&c.status==='ACTIVE'?'<span style="color:var(--warn);font-weight:700">0</span>':c.remaining;
+    const fu=c.in_progress==null?'<span class="eye">—</span>'
+             :c.in_progress>0?`<span style="color:var(--good)">${c.in_progress}</span>`
+             :'<span style="color:var(--crit);font-weight:700">0</span>';
     const run=c.runway_days==null?'<span class="eye">—</span>'
              :c.runway_days<1?`<span style="color:var(--crit)">${c.runway_days}d</span>`
              :c.runway_days<3?`<span style="color:var(--warn)">${c.runway_days}d</span>`:c.runway_days+'d';
     const want=c.wants_senders?`<span style="color:var(--warn);font-weight:700">+${c.wants_senders}</span>`:'<span class="eye">—</span>';
+    // A campaign out of NEW leads but still owing follow-ups is working. Its
+    // senders are committed to finishing those sequences, so it gets an
+    // explanation rather than a button that would pull them off mid-flight.
     const act=c.stranding
       ? `<button class="btn sm" onclick="capSelectCampaign(${JSON.stringify(c.name).replace(/"/g,'&quot;')})">Free its ${c.senders_usable} sender${c.senders_usable===1?'':'s'}</button>`
-      : (c.wants_senders? `<button class="btn sm" onclick="capTarget(${c.id})">Fill it</button>`:'');
+      : c.followups_only
+        ? `<span class="eye" title="No new leads left, but ${c.in_progress} leads are mid-sequence and still owed follow-ups. These senders are still working.">finishing follow-ups</span>`
+        : (c.wants_senders? `<button class="btn sm" onclick="capTarget(${c.id})">Fill it</button>`:'');
     return `<tr${c.stranding?' style="background:var(--crit-bg)"':''}>
       <td>${name}${c.acquisition?'':' <span class="tag" title="not named as an acquisition campaign">client?</span>'}</td>
       <td><span style="color:${scol};font-family:var(--mono);font-size:10.5px">${c.status}</span></td>
       <td class="num">${c.senders}${blocked}</td><td class="num">${c.capacity}</td>
-      <td class="num">${rem}</td><td class="num">${run}</td><td class="num">${want}</td>
+      <td class="num">${rem}</td><td class="num">${fu}</td><td class="num">${run}</td><td class="num">${want}</td>
       <td class="num">${act}</td></tr>`;
   }).join('');
 }

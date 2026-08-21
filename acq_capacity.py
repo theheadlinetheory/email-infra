@@ -13,10 +13,14 @@ deliberately calls "idle" and moves on from. Here it's the whole point.
 The five capacity states, in the order they cost us money:
 
   sending     in >=1 ACTIVE campaign that still has leads queued. Working.
-  stranded    in an ACTIVE campaign, but every ACTIVE campaign it's in has ZERO
-              leads remaining. Looks busy in SmartLead, sends nothing. This is
-              the state that hides best and wastes most — a campaign does not
-              release its senders when it runs out of leads.
+  stranded    in an ACTIVE campaign, but every ACTIVE campaign it's in has BOTH
+              queues empty: no new leads AND no follow-ups due. Looks busy in
+              SmartLead, sends nothing. A campaign does not release its senders
+              when its work runs out.
+              NOTE the "both queues" part. Testing only unsent NEW leads marks a
+              campaign finished while it is still working through weeks of
+              follow-ups — on 2026-08-22 that wrongly freed 40 senders across
+              four campaigns, one of which had 5,528 leads mid-sequence.
   parked      only in PAUSED/COMPLETED campaigns. Idle, but at least visibly so.
   unassigned  in no campaign at all. Pure unallocated stock.
   blocked     cannot send regardless of allocation: SMTP disconnected, or burned.
@@ -132,15 +136,23 @@ def _campaign_facts(overview: dict, live: bool) -> dict:
             "id": s.get("id"),
             "status": (s.get("status") or "").upper(),
             "remaining": s.get("remaining"),
+            "in_progress": s.get("in_progress"),
             "total_leads": s.get("total_leads"),
             "senders_cached": s.get("accounts"),
         }
     if live:
         for name, info in (_live_campaign_index() or {}).items():
-            row = facts.setdefault(name, {"remaining": None, "total_leads": None,
-                                          "senders_cached": None})
+            row = facts.setdefault(name, {"remaining": None, "in_progress": None,
+                                          "total_leads": None, "senders_cached": None})
             row["id"] = info["id"]
             row["status"] = info["status"]
+        # refresh both lead queues for live acquisition campaigns — the stranded
+        # call turns on these two numbers, so they must not be a day stale
+        targets = {n: f["id"] for n, f in facts.items()
+                   if f.get("status") == "ACTIVE" and f.get("id")
+                   and is_acquisition_campaign(n)}
+        for name, q in (_live_lead_queues(targets) or {}).items():
+            facts[name].update({k: v for k, v in q.items() if v is not None})
     return facts
 
 
@@ -182,6 +194,35 @@ def _live_account_facts() -> dict:
     return out
 
 
+def _live_lead_queues(names_to_ids: dict) -> dict:
+    """{campaign name: {remaining, in_progress}} straight from SmartLead.
+
+    `in_progress` was only added to the overview cache on 2026-08-22, so until a
+    full sync runs the cache has no follow-up counts at all. Rather than let the
+    tab fall back to "unknown" for every campaign — safe, but it would show zero
+    stranded capacity and hide the whole point of the page — the live path asks
+    SmartLead directly. Two cheap calls per campaign, and only for the ACTIVE
+    acquisition ones, which is under a dozen.
+    """
+    import requests
+    key = _sl_key()
+    if not key:
+        return {}
+    out = {}
+    for name, cid in names_to_ids.items():
+        row = {}
+        for status_key, field in (("STARTED", "remaining"), ("INPROGRESS", "in_progress")):
+            try:
+                r = requests.get(f"{SL}/campaigns/{cid}/leads",
+                                 params={"api_key": key, "limit": 1, "offset": 0,
+                                         "status": status_key}, timeout=20)
+                row[field] = int((r.json() or {}).get("total_leads", 0)) if r.status_code == 200 else None
+            except (requests.RequestException, ValueError):
+                row[field] = None
+        out[name] = row
+    return out
+
+
 def _live_campaign_index() -> dict:
     """One fetch of the whole campaign list -> {name: {id, status}}."""
     import requests
@@ -219,15 +260,36 @@ def _classify(inbox: dict, facts: dict) -> tuple:
         stat = {facts.get(c, {}).get("status") or "UNKNOWN" for c in camps}
         return PARKED, ["only in %s campaign(s)" % "/".join(sorted(stat)).lower()]
 
-    # An unknown lead count means we could not measure the queue — assume it has
-    # leads. Calling it stranded on missing data would hand Lars a sender that is
-    # actually mid-flight, which is the expensive direction to be wrong in.
-    with_leads = [c for c in active
-                  if facts.get(c, {}).get("remaining") is None
-                  or (facts[c]["remaining"] or 0) > 0]
-    if with_leads:
-        return SENDING, ["active in %d campaign(s) with leads queued" % len(with_leads)]
-    return STRANDED, ["every active campaign it is in has 0 leads left — sending nothing"]
+    # A campaign still has work for its senders if EITHER queue is non-empty:
+    #
+    #   STARTED    leads never contacted     -> first-touch emails still to send
+    #   INPROGRESS leads mid-sequence        -> FOLLOW-UPS still to send
+    #
+    # Only STARTED was checked here originally, which was wrong in the most
+    # damaging possible direction. Every one of the four campaigns this marked
+    # "stranded" had thousands of leads mid-sequence and was demonstrably still
+    # sending — AI-ark HVAC list 1 had 5,528 of them. Freeing those senders would
+    # have cut live follow-up sequences off mid-flight, and because replies stay
+    # welded to the mailbox that sent them, it would also have orphaned the
+    # conversations they had already started.
+    #
+    # An unknown count means we could not measure that queue; treat it as
+    # non-empty. Being wrong towards "still working" costs an idle inbox for a
+    # day. Being wrong the other way breaks a running campaign.
+    def _busy(c):
+        f = facts.get(c, {})
+        for k in ("remaining", "in_progress"):
+            v = f.get(k, None)
+            if v is None or (v or 0) > 0:
+                return True
+        return False
+
+    working = [c for c in active if _busy(c)]
+    if working:
+        return SENDING, ["active in %d campaign(s) with leads or follow-ups queued"
+                         % len(working)]
+    return STRANDED, ["every active campaign it is in has no leads left AND no "
+                      "follow-ups pending — sending nothing"]
 
 
 # --- report ---------------------------------------------------------------
@@ -463,7 +525,13 @@ def _campaign_rows(inboxes: list[dict], facts: dict) -> list[dict]:
         usable = [i for i in mine if i["state"] != BLOCKED]
         capacity = sum(i["per_day"] for i in usable)
         remaining = f.get("remaining")
+        in_progress = f.get("in_progress")
         status = f.get("status") or "UNKNOWN"
+        # "still working" is either queue being non-empty (or unmeasured)
+        followups_only = (status == "ACTIVE" and remaining == 0
+                          and (in_progress or 0) > 0)
+        idle_campaign = (status == "ACTIVE" and remaining == 0
+                         and in_progress is not None and in_progress == 0)
 
         runway = None
         if remaining is not None and capacity > 0:
@@ -489,11 +557,15 @@ def _campaign_rows(inboxes: list[dict], facts: dict) -> list[dict]:
             "senders_blocked": len(mine) - len(usable),
             "capacity": capacity,
             "remaining": remaining,
+            "in_progress": in_progress,
+            "followups_only": followups_only,
             "total_leads": f.get("total_leads"),
             "runway_days": runway,
             "wants_senders": wants,
-            # a live campaign with zero leads is holding its senders hostage
-            "stranding": status == "ACTIVE" and remaining == 0 and len(mine) > 0,
+            # Only a campaign with BOTH queues empty is holding senders for
+            # nothing. One that is out of new leads but still owes follow-ups is
+            # working, and its senders must not be offered up.
+            "stranding": idle_campaign and len(mine) > 0,
             "emails": [i["email"] for i in mine],
         })
     rows.sort(key=lambda r: (r["status"] != "ACTIVE", -(r["wants_senders"] or 0),
@@ -569,11 +641,20 @@ def plan(emails: list[str], to_campaign_id=None, from_campaign_id=None,
         stop = None
         for c in leaving:
             if c["status"] == "ACTIVE":
-                still_has_leads = c["remaining"] is None or (c["remaining"] or 0) > 0
-                if still_has_leads and not override_active:
-                    stop = ("would pull a sender off live campaign '%s' (%s leads still "
-                            "queued) — tick 'allow pulling from live campaigns' to override"
-                            % (c["name"], c["remaining"]))
+                # Pending FOLLOW-UPS make a campaign live just as much as unsent
+                # new leads do. Checking only `remaining` would have waved through
+                # the removal of senders from campaigns owing thousands of
+                # follow-ups, which is the exact case this rail exists for.
+                new_left = c["remaining"] is None or (c["remaining"] or 0) > 0
+                fu_left = c.get("in_progress") is None or (c.get("in_progress") or 0) > 0
+                if (new_left or fu_left) and not override_active:
+                    what = ("%s new leads" % c["remaining"]) if new_left else ""
+                    if fu_left:
+                        what = (what + " and " if what else "") +                                ("%s leads mid-sequence still owed follow-ups"
+                                % c.get("in_progress"))
+                    stop = ("would pull a sender off live campaign '%s' (%s) — tick "
+                            "'allow pulling from live campaigns' to override"
+                            % (c["name"], what))
                     break
         if stop:
             blocked.append({"email": email, "reason": stop})
