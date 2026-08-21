@@ -285,11 +285,21 @@ def remove_account_from_campaigns(account_id, campaign_names, dry_run: bool = Fa
 
 
 def swap_campaign_membership(old_email: str, reserve_account_id: int,
-                             campaign_names, dry_run: bool = True) -> dict:
+                             campaign_names, dry_run: bool = True,
+                             force_remove: bool = False) -> dict:
     """Move campaign senders: ADD the reserve inbox, REMOVE the burned inbox, on
     every campaign the burned inbox is in. Re-tagging alone does NOT do this —
     campaign membership is a separate SmartLead association. Add-before-remove so
-    the campaign never dips below capacity."""
+    the campaign never dips below capacity.
+
+    POSITIVE-REPLY CUSTODY GUARD: the burned inbox is not removed from a campaign
+    where it owns a positive reply. A reply lives in the sending mailbox's IMAP
+    and is welded to it by message-id, so detaching freezes the thread ("the
+    mailbox is disconnected") and no amount of SmartLead reallocation can move it
+    — see health_positive. The ADD still happens, so the campaign gets its
+    capacity back either way; only the REMOVE is deferred, the operator is
+    notified, and releasing the hold performs it. force_remove=True overrides
+    (and is never the default path)."""
     import time
     import requests
     # campaign_names may arrive as a JSON string (the status table serializes it
@@ -315,8 +325,10 @@ def swap_campaign_membership(old_email: str, reserve_account_id: int,
         return {"note": "burned inbox not in any resolvable campaign — nothing to move",
                 "added": 0, "removed": 0, **plan}
     key = _sl_key()
+    import health_positive as hp
     added = removed = 0
     results = []
+    new_holds = []
     for name, cid in cids.items():
         base = f"https://server.smartlead.ai/api/v1/campaigns/{cid}/email-accounts"
 
@@ -329,22 +341,56 @@ def swap_campaign_membership(old_email: str, reserve_account_id: int,
                 time.sleep(20)
             return 429
         a = _call("POST", [reserve_account_id])       # add new first
-        d = _call("DELETE", [old_id])                 # then remove burned
         if a == 200:
             added += 1
+
+        # --- positive-reply custody guard (before the remove, never after) ---
+        threads, inconclusive = [], False
+        if not force_remove:
+            try:
+                threads = hp.owned_positive_threads(old_email, cid)
+            except Exception as exc:                  # fail CLOSED — hold, don't detach
+                inconclusive = True
+                threads = [{"lead_id": None, "lead_email": None, "company": None,
+                            "category": f"lookup failed: {exc}"}]
+        if threads:
+            hold = hp.add_hold(old_email, old_id, cid, name, threads,
+                               reserve_account_id=reserve_account_id,
+                               reason="positive_reply_lookup_failed" if inconclusive
+                                      else "positive_reply")
+            new_holds.append(hold)
+            results.append({"campaign": name, "id": cid, "add_http": a,
+                            "remove_http": None, "held": True,
+                            "positive_count": 0 if inconclusive else len(threads),
+                            "hold_key": hold["key"],
+                            "hold_reason": hold["reason"]})
+            continue
+
+        d = _call("DELETE", [old_id])                 # then remove burned
         if d == 200:
             removed += 1
-        results.append({"campaign": name, "id": cid, "add_http": a, "remove_http": d})
+        results.append({"campaign": name, "id": cid, "add_http": a, "remove_http": d,
+                        "held": False})
+
+    if new_holds:
+        try:
+            hp.notify(new_holds)
+        except Exception:
+            pass                                      # the hold itself is what matters
     try:
         store.log_monitor_event("health_swap_campaign", {
             "old_email": old_email, "reserve_account_id": reserve_account_id,
-            "added": added, "removed": removed, "campaigns": list(cids.values())})
+            "added": added, "removed": removed, "held": len(new_holds),
+            "campaigns": list(cids.values())})
     except Exception:
         pass
     # record campaigns touched so the UI can list which need SmartLead reallocation
     _add_pending_reallocate([r["campaign"] for r in results
                              if r.get("add_http") == 200 or r.get("remove_http") == 200])
-    return {"added": added, "removed": removed, "results": results, **plan}
+    return {"added": added, "removed": removed, "results": results,
+            "held": len(new_holds), "holds": new_holds,
+            "positive_threads_protected": sum(h.get("positive_count", 0) for h in new_holds),
+            **plan}
 
 
 def swap_forwarding(old_email: str, reserve_email: str, dry_run: bool = True) -> dict:
@@ -608,7 +654,7 @@ def _run_swaps(emails: list[str]) -> dict:
     sufficiency was already checked by the caller."""
     create_jobs(emails)
     want_set = set(emails)
-    swapped, failed, old_to_cancel, reserve_used = 0, [], [], []
+    swapped, failed, old_to_cancel, reserve_used, held = 0, [], [], [], []
     for j in [x for x in list_jobs() if x.get("old_email") in want_set
               and x["status"] in ("flagged", "reserved")]:
         r1 = advance(j["id"], "reserve")
@@ -620,9 +666,15 @@ def _run_swaps(emails: list[str]) -> dict:
             failed.append({"email": j["old_email"], "stage": "swap", "error": r2["error"]})
             continue
         swapped += 1
-        old_to_cancel.append(j["old_email"])
+        holds = (r2.get("campaign_swap") or {}).get("holds") or []
+        held += holds
+        # An inbox still holding live conversations must NOT be queued for cancel —
+        # cancelling deletes the Zapmail mailbox and destroys the very threads the
+        # hold just protected. It becomes cancel-eligible once the hold is released.
+        if not holds:
+            old_to_cancel.append(j["old_email"])
         reserve_used.append((r1.get("job", {}) or {}).get("reserve_email"))
-    return {"swapped": swapped, "failed": failed,
+    return {"swapped": swapped, "failed": failed, "held": held,
             "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
 
 
@@ -630,7 +682,7 @@ def _run_acq_swaps(emails, cands, status_by, status_map) -> dict:
     """Reallocate acquisition inboxes using idle acquisition reserve — add the idle
     inbox + remove the burned one on each ACTIVE campaign. No re-tag/forwarding: an
     idle acquisition inbox is already THT-branded and acquisition-tagged."""
-    swapped, failed, old_to_cancel, reserve_used = 0, [], [], []
+    swapped, failed, old_to_cancel, reserve_used, held = 0, [], [], [], []
     pool = list(cands)
     for e in emails:
         r = status_by.get(e, {})
@@ -656,9 +708,14 @@ def _run_acq_swaps(emails, cands, status_by, status_map) -> dict:
             det = remove_account_from_campaigns(pick["account_id"], pick["campaigns"])
             detached = det.get("removed", 0)
         swapped += 1
-        old_to_cancel.append(e)
+        holds = camp.get("holds") or []
+        held += holds
+        # held == still the custodian of a live conversation; not cancel-eligible
+        # until released, or the Zapmail delete destroys the thread.
+        if not holds:
+            old_to_cancel.append(e)
         reserve_used.append({"email": pick["email"], "detached_from": detached})
-    return {"swapped": swapped, "failed": failed,
+    return {"swapped": swapped, "failed": failed, "held": held,
             "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
 
 
@@ -723,22 +780,32 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
     if errs:
         return {"error": "; ".join(errs), **plan}
 
-    res_c = (_run_swaps(client_emails) if client_emails
-             else {"swapped": 0, "failed": [], "old_to_cancel": [], "reserve_used": []})
+    _empty = {"swapped": 0, "failed": [], "held": [], "old_to_cancel": [], "reserve_used": []}
+    res_c = _run_swaps(client_emails) if client_emails else dict(_empty)
     res_a = (_run_acq_swaps(acq_emails, acq_cands, status_by, status_map) if acq_emails
-             else {"swapped": 0, "failed": [], "old_to_cancel": [], "reserve_used": []})
+             else dict(_empty))
     swapped = res_c["swapped"] + res_a["swapped"]
     failed = res_c["failed"] + res_a["failed"]
+    held = (res_c.get("held") or []) + (res_a.get("held") or [])
+    protected = sum(h.get("positive_count", 0) for h in held)
     try:
-        store.log_monitor_event("health_reallocate", {"swapped": swapped, "failed": len(failed)})
+        store.log_monitor_event("health_reallocate", {"swapped": swapped,
+                                                      "failed": len(failed),
+                                                      "held": len(held)})
     except Exception:
         pass
+    note = (f"Reallocated {swapped} inbox(es). Now hit 'Reallocate mailboxes' once per "
+            f"campaign listed below in SmartLead, then the burned domains are safe to cancel.")
+    if held:
+        note += (f" ⚠ {len(held)} inbox(es) were KEPT in their campaign because they own "
+                 f"{protected} positive repl(y/ies) — they are excluded from the cancel list. "
+                 f"Work the replies, then release them in 'Held: positive replies'.")
     return {"ok": True, "swapped": swapped, "failed": failed,
+            "held": held, "held_count": len(held), "positive_threads_protected": protected,
             "old_to_cancel": res_c["old_to_cancel"] + res_a["old_to_cancel"],
             "reserve_used": res_c["reserve_used"] + res_a["reserve_used"],
             "campaigns_to_reallocate": reallocation_campaigns().get("campaigns", []),
-            "note": f"Reallocated {swapped} inbox(es). Now hit 'Reallocate mailboxes' once per "
-                    f"campaign listed below in SmartLead, then the burned domains are safe to cancel."}
+            "note": note}
 
 
 def replace_all_burned(client: str, confirm: bool = False) -> dict:
@@ -763,16 +830,23 @@ def replace_all_burned(client: str, confirm: bool = False) -> dict:
 
     res = _run_swaps(emails)
     swapped, failed = res["swapped"], res["failed"]
+    held = res.get("held") or []
+    protected = sum(h.get("positive_count", 0) for h in held)
     try:
         store.log_monitor_event("health_replace_all", {
-            "client": client, "swapped": swapped, "failed": len(failed)})
+            "client": client, "swapped": swapped, "failed": len(failed),
+            "held": len(held)})
     except Exception:
         pass
+    note = (f"Swapped {swapped} inbox(es). Now hit 'Reallocate mailboxes' once on "
+            f"{client}'s campaign in SmartLead, then cancel the old inboxes.")
+    if held:
+        note += (f" ⚠ {len(held)} kept in campaign — they own {protected} positive "
+                 f"repl(y/ies) and are NOT in the cancel list.")
     return {"ok": True, "client": client, "swapped": swapped, "failed": failed,
+            "held": held, "held_count": len(held), "positive_threads_protected": protected,
             "reserve_used": res["reserve_used"], "old_to_cancel": res["old_to_cancel"],
-            "niche": want,
-            "note": f"Swapped {swapped} inbox(es). Now hit 'Reallocate mailboxes' once on "
-                    f"{client}'s campaign in SmartLead, then cancel the old inboxes."}
+            "niche": want, "note": note}
 
 
 # ---------------------------------------------------------------------------
@@ -812,15 +886,49 @@ def _fleet_campaigns(email: str) -> list:
     return []
 
 
+def _split_by_positive_custody(email: str, account_id, names: list) -> tuple:
+    """Partition campaign names into (safe_to_detach, holds).
+
+    Same rule as swap_campaign_membership: an inbox that owns a positive reply in
+    a campaign stays attached there, because the thread lives in its mailbox and
+    nothing can move it. Fails CLOSED — an inconclusive lookup holds."""
+    import health_positive as hp
+    cids = _resolve_campaign_ids(names)
+    safe, holds = [], []
+    for name, cid in cids.items():
+        try:
+            threads = hp.owned_positive_threads(email, cid)
+            reason = "positive_reply"
+        except Exception as exc:
+            threads = [{"lead_id": None, "lead_email": None, "company": None,
+                        "category": f"lookup failed: {exc}"}]
+            reason = "positive_reply_lookup_failed"
+        if threads:
+            holds.append(hp.add_hold(email, account_id, cid, name, threads, reason=reason))
+        else:
+            safe.append(name)
+    # a name we couldn't resolve to a live campaign can't be checked OR detached
+    safe += [n for n in names if n not in cids]
+    return safe, holds
+
+
 def retire_inbox(email: str, campaigns=None, delete: bool = False,
-                 account_id=None, dry_run: bool = True) -> dict:
+                 account_id=None, dry_run: bool = True,
+                 force_remove: bool = False) -> dict:
     """Take a burned inbox fully out of service.
 
       1. detach it from every campaign we know it's in (job list + last snapshot)
       2. strip its client / group tags so no future campaign can recruit it
       3. delete the SmartLead account, if `delete` (only once the mailbox is gone)
 
-    Safe to re-run: each step no-ops when there's nothing left to do."""
+    Safe to re-run: each step no-ops when there's nothing left to do.
+
+    Step 1 honours the POSITIVE-REPLY CUSTODY GUARD — advance(swap) calls this
+    right after swap_campaign_membership, so without the same check here a held
+    inbox would simply be detached a moment later and the guard would be a no-op.
+    Step 2 still runs on a held inbox (stripping tags stops re-recruitment and
+    costs nothing), but step 3 is refused outright: deleting the account destroys
+    every conversation it holds, permanently."""
     import health_smartlead as hsl
     acct_id = account_id or _overview_account_id(email)
     names = list(dict.fromkeys(list(campaigns or []) + _fleet_campaigns(email)))
@@ -830,9 +938,21 @@ def retire_inbox(email: str, campaigns=None, delete: bool = False,
     if dry_run:
         return {"dry_run": True, **out}
 
-    out["detached"] = remove_account_from_campaigns(acct_id, names, dry_run=False)
+    detach, holds = (names, [])
+    if not force_remove and names:
+        detach, holds = _split_by_positive_custody(email, acct_id, names)
+    if holds:
+        out["held"] = holds
+        out["held_campaigns"] = [h["campaign"] for h in holds]
+        out["positive_threads_protected"] = sum(h.get("positive_count", 0) for h in holds)
+
+    out["detached"] = remove_account_from_campaigns(acct_id, detach, dry_run=False)
     out["untag"] = hsl.untag_client(acct_id, email, dry_run=False)
-    if delete:
+    if delete and holds and not force_remove:
+        out["deleted"] = {"ok": False,
+                          "error": "refused — inbox still holds positive replies; "
+                                   "deleting it destroys those threads permanently"}
+    elif delete:
         out["deleted"] = hsl.delete_account(acct_id, email, dry_run=False)
     out["ok"] = not out["untag"].get("error") and (not delete or out["deleted"].get("ok"))
     return out
