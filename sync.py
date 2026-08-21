@@ -496,7 +496,9 @@ def fetch_acq_campaign_stats(progress_cb=None):
     active_acq = [c for c in campaigns if c.get("status") == "ACTIVE"
                   and "acquisition" in c.get("name", "").lower()
                   and "subsequence" not in c.get("name", "").lower()]
-    paused_acq = [c for c in campaigns if c.get("status") in ("PAUSED", "COMPLETED")
+    # DRAFTED included so a campaign Lars has just built shows up as an
+    # allocation target on the capacity tab without waiting for him to start it.
+    paused_acq = [c for c in campaigns if c.get("status") in ("PAUSED", "COMPLETED", "DRAFTED")
                   and "acquisition" in c.get("name", "").lower()
                   and "subsequence" not in c.get("name", "").lower()]
 
