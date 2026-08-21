@@ -162,6 +162,10 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 
     <div class="panel" id="esppanel" style="display:none"></div>
 
+    <div class="sect" id="holdsect" style="display:none"><h2>💬 Held: positive replies</h2><span class="eye" id="holdsub"></span></div>
+    <div class="note" id="holdnote" style="display:none">These burned inboxes were <b>kept in their campaign</b> because a prospect replied positively to them. A reply lives in the mailbox that sent it and is welded to it by message-id — SmartLead's <b>Reallocate mailboxes</b> only redistributes the <i>unsent</i> lead queue and can never move an existing thread, so detaching would freeze the conversation ("the mailbox is disconnected"). The replacement inbox <b>already went in</b>, so the campaign has its capacity back. These are also <b>excluded from the cancel list</b> — cancelling deletes the mailbox and the thread with it, permanently. Work the reply, then <b>Remove from campaign</b>.</div>
+    <div id="holdlist"></div>
+
     <div class="sect" id="domsect"><h2>🔥 Burned domains — reallocate &amp; cancel</h2><span class="eye" id="domsub">loading…</span></div>
     <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%) for <b>3 straight days</b> <b>while actively sending</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot. Burned inboxes whose campaign is paused/completed are idle — they show in <b>All inboxes</b>, not here.</div>
     <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
@@ -403,6 +407,7 @@ async function load(){
     try { renderAlerts(d.alerts, d.alert_summary); } catch(e){ console.error('renderAlerts', e); }
     try { loadDomains(); } catch(e){ console.error('loadDomains', e); }
     try { loadRealloc(); } catch(e){ console.error('loadRealloc', e); }
+    try { loadHolds(); } catch(e){ console.error('loadHolds', e); }
     try { loadDisconnected(); } catch(e){ console.error('loadDisconnected', e); }
     try { loadBuyOrders(); } catch(e){ console.error('loadBuyOrders', e); }
     try { loadEsp(); } catch(e){ console.error('loadEsp', e); }
@@ -471,6 +476,60 @@ async function reallocDone(i){
   const c=REALLOC[i]; if(!c) return;
   await fetch(api('/api/health-reallocate-campaigns'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({done:c.name})});
   loadRealloc();
+}
+
+// ── Held: burned inboxes kept in campaign because they own a positive reply ──
+let HOLDS=[];
+async function loadHolds(){
+  try{
+    const r=await fetch(api('/api/health-positive-holds'),{credentials:'include'}); if(!r.ok)return;
+    const d=await r.json(); HOLDS=d.holds||[]; renderHolds(d);
+  }catch(e){ console.error('loadHolds',e); }
+}
+function renderHolds(d){
+  const sect=document.getElementById('holdsect'), note=document.getElementById('holdnote'), el=document.getElementById('holdlist');
+  if(!HOLDS.length){ sect.style.display='none'; note.style.display='none'; el.innerHTML=''; return; }
+  sect.style.display=''; note.style.display='';
+  document.getElementById('holdsub').textContent=
+    `${d.inboxes} inbox(es) · ${d.positive_threads} positive repl${d.positive_threads===1?'y':'ies'} protected`;
+  el.innerHTML='<div class="panel">'+HOLDS.map((h,i)=>{
+    const failed = h.reason==='positive_reply_lookup_failed';
+    const threads=(h.threads||[]).slice(0,6).map(t=>
+      `<span style="display:inline-block;margin:2px 5px 2px 0;padding:1px 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px">${(t.company||t.lead_email||'lead')} <span class="eye">${t.category||''}</span></span>`).join('');
+    const more=(h.threads||[]).length>6?`<span class="eye"> +${h.threads.length-6} more</span>`:'';
+    const banner = failed
+      ? `<div class="eye" style="color:var(--warn);margin:4px 0">⚠ Could not confirm this inbox's replies, so the removal was held rather than risked. Re-run the check, or release if you know it's clean.</div>`
+      : '';
+    return `<div style="padding:9px 2px;border-top:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="flex:1;min-width:220px;font-family:var(--mono);font-size:12px;word-break:break-all">${h.email}</span>
+        <span style="flex:0 0 auto;color:var(--good);font-size:11px">${failed?'held (unverified)':h.positive_count+' positive'}</span>
+        <button class="btn sm" style="flex:0 0 auto" onclick="holdRelease(${i})">Remove from campaign</button>
+        <button class="btn sm" style="flex:0 0 auto" onclick="holdKeep(${i})">Keep it</button>
+      </div>
+      <div class="eye" style="margin-top:3px">in <b>${h.campaign}</b> · held ${(h.held_at||'').slice(0,10)}</div>
+      ${banner}
+      <div style="margin-top:4px">${threads}${more}</div>
+      <div id="holdmsg${i}" class="eye" style="margin-top:4px"></div>
+    </div>`;
+  }).join('')+'</div>';
+}
+async function holdRelease(i){
+  const h=HOLDS[i]; if(!h) return;
+  const el=document.getElementById('holdmsg'+i);
+  if(!confirm(`Remove ${h.email} from "${h.campaign}"?\n\nIts ${h.positive_count} positive thread(s) will freeze — SmartLead will show "the mailbox is disconnected" on each and you cannot reply in-thread afterwards.\n\nOnly do this once you've worked those replies.\n\nContinue?`)) return;
+  el.textContent='removing…';
+  const r=await fetch(api('/api/health-positive-release'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:h.key,confirm:true})}).then(x=>x.json());
+  el.textContent = r.ok ? '✓ removed from campaign' : ('failed: '+(r.error||('HTTP '+r.http)));
+  if(r.ok) loadHolds();
+}
+async function holdKeep(i){
+  const h=HOLDS[i]; if(!h) return;
+  const el=document.getElementById('holdmsg'+i);
+  el.textContent='keeping…';
+  const r=await fetch(api('/api/health-positive-release'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:h.key,action:'keep'})}).then(x=>x.json());
+  el.textContent = r.ok ? '✓ staying in the campaign' : ('failed: '+(r.error||''));
+  if(r.ok) loadHolds();
 }
 
 // ── Disconnected-from-SmartLead critical alert (always-on, top of page) ──
@@ -713,18 +772,35 @@ async function reallocateDomain(domain){
   el.textContent='checking reserve…';
   const p=await POST({emails,confirm:false});
   if(p.error){ el.textContent='✖ '+p.error; return; }
-  if(!confirm(`Reallocate ${p.reallocatable} burned inbox(es) on ${domain}?\n\nEach: swap in a niche-matched reserve → add it to the campaign → remove the burned one → copy forwarding.\nThen hit "Reallocate mailboxes" once per campaign in SmartLead.\n\nContinue?`)){ el.textContent=''; return; }
+  // Pre-flight the positive-reply custody check so the operator sees which inboxes
+  // will be KEPT in their campaign before committing to anything.
+  el.textContent='checking for positive replies…';
+  let posLine='';
+  try{
+    const pc=await fetch(api('/api/health-positive-check'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails})}).then(x=>x.json());
+    if(pc.positive_total>0){
+      const who=(pc.results||[]).filter(r=>r.positive_total>0)
+        .map(r=>`  • ${r.email} — ${r.positive_total} positive`).join('\n');
+      posLine=`\n\n⚠ ${pc.inboxes_with_positives} of these own positive replies:\n${who}\n\nThose will be KEPT in their campaign (the replacement still goes in) so the threads stay repliable, and they'll be excluded from the cancel list.`;
+    }
+  }catch(e){ console.error('positive-check',e); }
+  if(!confirm(`Reallocate ${p.reallocatable} burned inbox(es) on ${domain}?\n\nEach: swap in a niche-matched reserve → add it to the campaign → remove the burned one → copy forwarding.\nThen hit "Reallocate mailboxes" once per campaign in SmartLead.${posLine}\n\nContinue?`)){ el.textContent=''; return; }
   el.textContent='reallocating…';
   const r=await POST({emails,confirm:true});
   if(r.error){ el.textContent='✖ '+r.error; return; }
   const links=(r.campaigns_to_reallocate||[]).filter(c=>c.status==='ACTIVE').map(c=>
     c.url?`<a href="${c.url}" target="_blank" rel="noopener" style="color:var(--accent)">${c.name} ↗</a>`:c.name).join('<br>');
+  const heldLine = r.held_count
+    ? `<br><span style="color:var(--warn)">💬 ${r.held_count} inbox(es) kept in campaign — they own ${r.positive_threads_protected} positive repl${r.positive_threads_protected===1?'y':'ies'}. See <b>Held: positive replies</b> above; they're excluded from the cancel list until released.</span>`
+    : '';
   el.innerHTML=`✓ reallocated ${r.swapped}. Now go hit <b>Reallocate mailboxes</b> in SmartLead on:<br>`+
     (links||'<span class="eye">(no active campaign to reallocate — nothing to do)</span>')+
+    heldLine+
     `<br><span class="eye">then come back and cancel the domain.</span>`;
   // Keep this card + its link on screen. Only refresh the checklist panel — DON'T
   // re-render the domain cards (that was wiping the link before you could click it).
   loadRealloc();
+  loadHolds();
 }
 async function cancelDomain(domain){
   const d=DOMAINS.find(x=>x.domain===domain); if(!d)return;
@@ -907,8 +983,9 @@ async function replaceAllBurned(client){
     const d=await (await fetch(api('/api/health-replace-all'),{method:'POST',credentials:'include',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({client,confirm:true})})).json();
     if(d.error){ el.textContent='Error: '+d.error; return; }
-    el.textContent=`${client}: swapped ${d.swapped}/${p.burned}${d.failed&&d.failed.length?` · ${d.failed.length} failed`:''}. ⚠ Hit "Reallocate mailboxes" once on ${client}'s campaign in SmartLead. Old inboxes queued for the final cancel message.`;
-    load(); loadReplacements();
+    el.textContent=`${client}: swapped ${d.swapped}/${p.burned}${d.failed&&d.failed.length?` · ${d.failed.length} failed`:''}. ⚠ Hit "Reallocate mailboxes" once on ${client}'s campaign in SmartLead. Old inboxes queued for the final cancel message.`
+      + (d.held_count?` 💬 ${d.held_count} kept in campaign — they own ${d.positive_threads_protected} positive repl${d.positive_threads_protected===1?'y':'ies'} and are NOT queued for cancel; see "Held: positive replies".`:'');
+    load(); loadReplacements(); loadHolds();
   }catch(e){ el.textContent='Error: '+e; }
 }
 

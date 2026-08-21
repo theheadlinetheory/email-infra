@@ -758,6 +758,103 @@ def health_retire():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/health-positive-holds", methods=["GET", "OPTIONS"])
+def health_positive_holds():
+    """Burned inboxes that were KEPT in a campaign because they own a positive
+    reply — a reply lives in the sending mailbox and cannot be moved, so
+    detaching would freeze the thread. Each entry lists the threads at stake.
+      GET -> {holds:[...], count, inboxes, positive_threads}
+    ?include_released=1 also returns ones already released/kept (audit trail)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import health_positive as hp
+        inc = request.args.get("include_released") in ("1", "true", "yes")
+        return _cors(jsonify(hp.list_holds(include_released=inc)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-positive-release", methods=["POST", "OPTIONS"])
+def health_positive_release():
+    """Act on a hold once the reply has been worked.
+      POST {key, confirm}      -> remove the inbox from that campaign (the
+                                  deferred detach; confirm=false is a dry-run)
+      POST {key, action:'keep'} -> drop the hold, LEAVE the inbox in the campaign
+
+    This is the only path that detaches a held inbox, so the call is always
+    deliberate and always after someone has dealt with the conversation."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    key = body.get("key")
+    if not key:
+        return _cors(jsonify({"error": "key required"})), 400
+    try:
+        import health_positive as hp
+        if body.get("action") == "keep":
+            res = hp.cancel_hold(key)
+        else:
+            res = hp.release(key, confirm=bool(body.get("confirm")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/health-positive-check", methods=["POST", "OPTIONS"])
+def health_positive_check():
+    """Pre-flight: which of these inboxes own positive replies, and where?
+
+    POST {emails:[...]} -> {results:[{email, campaigns:[{campaign, positive_count,
+    threads}], positive_total}]}. Read-only — the reallocate dry-run calls this so
+    the operator sees what would be held BEFORE committing to anything."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or []
+    if not emails:
+        return _cors(jsonify({"error": "emails required"})), 400
+    try:
+        import db as store
+        import health_replace as hr
+        import health_positive as hp
+        status_by = {r["email"]: r for r in store.get_health_status_all()}
+        status_map = hr.campaign_status_map()
+        out = []
+        for e in emails:
+            names = [c for c in (status_by.get(e, {}).get("campaigns") or [])
+                     if status_map.get(c) == "ACTIVE"]
+            cids = hr._resolve_campaign_ids(names)
+            per = []
+            for name, cid in cids.items():
+                try:
+                    th = hp.owned_positive_threads(e, cid)
+                except Exception as exc:
+                    per.append({"campaign": name, "campaign_id": cid,
+                                "positive_count": None, "threads": [],
+                                "error": str(exc)})
+                    continue
+                if th:
+                    per.append({"campaign": name, "campaign_id": cid,
+                                "positive_count": len(th), "threads": th})
+            out.append({"email": e, "campaigns": per,
+                        "positive_total": sum(c.get("positive_count") or 0 for c in per)})
+        return _cors(jsonify({"results": out,
+                              "inboxes_with_positives": sum(1 for r in out if r["positive_total"]),
+                              "positive_total": sum(r["positive_total"] for r in out)}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-cancel-domain", methods=["POST", "OPTIONS"])
 def health_cancel_domain():
     """Schedule whole-domain removal in Zapmail (mailboxes deleted on next billing
@@ -776,6 +873,21 @@ def health_cancel_domain():
         return _cors(jsonify({"error": "domains required"})), 400
     try:
         import zapmail_removals as zr
+        # Cancelling deletes the mailboxes, which destroys every conversation they
+        # own — permanently, unlike a detach. Refuse while a held inbox on this
+        # domain still has an unworked positive reply.
+        import health_positive as hp
+        doms = {d.lower() for d in domains}
+        blocking = [h for h in hp.list_holds().get("holds", [])
+                    if (h.get("email") or "").split("@")[-1].lower() in doms]
+        if blocking and not body.get("override_positive_holds"):
+            return _cors(jsonify({
+                "error": "positive replies still held on this domain",
+                "blocked_by": blocking,
+                "note": ("These inboxes own live positive threads. Cancelling deletes the "
+                         "mailbox and the thread with it — unrecoverable. Work the replies "
+                         "and release them first, or resend with override_positive_holds."),
+            })), 409
         res = zr.cancel_domains(domains, dry_run=not bool(body.get("confirm")))
         return _cors(jsonify(res)), (400 if res.get("error") else 200)
     except Exception as e:
