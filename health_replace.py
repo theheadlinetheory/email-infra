@@ -800,11 +800,27 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
         note += (f" ⚠ {len(held)} inbox(es) were KEPT in their campaign because they own "
                  f"{protected} positive repl(y/ies) — they are excluded from the cancel list. "
                  f"Work the replies, then release them in 'Held: positive replies'.")
+    # Scope the "go reallocate these" list to THIS run's swaps only — the inboxes we
+    # actually moved and the ACTIVE campaigns they were in. Returning the GLOBAL
+    # reallocation_campaigns() here surfaced unrelated CLIENT campaigns from past swaps
+    # under an acquisition domain that reallocated nothing (Tim spotted 2026-08-25).
+    idx = campaign_index()
+    swapped_emails = set(res_c["old_to_cancel"]) | set(res_a["old_to_cancel"])
+    touched = set()
+    for e in swapped_emails:
+        for c in (status_by.get(e, {}).get("campaigns") or []):
+            if idx.get(c, {}).get("status") == "ACTIVE":
+                touched.add(c)
+    this_run = sorted(
+        [{"name": n, "status": "ACTIVE", "id": idx[n]["id"],
+          "url": SL_CAMPAIGN_URL.format(id=idx[n]["id"]) if idx[n].get("id") else None}
+         for n in touched if n in idx],
+        key=lambda r: r["name"])
     return {"ok": True, "swapped": swapped, "failed": failed,
             "held": held, "held_count": len(held), "positive_threads_protected": protected,
             "old_to_cancel": res_c["old_to_cancel"] + res_a["old_to_cancel"],
             "reserve_used": res_c["reserve_used"] + res_a["reserve_used"],
-            "campaigns_to_reallocate": reallocation_campaigns().get("campaigns", []),
+            "campaigns_to_reallocate": this_run,
             "note": note}
 
 
