@@ -31,6 +31,22 @@ def _sl_key() -> str:
     return (os.environ.get("SMARTLEAD_API_KEY", "") or os.environ.get("SMARTLEAD_KEY", "")).strip()
 
 
+def _camps_of(r) -> list:
+    """Return a health-status row's `campaigns` as a real list. get_health_status_all
+    leaves `campaigns` as a JSON STRING (it only de-serialises reasons/subscores), so
+    iterating it raw walks CHARACTERS — an inbox then looks like it's in no active
+    campaign, silently turning acquisition reallocation into a no-op (Tim 2026-08-28:
+    "no active campaign to reallocate" for every burnt acquisition domain)."""
+    c = r.get("campaigns")
+    if isinstance(c, str):
+        import json
+        try:
+            c = json.loads(c)
+        except Exception:
+            c = [c] if c.strip() else []
+    return c if isinstance(c, list) else []
+
+
 def _overview_account_id(email: str):
     """Resolve an email to its SmartLead account id from the overview cache."""
     ov, _ = store.cache_get("overview_v2")
@@ -118,20 +134,13 @@ def required_niche(job: dict) -> str:
 
 
 def _resolve_campaign_ids(names) -> dict:
-    """Campaign name -> id for the given names (live campaigns list, any status)."""
-    import time
-    import requests
-    key = _sl_key()
-    if not key or not names:
+    """Campaign name -> id for the given names. Reuses the resilient, memoised
+    campaign_index() (last-good fallback) so a rate-limited fetch can't silently
+    resolve nothing and make a swap a no-op."""
+    if not names:
         return {}
-    for _ in range(4):
-        r = requests.get("https://server.smartlead.ai/api/v1/campaigns",
-                         params={"api_key": key}, timeout=60)
-        if r.status_code == 200 and r.text.strip():
-            by_name = {c.get("name"): c.get("id") for c in (r.json() or [])}
-            return {n: by_name[n] for n in names if n in by_name}
-        time.sleep(6)
-    return {}
+    idx = campaign_index()
+    return {n: idx[n]["id"] for n in names if n in idx and idx[n].get("id")}
 
 
 REALLOC_KEY = "reallocate_pending_campaigns"
@@ -140,25 +149,61 @@ REALLOC_KEY = "reallocate_pending_campaigns"
 SL_CAMPAIGN_URL = "https://app.smartlead.ai/app/email-campaign/{id}/analytics"
 
 
+_CI_CACHE = {"data": None, "ts": 0.0}      # in-process memo + last-good fallback
+_CI_STATE_KEY = "campaign_index_cache"
+
+
 def campaign_index() -> dict:
-    """Live SmartLead campaigns as {name: {"id", "status"}} in ONE fetch (mindful
-    of the 600 req/min cap). campaign_status_map derives from this."""
+    """Live SmartLead campaigns as {name: {"id", "status"}}.
+
+    RESILIENCE MATTERS HERE: this decides whether an inbox's campaign counts as
+    ACTIVE, so a transient failure that returned {} makes EVERY campaign look
+    inactive — which silently turns reallocation into a no-op ("no active campaign
+    to reallocate", 2026-08-28 with rate-limit storms). So never blank out all
+    statuses on one failed fetch:
+      (a) memo the result for 30s so the several calls in one reallocate flow do
+          ONE fetch (also easier on the 800/min cap), and
+      (b) on failure fall back to the last good result (in-process, then persisted
+          in `state`) instead of an empty map."""
     import time
     import requests
+    now = time.time()
+    if _CI_CACHE["data"] and (now - _CI_CACHE["ts"] < 30):
+        return _CI_CACHE["data"]
     key = _sl_key()
     if not key:
-        return {}
-    for _ in range(4):
+        return _CI_CACHE["data"] or {}
+    backoff = 8
+    for _ in range(5):
         try:
             r = requests.get("https://server.smartlead.ai/api/v1/campaigns",
                              params={"api_key": key}, timeout=60)
             if r.status_code == 200 and r.text.strip():
-                return {c.get("name"): {"id": c.get("id"),
-                                        "status": (c.get("status") or "").upper()}
-                        for c in (r.json() or []) if c.get("name")}
+                idx = {c.get("name"): {"id": c.get("id"),
+                                       "status": (c.get("status") or "").upper()}
+                       for c in (r.json() or []) if c.get("name")}
+                if idx:
+                    _CI_CACHE["data"], _CI_CACHE["ts"] = idx, time.time()
+                    try:
+                        store.set_state(_CI_STATE_KEY, idx)
+                    except Exception:
+                        pass
+                    return idx
+            if r.status_code == 429:                 # rate limited — back off harder
+                time.sleep(backoff); backoff = min(backoff * 2, 40); continue
         except requests.RequestException:
             pass
         time.sleep(5)
+    # transient failure — reuse the last good statuses, NEVER an empty map
+    if _CI_CACHE["data"]:
+        return _CI_CACHE["data"]
+    try:
+        cached = store.get_state(_CI_STATE_KEY)
+        if cached:
+            _CI_CACHE["data"], _CI_CACHE["ts"] = cached, time.time()
+            return cached
+    except Exception:
+        pass
     return {}
 
 
@@ -237,7 +282,7 @@ def acq_reserve_candidates(status_map: dict | None = None) -> list[dict]:
             continue
         if r.get("status") not in ("healthy", "watch"):
             continue
-        camps = r.get("campaigns") or []
+        camps = _camps_of(r)
         if any(status_map.get(c) == "ACTIVE" for c in camps):
             continue
         aid = id_by.get(r["email"])
@@ -686,7 +731,7 @@ def _run_acq_swaps(emails, cands, status_by, status_map) -> dict:
     pool = list(cands)
     for e in emails:
         r = status_by.get(e, {})
-        active = [c for c in (r.get("campaigns") or []) if status_map.get(c) == "ACTIVE"]
+        active = [c for c in _camps_of(r) if status_map.get(c) == "ACTIVE"]
         if not active:
             # nothing actively sending — no reallocation needed; it's cancel-ready
             failed.append({"email": e, "stage": "noop",
@@ -808,7 +853,7 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
     swapped_emails = set(res_c["old_to_cancel"]) | set(res_a["old_to_cancel"])
     touched = set()
     for e in swapped_emails:
-        for c in (status_by.get(e, {}).get("campaigns") or []):
+        for c in _camps_of(status_by.get(e, {})):
             if idx.get(c, {}).get("status") == "ACTIVE":
                 touched.add(c)
     this_run = sorted(
