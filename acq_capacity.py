@@ -160,6 +160,15 @@ def _campaign_facts(overview: dict, live: bool) -> dict:
     return facts
 
 
+def _group_tag(account: dict) -> str:
+    """The account's group tag, parsed exactly as the generic-capacity page does."""
+    try:
+        import generic_capacity as gc
+        return gc.group_tag(account)
+    except Exception:
+        return ""
+
+
 def _live_account_facts() -> dict:
     """{email: {message_per_day, esp, smtp_ok}} straight from SmartLead.
 
@@ -191,7 +200,10 @@ def _live_account_facts() -> dict:
             if email:
                 out[email] = {"message_per_day": a.get("message_per_day"),
                               "esp": a.get("type"),
-                              "smtp_ok": bool(a.get("is_smtp_success"))}
+                              "smtp_ok": bool(a.get("is_smtp_success")),
+                              # live group tag — the roster check below needs to
+                              # know whether this mailbox is STILL acquisition
+                              "tag": _group_tag(a)}
         if len(batch) < 100:
             break
         offset += 100
@@ -377,6 +389,66 @@ def _daily_totals(emails: set, days: int = USAGE_WINDOW_DAYS) -> dict:
     return out
 
 
+def measured_idle(inboxes: list[dict]) -> dict:
+    """Check the state machine's idle verdict against what the mailboxes DID.
+
+    `_classify` reads campaign state, and campaign state systematically
+    overstates idleness on the acquisition fleet. A PAUSED or COMPLETED
+    SmartLead campaign still ships the follow-ups already queued inside it, so
+    an inbox whose every campaign reads finished can be sending at its daily cap.
+    Measured on 2026-09-02 over the 5 sending days to 08-31: of the 50 inboxes
+    the state machine called idle, 49 had sent — 378/day between them — while
+    the tab offered their whole 750/day as stock to reallocate. Reallocating a
+    mailbox that is mid-sequence cuts the sequence off and orphans the replies
+    welded to it.
+
+    So the send rows overrule the state machine, one inbox at a time:
+
+      dormant  state says idle AND it sent nothing all window -> really free
+      phantom  state says idle BUT it has been sending        -> not free
+
+    Only `dormant` is capacity anyone can plan with. Returns zeroes (and
+    `measured: False`) when no daily rows are available, so a caller can tell
+    "nothing is idle" apart from "we could not check".
+    """
+    # Same window as `usage()` above, deliberately: two different windows on one
+    # screen ("89% over 5 of 7 days" beside "idle over 10 working days") reads
+    # like a contradiction even when both figures are right.
+    try:
+        import generic_capacity as gc
+        sends, dates = gc._sends_by_email(USAGE_WINDOW_DAYS)
+    except Exception:
+        sends, dates = {}, []
+    if not dates:
+        return {"measured": False, "dormant_inboxes": 0, "dormant_capacity": 0,
+                "phantom_inboxes": 0, "phantom_capacity": 0,
+                "phantom_actual_per_day": 0, "window_sending_days": 0,
+                "window_from": None, "window_to": None}
+    dormant, phantom, phantom_sent = [], [], 0
+    for i in inboxes:
+        n = sends.get(i["email"], 0)
+        i["sent_measured"] = n
+        i["sent_measured_per_day"] = round(n / len(dates), 1)
+        if i["state"] not in IDLE_STATES:
+            continue
+        if n > 0:
+            phantom.append(i)
+            phantom_sent += n
+        else:
+            dormant.append(i)
+    return {
+        "measured": True,
+        "dormant_inboxes": len(dormant),
+        "dormant_capacity": sum(i["per_day"] for i in dormant),
+        "phantom_inboxes": len(phantom),
+        "phantom_capacity": sum(i["per_day"] for i in phantom),
+        "phantom_actual_per_day": round(phantom_sent / len(dates)),
+        "window_sending_days": len(dates),
+        "window_from": dates[0],
+        "window_to": dates[-1],
+    }
+
+
 def _health_by_email() -> dict:
     try:
         return {r["email"]: r for r in (store.get_health_status_all() or [])}
@@ -408,6 +480,18 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
 
     if live if live_accounts is None else live_accounts:
         facts_live = _live_account_facts()
+        # The roster comes from the overview cache, which is only as fresh as the
+        # last sync. When that sync has not run for a while the cache still lists
+        # mailboxes that have since been cancelled or re-tagged, and every one of
+        # them inflates the capacity denominator with stock we do not have — on
+        # 2026-09-02 the cache still carried 226 acquisition inboxes when only 208
+        # were still tagged acquisition — 17 had been re-tagged "Burnt Acquisition"
+        # and 1 untagged, a phantom 270/day of stock we had already taken out of
+        # the fleet. Having just paid for the live list, believe its tags.
+        if facts_live:
+            inboxes = [i for i in inboxes
+                       if (facts_live.get(i["email"], {}).get("tag") or ""
+                           ).lower().startswith("acquisition")]
         for i in inboxes:
             f = facts_live.get(i["email"])
             if not f:
@@ -443,6 +527,7 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
     deployed = by_state[SENDING]["capacity"]
     idle_capacity = sum(by_state[s]["capacity"] for s in IDLE_STATES)
     use = usage(inboxes)
+    meas = measured_idle(inboxes)
 
     summary = {
         "inboxes": len(inboxes),
@@ -477,6 +562,15 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
                             if total_capacity and use["per_sending_day"] else None),
         "allocation_pct": round(100 * deployed / usable_capacity) if usable_capacity else 0,
         "by_state": by_state,
+        # The idle figure the send rows actually support. `idle_capacity` above is
+        # what campaign state claims; this is what survives checking it against
+        # what the mailboxes did. Quote this one.
+        "idle_capacity_measured": meas["dormant_capacity"] if meas["measured"] else None,
+        "idle_inboxes_measured": meas["dormant_inboxes"] if meas["measured"] else None,
+        "phantom_idle_inboxes": meas["phantom_inboxes"] if meas["measured"] else None,
+        "phantom_idle_capacity": meas["phantom_capacity"] if meas["measured"] else None,
+        "phantom_actual_per_day": meas["phantom_actual_per_day"] if meas["measured"] else None,
+        "measured": meas,
     }
 
     campaigns = _campaign_rows(inboxes, facts)

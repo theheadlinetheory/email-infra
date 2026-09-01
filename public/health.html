@@ -110,6 +110,21 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tabpanel{display:none}
 .tabpanel.active{display:block}
+/* Generic capacity */
+.vgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:13px;margin:14px 0 4px}
+.vcard{border:1px solid var(--line);border-radius:11px;padding:14px 15px;background:var(--surface)}
+.vcard h4{margin:0 0 3px;font-family:var(--sans);font-size:13.5px;font-weight:700}
+.vcard .big{font-family:var(--mono);font-size:27px;font-weight:700;line-height:1.1}
+.vcard .big.zero{color:var(--mut)}
+.vcard .cap{font-family:var(--mono);font-size:11px;color:var(--ink2);margin-bottom:9px}
+.vrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--ink2);padding:2.5px 0;border-top:1px solid var(--line)}
+.vrow b{color:var(--ink);font-weight:600}
+.vrow.mute{color:var(--mut)}
+.cpill.warming{background:var(--info-bg);color:var(--accent)}
+.cpill.claimed{background:var(--warn-bg);color:var(--warn)}
+.cpill.free{background:var(--good-bg);color:var(--good)}
+.cpill.released{background:var(--good-bg);color:var(--good)}
+.cpill.disputed{background:var(--warn-bg);color:var(--warn)}
 /* Acquisition capacity */
 .capbar{display:flex;height:26px;border-radius:7px;overflow:hidden;border:1px solid var(--line2);background:var(--surface2)}
 .capbar span{display:block;height:100%}
@@ -148,6 +163,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <button class="tab" data-tab="clients" onclick="showTab('clients')">Clients (worst)</button>
     <button class="tab" data-tab="inboxes" onclick="showTab('inboxes')">All inboxes</button>
     <button class="tab" data-tab="capacity" onclick="showTab('capacity')">Acquisition capacity</button>
+    <button class="tab" data-tab="gcap" onclick="showTab('gcap')">Generic capacity</button>
     <button class="tab" data-tab="buy" onclick="showTab('buy')">Buy inboxes</button>
     <button class="tab" data-tab="renewals" onclick="showTab('renewals')">Renewals &amp; reserve</button>
   </div>
@@ -343,6 +359,41 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   </div>
 
   <!-- ══ BUY INBOXES ══ -->
+  <div class="tabpanel" data-panel="gcap">
+    <div class="sect"><h2>🌱 Generic inbox capacity</h2><span class="eye" id="gcsub">loading…</span></div>
+    <div class="note">Unbranded stock we can point at any client — counted in the three verticals we hold it in.
+      An inbox is <b>available</b> only if it is in no live campaign, has finished its 14-day warmup, is not being
+      held for a burned-inbox replacement, and <b>sent nothing</b> in the measured window. An inbox sitting in the
+      gap between its sends is still working for its campaign, so it is never counted as spare.</div>
+    <div id="gckpis" class="kpis"></div>
+    <div id="gcverticals" class="vgrid"></div>
+    <div id="gcnotes"></div>
+
+    <div class="sect" style="margin-top:22px"><h2>Where the free stock is</h2><span class="eye" id="gcinbsub"></span></div>
+    <div class="toolbar">
+      <select id="gcfilter" onchange="renderGCInboxes()" title="Filter by state" style="font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer">
+        <option value="available">Available now</option>
+        <option value="warming">Warming up</option>
+        <option value="disputed">Looks free but still sending</option>
+        <option value="claimed">Held for replacements</option>
+        <option value="sending">Sending</option>
+        <option value="all">All</option>
+      </select>
+      <select id="gcniche" onchange="renderGCInboxes()" title="Filter by vertical" style="font-family:var(--mono);font-size:11.5px;background:var(--surface);color:var(--ink);border:1px solid var(--line2);border-radius:20px;padding:5px 10px;cursor:pointer">
+        <option value="">All verticals</option>
+        <option value="landscaping">Landscaping</option>
+        <option value="service">Service</option>
+        <option value="holiday">Holiday lighting</option>
+        <option value="hvac">HVAC</option>
+      </select>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Inbox</th><th>Vertical</th><th>Group / owner</th><th>State</th>
+        <th class="num">Cap/day</th><th class="num">Sent (window)</th><th>Why</th></tr></thead>
+      <tbody id="gcrows"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
   <div class="tabpanel" data-panel="buy">
     <div class="sect"><h2>🛒 Buy inboxes &amp; domains</h2><span class="eye" id="buysub"></span></div>
     <div class="note">Buy new domains (Spaceship) + inboxes (Zapmail) for acquisition or a client. <b>Nothing is charged until you confirm</b> — you see the exact cost first. Two steps: buy domains now, then <b>Provision inboxes</b> per order once DNS resolves (~15–60 min).</div>
@@ -1366,6 +1417,111 @@ on('confirmbtn', ()=>{
   if(confirm(`Schedule ${selected.size} burned mailbox(es) for removal at next renewal?`)) burn(true);
 });
 
+// ══ Generic inbox capacity ════════════════════════════════════════════════
+// How much unbranded stock is genuinely free to point at a client on Monday.
+// Every number here is held to the same rule: campaign state proposes, the true
+// send rows dispose. Anything the two disagree about is shown as `disputed` and
+// kept OUT of the headline rather than quietly counted as spare.
+let GC=null;
+const GC_LABEL={landscaping:'Landscaping',service:'Service',holiday:'Holiday lighting',hvac:'HVAC'};
+
+async function loadGeneric(){
+  const sub=document.getElementById('gcsub');
+  if(sub) sub.textContent='reading the live fleet from SmartLead… (~25s)';
+  try{
+    const r=await fetch(api('/api/generic-capacity'),{credentials:'include'});
+    const d=await r.json();
+    if(d.error){ if(sub) sub.textContent=d.error; return; }
+    GC=d; renderGeneric();
+  }catch(e){ if(sub) sub.textContent='Error: '+e; }
+}
+
+function renderGeneric(){
+  if(!GC) return;
+  const s=GC.summary, V=GC.verticals;
+  document.getElementById('gcsub').innerHTML =
+    s.total_inboxes+' generic inboxes · live from SmartLead'+
+    (s.measured? ' · sends measured over '+s.window_sending_days+' working days to '+s.window_to : ' · no send data')+
+    ' <button class="btn sm" style="margin-left:8px" onclick="loadGeneric()">Refresh</button>';
+
+  document.getElementById('gckpis').innerHTML=[
+    kpi('Available / day', s.available_capacity, s.available_inboxes+' inboxes ready now',
+        s.available_capacity>0?'goodv':'critv'),
+    kpi('In no campaign', s.available_unassigned, 'unallocated generic stock'),
+    kpi('Idle at a client', s.available_from_clients, 'assigned but sending nothing'),
+    kpi('Warming up', s.warming_capacity, s.warming_inboxes+' inboxes not yet usable', 'warnv'),
+    kpi('Sending / day', s.actual_per_day!=null?s.actual_per_day:'—',
+        s.sending_inboxes+' inboxes in live campaigns'),
+    kpi('Held back', s.claimed_inboxes+s.disputed_inboxes,
+        s.claimed_inboxes+' reserved · '+s.disputed_inboxes+' still sending', 'warnv'),
+  ].join('');
+
+  document.getElementById('gcverticals').innerHTML = GC.tracked_verticals.map(v=>{
+    const d=V[v]; if(!d) return '';
+    const row=(l,val,mute)=>val?`<div class="vrow${mute?' mute':''}"><span>${l}</span><b>${val}</b></div>`:'';
+    return `<div class="vcard">
+      <h4>${GC_LABEL[v]||v}</h4>
+      <div class="big ${d.available_capacity?'':'zero'}">${d.available_capacity}<span style="font-size:13px;font-weight:600">/day</span></div>
+      <div class="cap">${d.available_inboxes} of ${d.total_inboxes} inboxes available</div>
+      ${row('In no campaign', d.free_inboxes)}
+      ${row('Finished / paused only', d.released_inboxes)}
+      ${row('Idle at a client', d.available_from_clients)}
+      ${row('Warming'+(d.warming_ready_in_days!=null?' (first ready in '+d.warming_ready_in_days+'d)':''), d.warming_inboxes, true)}
+      ${row('Held for replacements', d.claimed_inboxes, true)}
+      ${row('Looks free but sending', d.disputed_inboxes, true)}
+      ${row('Sending in live campaigns', d.sending_inboxes, true)}
+      ${row('Blocked / retired', d.blocked_inboxes, true)}
+    </div>`;
+  }).join('');
+
+  // The things a number alone would hide.
+  const notes=[];
+  GC.tracked_verticals.forEach(v=>{
+    const d=V[v]; if(!d) return;
+    if(!d.available_inboxes && d.warming_inboxes){
+      notes.push(`<b>${GC_LABEL[v]}: nothing available today.</b> All ${d.warming_inboxes} inboxes
+        (${d.warming_capacity}/day) are still warming — the first come free in about
+        <b>${d.warming_ready_in_days} day${d.warming_ready_in_days===1?'':'s'}</b>. Sending from them before
+        that is how a fresh domain gets burned on its first campaign.`);
+    }
+    if(d.available_from_clients){
+      notes.push(`<b>${GC_LABEL[v]}:</b> ${d.available_from_clients} of the available inboxes are still tagged to a
+        client that is not sending with them${d.owners_with_idle.length?' ('+d.owners_with_idle.join(', ')+')':''} —
+        they have to be taken off that client before they can be re-pointed.`);
+    }
+  });
+  if(s.disputed_inboxes) notes.push(`<b>${s.disputed_inboxes} inboxes are in no live campaign but have been sending anyway</b>
+    — almost always follow-ups still draining out of a campaign that has since been paused or completed.
+    They are excluded from the available figure; treat them as busy until they go quiet.`);
+  if(s.partial) notes.push(`<b style="color:var(--warn)">Some active campaigns could not be read</b>, so their senders are
+    counted as busy rather than free. The available figure is a floor, not an estimate.`);
+  document.getElementById('gcnotes').innerHTML =
+    notes.map(n=>`<div class="note" style="margin-top:9px">${n}</div>`).join('');
+
+  renderGCInboxes();
+}
+
+function renderGCInboxes(){
+  if(!GC) return;
+  const f=document.getElementById('gcfilter').value, nf=document.getElementById('gcniche').value;
+  const AV=['free','released'];
+  let rows=GC.inboxes.filter(i=>!nf||i.niche===nf);
+  if(f==='available') rows=rows.filter(i=>AV.includes(i.state));
+  else if(f!=='all') rows=rows.filter(i=>i.state===f);
+  document.getElementById('gcinbsub').textContent=rows.length+' inbox'+(rows.length===1?'':'es');
+  const el=document.getElementById('gcrows');
+  if(!rows.length){ el.innerHTML='<tr><td colspan="7" class="empty">Nothing in this view.</td></tr>'; return; }
+  el.innerHTML=rows.slice(0,600).map(i=>`<tr>
+    <td style="font-family:var(--mono);font-size:11.5px">${esc(i.email)}</td>
+    <td>${GC_LABEL[i.niche]||i.niche}</td>
+    <td>${esc(i.owner||i.tag)}</td>
+    <td><span class="cpill ${i.state}">${GC.state_labels[i.state]||i.state}</span></td>
+    <td class="num">${i.per_day}</td>
+    <td class="num">${i.sent_window||''}</td>
+    <td class="eye">${esc(i.why||'')}</td></tr>`).join('')
+    + (rows.length>600? `<tr><td colspan="7" class="empty">+${rows.length-600} more</td></tr>`:'');
+}
+
 // ══ Acquisition capacity ══════════════════════════════════════════════════
 // Utilisation, not deliverability: which acquisition inboxes we pay for are
 // actually pushing mail, and which are free for Lars to point at a new campaign.
@@ -1417,7 +1573,18 @@ function renderCapacity(){
     kpi('Sending / working day', s.actual_per_sending_day!=null?s.actual_per_sending_day:s.actual_per_day,
         (s.sending_days!=null? s.sending_days+' of '+s.window_days+' days had sends':s.window_days+'d avg'), wcls),
     kpi('Weekday utilisation', (s.sending_day_pct!=null?s.sending_day_pct:pct)+'%', 'real headroom is 100 minus this', wcls),
-    kpi('Idle / day', s.idle_capacity, s.idle_inboxes+' inboxes free', s.idle_capacity>0?'critv':'goodv'),
+    // Idle is reported from the SEND ROWS, not from campaign state. Campaign
+    // state calls an inbox idle whenever every campaign holding it reads
+    // paused/finished — but those campaigns keep shipping the follow-ups already
+    // in flight, so the mailbox is still working. Quoting the state figure here
+    // advertised 750/day of acquisition stock to reallocate on 2026-09-02 when
+    // the measured number was zero.
+    (s.idle_capacity_measured!=null
+      ? kpi('Idle / day', s.idle_capacity_measured,
+            s.idle_inboxes_measured+' sent nothing all window',
+            s.idle_capacity_measured>0?'critv':'goodv')
+      : kpi('Idle / day', s.idle_capacity, s.idle_inboxes+' inboxes free (unverified)',
+            s.idle_capacity>0?'critv':'goodv')),
   ].join('');
 
   // stacked capacity bar
@@ -1437,8 +1604,19 @@ function renderCapacity(){
   // live queue), not measured sends — idle capacity by definition fills the gap
   // between deployed and usable, so quoting a sends-based figure here would both
   // overstate the win and can exceed 100%.
-  p.innerHTML=`<div class="capbar">${seg}</div><div class="caplegend">${leg}</div>`+
-    (s.idle_capacity? `<div class="eye" style="margin-top:11px">Putting the idle <b>${s.idle_capacity}/day</b> into live campaigns takes allocation from
+  // The reconciliation between what campaign state claims is idle and what the
+  // mailboxes actually did. When they disagree the send rows win, and saying so
+  // out loud is the difference between a capacity page and a wish list.
+  const phantom = s.phantom_idle_inboxes
+    ? `<div class="eye" style="margin-top:11px"><b style="color:var(--warn)">${s.phantom_idle_inboxes} of the ${s.idle_inboxes} inboxes campaign state calls idle
+       (${s.phantom_idle_capacity}/day) are still sending</b> — ${s.phantom_actual_per_day}/day between them over
+       ${(s.measured&&s.measured.window_sending_days)||0} working days to ${(s.measured&&s.measured.window_to)||''}.
+       A paused or completed campaign still ships the follow-ups already queued inside it, and pulling those
+       senders out would cut the sequences off and orphan the replies welded to them.
+       <b>Genuinely idle: ${s.idle_capacity_measured}/day.</b></div>`
+    : '';
+  p.innerHTML=`<div class="capbar">${seg}</div><div class="caplegend">${leg}</div>`+phantom+
+    (s.idle_capacity_measured? `<div class="eye" style="margin-top:11px">Putting the idle <b>${s.idle_capacity_measured}/day</b> into live campaigns takes allocation from
       <b>${s.allocation_pct}%</b> to <b>100%</b> of usable capacity`+
       (strandCap? ` — <b style="color:var(--crit)">${strandCap}/day of it is stranded in live campaigns that have run out of leads</b>, so it never shows up as idle in SmartLead`:'')+
       `.</div>`:'')+
@@ -1749,6 +1927,7 @@ loadReplacements();
 loadRenewals();
 loadReplenish();
 loadCapacity();
+loadGeneric();
 </script>
 </body>
 </html>

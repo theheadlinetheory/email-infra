@@ -642,6 +642,27 @@ def acq_capacity_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/generic-capacity")
+def generic_capacity_route():
+    """Generic (non-acquisition) inbox capacity: what is genuinely free to deploy.
+
+    Always reads live from SmartLead — the roster, the tags and the active
+    campaigns. The overview cache is only as fresh as the last sync, and a stale
+    cache does not look broken here, it looks like a smaller fleet: read on
+    2026-09-02 it held no holiday stock at all because the pool was bought after
+    the last sync ran. Takes ~25s.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import generic_capacity as gc
+        res = gc.build()
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/acq-allocate", methods=["POST", "OPTIONS"])
 def acq_allocate_route():
     """Move acquisition inboxes between campaigns.
