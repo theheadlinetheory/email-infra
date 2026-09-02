@@ -163,6 +163,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <button class="tab" data-tab="clients" onclick="showTab('clients')">Clients (worst)</button>
     <button class="tab" data-tab="inboxes" onclick="showTab('inboxes')">All inboxes</button>
     <button class="tab" data-tab="capacity" onclick="showTab('capacity')">Acquisition capacity</button>
+    <button class="tab" data-tab="ccap" onclick="showTab('ccap')">Client capacity</button>
     <button class="tab" data-tab="gcap" onclick="showTab('gcap')">Generic capacity</button>
     <button class="tab" data-tab="buy" onclick="showTab('buy')">Buy inboxes</button>
     <button class="tab" data-tab="renewals" onclick="showTab('renewals')">Renewals &amp; reserve</button>
@@ -359,6 +360,23 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
   </div>
 
   <!-- ══ BUY INBOXES ══ -->
+  <div class="tabpanel" data-panel="ccap">
+    <div class="sect"><h2>👥 Client sending capacity</h2><span class="eye" id="ccsub">loading…</span></div>
+    <div class="note">What each client <b>holds</b> against what it actually <b>sends</b>. Utilisation is measured from
+      the true daily send rows, not from the campaign list — a client can hold 60 warm mailboxes attached to a live
+      campaign and still be sending from six of them. <b>Idle</b> counts only mailboxes that are past warmup, not held
+      for a replacement, not blocked, in no campaign that still has leads or follow-ups queued, and silent all window.
+      An inbox in the gap between two steps of a live sequence is <b>not</b> idle.</div>
+    <div id="cckpis" class="kpis"></div>
+    <div id="ccnotes"></div>
+    <div class="tablewrap" style="margin-top:14px"><table>
+      <thead><tr><th>Client</th><th class="num">Inboxes</th><th class="num">Nameplate/day</th>
+        <th class="num">Usable/day</th><th class="num">Sending/day</th><th class="num">Utilisation</th>
+        <th class="num">Idle</th><th class="num">Idle/day</th><th>Notes</th></tr></thead>
+      <tbody id="ccrows"><tr><td colspan="9" class="empty">loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
   <div class="tabpanel" data-panel="gcap">
     <div class="sect"><h2>🌱 Generic inbox capacity</h2><span class="eye" id="gcsub">loading…</span></div>
     <div class="note">Unbranded stock we can point at any client — counted in the three verticals we hold it in.
@@ -1499,6 +1517,56 @@ function renderGeneric(){
     notes.map(n=>`<div class="note" style="margin-top:9px">${n}</div>`).join('');
 
   renderGCInboxes();
+  renderClientCapacity();
+}
+
+function renderClientCapacity(){
+  if(!GC||!GC.clients) return;
+  const t=GC.client_totals, rows=GC.clients;
+  document.getElementById('ccsub').innerHTML =
+    t.clients+' clients · '+t.inboxes+' inboxes · live from SmartLead'+
+    (GC.summary.measured? ' · sends over '+GC.summary.window_sending_days+' working days to '+GC.summary.window_to:'')+
+    ' <button class="btn sm" style="margin-left:8px" onclick="loadGeneric()">Refresh</button>';
+
+  const util = t.usable_capacity? Math.round(100*t.actual_per_day/t.usable_capacity):0;
+  document.getElementById('cckpis').innerHTML=[
+    kpi('Held / day', t.nameplate_capacity, t.inboxes+' client inboxes we pay for'),
+    kpi('Usable / day', t.usable_capacity, 'excludes warming, blocked, reserved'),
+    kpi('Sending / day', t.actual_per_day, 'measured, not allocated'),
+    kpi('Utilisation', util+'%', 'of usable client capacity', util>=70?'goodv':util>=45?'warnv':'critv'),
+    kpi('Idle / day', t.idle_capacity, t.idle_inboxes+' inboxes doing nothing',
+        t.idle_capacity>0?'critv':'goodv'),
+  ].join('');
+
+  // A client holding warm stock it never sends from is the expensive case, so
+  // name it rather than leaving it to be spotted in the table.
+  const dead=rows.filter(c=>c.idle_inboxes>=10);
+  const warming=rows.filter(c=>c.warming_inboxes&&!c.actual_per_day);
+  const notes=[];
+  if(dead.length) notes.push('<b>'+dead.length+' client'+(dead.length===1?'':'s')+' hold 10+ idle inboxes:</b> '+
+    dead.map(c=>esc(c.client)+' ('+c.idle_inboxes+' · '+c.idle_capacity+'/day)').join(', ')+
+    '. These are past warmup, in no campaign with work left, and sent nothing all window.');
+  if(warming.length) notes.push('<b>'+warming.map(c=>esc(c.client)).join(', ')+
+    '</b> '+(warming.length===1?'is':'are')+' still warming and cannot send yet — not idle capacity.');
+  document.getElementById('ccnotes').innerHTML=notes.map(n=>`<div class="note" style="margin-top:9px">${n}</div>`).join('');
+
+  document.getElementById('ccrows').innerHTML = rows.map(c=>{
+    const u=c.utilisation_pct;
+    const ucls=u==null?'':u>=70?'good':u>=45?'warn':'crit';
+    const note = c.warming_inboxes? c.warming_inboxes+' warming'
+               : c.idle_inboxes===c.inboxes? 'entire group idle'
+               : c.blocked_inboxes? c.blocked_inboxes+' blocked/retired':'';
+    return `<tr>
+      <td><b>${esc(c.client)}</b><div class="eye">${c.niches.join(' · ')}</div></td>
+      <td class="num">${c.inboxes}</td>
+      <td class="num">${c.nameplate_capacity}</td>
+      <td class="num">${c.usable_capacity}</td>
+      <td class="num">${c.actual_per_day==null?'—':c.actual_per_day}</td>
+      <td class="num"${ucls?` style="color:var(--${ucls})"`:''}>${u==null?'—':u+'%'}</td>
+      <td class="num">${c.idle_inboxes||''}</td>
+      <td class="num"${c.idle_capacity?' style="color:var(--crit)"':''}>${c.idle_capacity||''}</td>
+      <td class="eye">${note}</td></tr>`;
+  }).join('');
 }
 
 function renderGCInboxes(){

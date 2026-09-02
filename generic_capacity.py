@@ -157,69 +157,159 @@ def _live_accounts() -> list[dict]:
 
 
 def _emails_in_active_campaigns() -> tuple:
-    """(emails attached to an ACTIVE campaign, {email: [campaign names]}).
+    """(busy emails, {email: [campaign rows]}, [unreadable campaign names]).
 
-    Only ACTIVE campaigns are fetched, and that is the whole trick that makes
-    this affordable: whether an inbox is busy depends solely on whether some
-    ACTIVE campaign is holding it, so the 300-odd finished and paused campaigns
-    need not be asked about at all. Roughly 45 calls instead of 369.
+    Only ACTIVE campaigns are fetched, and that is what makes this affordable:
+    whether an inbox is busy depends solely on whether some ACTIVE campaign is
+    still holding it with work to do, so the 300-odd finished and paused
+    campaigns need not be asked about at all — 45 calls instead of 369.
 
-    Returns `(None, {})` if the campaign list itself could not be read — the
-    caller must then refuse to report, because an empty attachment map would
-    make the entire fleet look free.
+    An inbox lands in the busy set only if its campaign BOTH is active AND still
+    has a non-empty queue; an active campaign that has run out of leads and
+    follow-ups is holding its senders for nothing, and that stock is exactly
+    what this page exists to surface.
+
+    Returns `(None, {}, [])` if the campaign list itself could not be read: with
+    no list at all the entire fleet would look free, which is the one answer
+    that must never be printed.
     """
     import requests
     key = _sl_key()
     if not key:
-        return None, {}
+        return None, {}, []
+    session = requests.Session()
+    r = _get(session, f"{SL}/campaigns", {"api_key": key}, timeout=60)
+    if not r:
+        return None, {}, []
     try:
-        r = requests.get(f"{SL}/campaigns", params={"api_key": key}, timeout=60)
-        if r.status_code != 200 or not r.text.strip():
-            return None, {}
         campaigns = r.json() or []
-    except (requests.RequestException, ValueError):
-        return None, {}
+    except ValueError:
+        return None, {}, []
 
     active = [c for c in campaigns if (c.get("status") or "").upper() == "ACTIVE"]
-    emails, by_email = set(), {}
+    queues = _lead_queues(session, [c.get("id") for c in active if c.get("id")])
+
     from concurrent.futures import ThreadPoolExecutor
-    session = requests.Session()
+    emails, by_email, unreadable = set(), {}, []
 
     def one(c):
-        for attempt in range(3):
-            try:
-                rr = session.get(f"{SL}/campaigns/{c['id']}/email-accounts",
-                                 params={"api_key": key}, timeout=30)
-            except requests.RequestException:
-                time.sleep(2 * (attempt + 1))
-                continue
-            if rr.status_code == 200:
-                try:
-                    return c, (rr.json() or [])
-                except ValueError:
-                    return c, []
-            if rr.status_code in (429, 500, 502, 503):
-                time.sleep(5 * (attempt + 1))
-                continue
-            break
-        return c, None                     # unreadable — treated as busy below
+        r = _get(session, f"{SL}/campaigns/{c['id']}/email-accounts",
+                 {"api_key": key}, timeout=30)
+        if not r:
+            return c, None
+        try:
+            return c, (r.json() or [])
+        except ValueError:
+            return c, []
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         for c, rows in ex.map(one, active):
             if rows is None:
-                # Could not read this campaign. Its senders must NOT fall through
-                # to "free" on a network error, so mark the whole campaign
-                # unreadable and let the caller keep its inboxes out of the
-                # available pool.
-                by_email.setdefault("__unreadable__", []).append(c.get("name"))
+                # Its senders are unknown, so they must not fall through to
+                # "free" on a transient error. The caller refuses to report.
+                unreadable.append(c.get("name") or str(c.get("id")))
                 continue
+            q = queues.get(c.get("id"))
+            has_work = campaign_has_work(q)
             for a in rows:
                 e = a.get("from_email")
                 if not e:
                     continue
-                emails.add(e)
-                by_email.setdefault(e, []).append(c.get("name"))
-    return emails, by_email
+                if has_work:
+                    emails.add(e)
+                by_email.setdefault(e, []).append({
+                    "name": c.get("name"), "id": c.get("id"),
+                    "has_work": has_work,
+                    "remaining": (q or {}).get("remaining"),
+                    "in_progress": (q or {}).get("in_progress"),
+                })
+    return emails, by_email, unreadable
+
+
+MAX_WORKERS = 4          # SmartLead 429s readily; this page makes ~135 calls
+RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+def _get(session, url, params, timeout=30, tries=4):
+    """One GET with backoff. Returns the Response, or None if it never succeeded.
+
+    SmartLead rate-limits this key hard enough to answer a plain campaign-list
+    request with a non-JSON body, so every call here has to assume it will be
+    throttled at least once. `Retry-After` is honoured when sent.
+    """
+    import requests
+    for attempt in range(tries):
+        try:
+            r = session.get(url, params=params, timeout=timeout)
+        except requests.RequestException:
+            time.sleep(2 * (attempt + 1))
+            continue
+        if r.status_code == 200:
+            return r
+        if r.status_code in RETRY_STATUS:
+            wait = 0
+            try:
+                wait = int(r.headers.get("Retry-After") or 0)
+            except ValueError:
+                wait = 0
+            time.sleep(min(wait or 4 * (attempt + 1), 30))
+            continue
+        return None
+    return None
+
+
+def _lead_queues(session, campaign_ids: list) -> dict:
+    """{campaign id: {remaining, in_progress}} for the ACTIVE campaigns.
+
+    Two queues, and BOTH have to be empty before a campaign is done with its
+    senders:
+
+      STARTED     leads never contacted   -> first-touch emails still to send
+      INPROGRESS  leads mid-sequence      -> FOLLOW-UPS still to send
+
+    Reading only STARTED is the classic way to get this wrong: a campaign that
+    has finished its first touches still has thousands of leads mid-sequence,
+    and freeing those senders cuts the sequences off and orphans the replies
+    welded to the mailboxes that sent them.
+
+    An unreadable queue is recorded as None, which `campaign_has_work` treats as
+    "assume it still has work" — being wrong towards busy costs an idle mailbox
+    for a day, being wrong the other way breaks a running campaign.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    if not campaign_ids:
+        return {}
+    key = _sl_key()
+
+    def one(cid):
+        row = {}
+        for status_key, field in (("STARTED", "remaining"),
+                                  ("INPROGRESS", "in_progress")):
+            r = _get(session, f"{SL}/campaigns/{cid}/leads",
+                     {"api_key": key, "limit": 1, "offset": 0,
+                      "status": status_key}, timeout=25)
+            try:
+                row[field] = int((r.json() or {}).get("total_leads", 0)) if r else None
+            except (ValueError, TypeError):
+                row[field] = None
+        return cid, row
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        return {cid: row for cid, row in ex.map(one, campaign_ids)}
+
+
+def campaign_has_work(queue: dict | None) -> bool:
+    """True if this campaign still has anything for its senders to send.
+
+    None (unread) counts as work — see `_lead_queues`.
+    """
+    if not queue:
+        return True
+    for field in ("remaining", "in_progress"):
+        v = queue.get(field)
+        if v is None or (v or 0) > 0:
+            return True
+    return False
 
 
 def _warmup_age_days(a: dict) -> int | None:
@@ -338,8 +428,8 @@ def _sends_by_email(days: int = USAGE_WINDOW_DAYS) -> tuple:
     return totals, live_dates
 
 
-def _classify(inbox: dict, active_emails: set, unreadable: bool,
-              claimed: set, burned: set) -> tuple:
+def _classify(inbox: dict, active_emails: set, claimed: set,
+              burned: set) -> tuple:
     """(state, why) for one inbox, most-disqualifying test first."""
     if not inbox["smtp_ok"]:
         return BLOCKED, "SMTP disconnected — cannot send"
@@ -355,20 +445,18 @@ def _classify(inbox: dict, active_emails: set, unreadable: bool,
     if inbox["email"] in claimed:
         return CLAIMED, "reserved for a burned-inbox replacement"
 
-    # In an ACTIVE campaign -> busy, full stop. The lead queues are NOT consulted:
-    # a campaign whose first-touch queue is empty is still shipping the follow-ups
-    # already in flight, and pulling a sender out mid-sequence both cuts those off
-    # and orphans the replies it has already earned — replies live in the mailbox
-    # that sent them. This is the "between sends" case the tracker must never
-    # count as spare, and it is why an inbox in a live campaign is busy even on a
-    # day it happens to send nothing.
+    # Busy = sitting in an ACTIVE campaign THAT STILL HAS WORK. `active_emails`
+    # already carries that test (see `_lead_queues`): a campaign counts as having
+    # work while either queue is non-empty — leads never contacted, or leads
+    # mid-sequence with follow-ups still to send — or while we could not read it.
+    #
+    # This is what makes the "between sends" case safe. An inbox in the gap
+    # between two steps of a live sequence still has INPROGRESS leads behind it,
+    # so it stays busy on a day it sends nothing, and is never offered as spare.
+    # Only when BOTH queues are drained is the campaign genuinely finished with
+    # its senders, and only then does the inbox fall through to available.
     if inbox["email"] in active_emails:
-        return SENDING, "attached to a live campaign"
-
-    if unreadable:
-        # We could not read every active campaign, so "not in active_emails" is
-        # not proof of anything. Refuse to call it free.
-        return DISPUTED, "could not read every active campaign — not counted as free"
+        return SENDING, "in a live campaign that still has leads or follow-ups queued"
 
     # Reads free on campaign state. The true send rows get the last word: an
     # inbox that has been sending is working for someone regardless of what the
@@ -378,7 +466,82 @@ def _classify(inbox: dict, active_emails: set, unreadable: bool,
                           "measured window" % inbox["sent_window"])
     if not inbox["ever_in_campaign"]:
         return FREE, "in no campaign at all"
+    drained = [c["name"] for c in (inbox.get("attached") or [])
+               if not c.get("has_work")]
+    if drained:
+        return RELEASED, ("its campaign%s ran out of leads and follow-ups (%s)"
+                          % ("s" if len(drained) > 1 else "",
+                             ", ".join(drained[:2])))
     return RELEASED, "only in finished/paused campaigns, and sending nothing"
+
+
+def client_of(tag: str) -> str | None:
+    """The client a group tag belongs to, with the A/B group suffix stripped.
+
+    "Timesavers Group B" and "Timesavers Group A" are one client holding two
+    groups; reporting them apart would halve every client's apparent capacity
+    and hide that the idle stock is concentrated in one of the two.
+    """
+    if not tag or tag.lower().startswith("generic"):
+        return None
+    if tag.strip().lower() in NON_CLIENT_TAGS:
+        return None
+    return re.sub(r"\s+(?:Group\s+)?[A-Z]\d?$", "", tag.strip()) or tag.strip()
+
+
+def client_capacity(inboxes: list[dict], ndays: int) -> list[dict]:
+    """Per-client capacity: what each client holds against what it actually uses.
+
+    This is the question "are we paying for inboxes a client is not sending
+    with", and it is answered from the send rows, not from the campaign list —
+    a client can hold 50 warm mailboxes attached to a live campaign and still be
+    sending from six of them.
+
+    `idle_*` counts only mailboxes that are free by the same rule the rest of
+    this module uses: past warmup, not held for a replacement, not blocked, in
+    no campaign that still has work, and silent all window. Warming stock is
+    reported separately — it is capacity the client will have, not capacity
+    anyone is wasting.
+    """
+    from collections import defaultdict
+    rows = defaultdict(list)
+    for i in inboxes:
+        c = client_of(i.get("tag"))
+        if c:
+            rows[c].append(i)
+
+    out = []
+    for name, mine in sorted(rows.items()):
+        idle = [i for i in mine if i["state"] in AVAILABLE_STATES]
+        warming = [i for i in mine if i["state"] == WARMING]
+        blocked = [i for i in mine if i["state"] == BLOCKED]
+        sending = [i for i in mine if i["state"] == SENDING]
+        nameplate = sum(i["per_day"] for i in mine)
+        # Deployable = what could send today: everything except stock that is
+        # warming, blocked or spoken for. Utilisation against nameplate alone
+        # would punish a client for mailboxes that are not usable yet.
+        usable = [i for i in mine if i["state"] not in (WARMING, BLOCKED, CLAIMED)]
+        usable_cap = sum(i["per_day"] for i in usable)
+        actual = round(sum(i["sent_window"] for i in mine) / ndays) if ndays else None
+        out.append({
+            "client": name,
+            "inboxes": len(mine),
+            "nameplate_capacity": nameplate,
+            "usable_capacity": usable_cap,
+            "actual_per_day": actual,
+            "utilisation_pct": (round(100 * actual / usable_cap)
+                                if usable_cap and actual is not None else None),
+            "idle_inboxes": len(idle),
+            "idle_capacity": sum(i["per_day"] for i in idle),
+            "sending_inboxes": len(sending),
+            "warming_inboxes": len(warming),
+            "blocked_inboxes": len(blocked),
+            "silent_inboxes": sum(1 for i in usable if i["sent_window"] == 0),
+            "niches": sorted({i["niche"] for i in mine}),
+        })
+    # Worst offenders first: the most reclaimable capacity at the top.
+    out.sort(key=lambda r: (-r["idle_capacity"], r["utilisation_pct"] or 0))
+    return out
 
 
 def _state_order(s: str) -> int:
@@ -423,11 +586,21 @@ def build(live: bool = True) -> dict:
         return {"error": "could not read the mailbox list from SmartLead — "
                          "refusing to report a capacity number from stale data"}
 
-    active_emails, active_by_email = _emails_in_active_campaigns()
+    active_emails, active_by_email, unread = _emails_in_active_campaigns()
     if active_emails is None:
         return {"error": "could not read the campaign list from SmartLead — "
                          "without it every inbox would look free"}
-    unreadable = bool(active_by_email.pop("__unreadable__", None))
+    # An unreadable active campaign means we do not know who its senders are, so
+    # any mailbox we would call free might be inside it. Say so and stop, rather
+    # than print a number nobody should act on: an earlier version degraded
+    # every unattached inbox to "disputed" instead, which quietly reported
+    # 0 available across the whole fleet and looked like a broken page.
+    if unread:
+        return {"error": "could not read %d active campaign(s) after retries (%s)"
+                         " — refusing to report capacity from an incomplete"
+                         " picture. Try again in a minute; SmartLead was most"
+                         " likely rate-limiting."
+                         % (len(unread), ", ".join(unread[:3]))}
 
     inboxes = _roster(accounts)
     if not inboxes:
@@ -442,8 +615,9 @@ def build(live: bool = True) -> dict:
         i["sent_window"] = sends.get(i["email"], 0)
         i["sent_per_day"] = round(i["sent_window"] / ndays, 1) if ndays else 0
         i["ever_in_campaign"] = i["email"] in ever
-        i["active_campaigns"] = active_by_email.get(i["email"], [])
-        i["state"], i["why"] = _classify(i, active_emails, unreadable, claimed, burned)
+        i["attached"] = active_by_email.get(i["email"], [])
+        i["active_campaigns"] = [c["name"] for c in i["attached"] if c.get("has_work")]
+        i["state"], i["why"] = _classify(i, active_emails, claimed, burned)
 
     # HVAC-branded stock is counted but reported apart from the three tracked
     # verticals: it cannot fill a landscaping or holiday slot without putting the
@@ -502,12 +676,23 @@ def build(live: bool = True) -> dict:
         "measured": bool(ndays),
         "actual_per_day": (round(sum(i["sent_window"] for i in inboxes
                                      if i["niche"] in T) / ndays) if ndays else None),
-        "partial": unreadable,
+        "partial": False,
     })
 
+    clients = client_capacity(inboxes, ndays)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "live": True,
+        "clients": clients,
+        "client_totals": {
+            "clients": len(clients),
+            "inboxes": sum(c["inboxes"] for c in clients),
+            "nameplate_capacity": sum(c["nameplate_capacity"] for c in clients),
+            "usable_capacity": sum(c["usable_capacity"] for c in clients),
+            "actual_per_day": sum(c["actual_per_day"] or 0 for c in clients),
+            "idle_inboxes": sum(c["idle_inboxes"] for c in clients),
+            "idle_capacity": sum(c["idle_capacity"] for c in clients),
+        },
         "warmup_days": WARMUP_DAYS,
         "summary": summary,
         "verticals": verticals,
