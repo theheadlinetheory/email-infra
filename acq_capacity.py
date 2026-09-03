@@ -74,6 +74,22 @@ def _sl_key() -> str:
     return (os.environ.get("SMARTLEAD_API_KEY", "") or os.environ.get("SMARTLEAD_KEY", "")).strip()
 
 
+def _age_days(created_at) -> int | None:
+    """Whole days since a SmartLead `created_at` timestamp, or None if unparseable.
+
+    Used only to drop mailboxes that are still in their initial warm-up ramp from
+    the capacity picture — a brand-new inbox reads as UNASSIGNED (in no campaign
+    yet) and would otherwise be offered as free stock while it is still warming.
+    """
+    if not created_at:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(created_at).replace("Z", "").split(".")[0])
+        return (datetime.now() - dt).days
+    except (ValueError, TypeError):
+        return None
+
+
 def _per_day(ad: dict) -> int:
     """Real per-inbox daily cap, falling back to the fleet default."""
     v = ad.get("message_per_day")
@@ -203,7 +219,8 @@ def _live_account_facts() -> dict:
                               "smtp_ok": bool(a.get("is_smtp_success")),
                               # live group tag — the roster check below needs to
                               # know whether this mailbox is STILL acquisition
-                              "tag": _group_tag(a)}
+                              "tag": _group_tag(a),
+                              "created_at": a.get("created_at")}
         if len(batch) < 100:
             break
         offset += 100
@@ -460,7 +477,8 @@ def _state_order(s: str) -> int:
     return {STRANDED: 0, UNASSIGNED: 1, PARKED: 2, SENDING: 3, BLOCKED: 4}.get(s, 9)
 
 
-def build(live: bool = False, live_accounts: bool | None = None) -> dict:
+def build(live: bool = False, live_accounts: bool | None = None,
+          exclude_warming_days: int = 0) -> dict:
     """The whole acquisition-capacity picture. Read-only.
 
     `live` re-pulls campaign statuses (one call) — cheap, and what every
@@ -469,6 +487,13 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
     seconds); it defaults to `live` for the page's own refresh button but the
     allocation planner turns it off, since it only needs campaign truth and
     would otherwise make "Preview move" take twice as long for no benefit.
+
+    `exclude_warming_days` (>0) drops every inbox created within that many days
+    from the whole picture — capacity denominator included — so a batch still in
+    its warm-up ramp is not counted as spare capacity. Needs the account overlay
+    (created_at rides on it), so it only takes effect when accounts are pulled
+    live; the free-capacity email path passes live=True. Default 0 leaves the
+    dashboard tab's numbers exactly as they were.
     """
     overview, ts = store.cache_get("overview_v2")
     if not overview:
@@ -499,6 +524,22 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
             i["per_day"] = _per_day(f)
             i["esp"] = (f.get("esp") or "").upper() or None
             i["smtp_ok"] = f["smtp_ok"]
+            i["created_at"] = f.get("created_at")
+
+    # Drop the still-warming batch before any roll-up so it never inflates either
+    # the capacity we own or the "free" pool. created_at only exists when accounts
+    # were pulled live; an inbox with no timestamp is assumed established (kept),
+    # which is the safe direction — never silently hides real spare capacity.
+    warming_excluded = 0
+    if exclude_warming_days and exclude_warming_days > 0:
+        kept = []
+        for i in inboxes:
+            age = _age_days(i.get("created_at"))
+            if age is not None and age <= exclude_warming_days:
+                warming_excluded += 1
+            else:
+                kept.append(i)
+        inboxes = kept
 
     health = _health_by_email()
     for i in inboxes:
@@ -531,6 +572,8 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
 
     summary = {
         "inboxes": len(inboxes),
+        "warming_excluded": warming_excluded,
+        "warmup_days_threshold": exclude_warming_days,
         "total_capacity": total_capacity,
         "usable_capacity": usable_capacity,
         "blocked_capacity": blocked_capacity,
@@ -577,6 +620,23 @@ def build(live: bool = False, live_accounts: bool | None = None) -> dict:
     targets = _target_rows(facts, campaigns)
     summary["starved_senders"] = sum(c["wants_senders"] for c in campaigns)
     summary["starved_capacity"] = summary["starved_senders"] * DEFAULT_PER_DAY
+
+    # "Follow-up-only" senders: classified SENDING only because a campaign still
+    # has follow-ups pending while its NEW-lead queue is empty. They send a trickle
+    # (a whole campaign of them may push a dozen mails a day) so they read as spare
+    # capacity, but moving one cuts a live sequence and orphans its replies — which
+    # is why they are NOT counted as free, only surfaced alongside it. An unknown
+    # new-lead count is treated as "still has leads" (excluded), the safe direction.
+    fo_inboxes = fo_capacity = 0
+    for i in inboxes:
+        if i["state"] != SENDING:
+            continue
+        act = [c for c in i["campaigns"] if facts.get(c, {}).get("status") == "ACTIVE"]
+        if act and all(facts.get(c, {}).get("remaining") == 0 for c in act):
+            fo_inboxes += 1
+            fo_capacity += i["per_day"]
+    summary["followup_only_inboxes"] = fo_inboxes
+    summary["followup_only_capacity"] = fo_capacity
 
     return {
         "generated_at": datetime.now().isoformat(),
