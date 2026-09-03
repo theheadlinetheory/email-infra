@@ -642,6 +642,58 @@ def acq_capacity_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/free-capacity")
+def free_capacity_route():
+    """Free acquisition capacity for the daily 7am email (Tim, 2026-09-04).
+
+    'Free' == his exact definition: a warmup-complete inbox that is NOT sending
+    and NOT between sequences in an active campaign that still has work. That is
+    precisely acq_capacity's idle states (stranded / parked / unassigned), with
+    the still-warming batch excluded (?warmup_days=, default 14). Always live so
+    campaign statuses, both lead queues, and created_at are current. Read-only;
+    returns a flat payload the routine can drop straight into an email.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import acq_capacity as ac
+        days = int(request.args.get("warmup_days", 14))
+        rep = ac.build(live=True, exclude_warming_days=days)
+        if rep.get("error"):
+            return _cors(jsonify(rep)), 400
+        s = rep["summary"]
+        free_states = ("stranded", "parked", "unassigned")
+        starved = [{"name": c["name"], "wants_senders": c["wants_senders"],
+                    "remaining": c.get("remaining"), "url": c.get("url")}
+                   for c in rep.get("campaigns", []) if c.get("wants_senders")]
+        out = {
+            "generated_at": rep["generated_at"],
+            "synced_at": rep.get("synced_at"),
+            "warmup_days_threshold": days,
+            "warming_excluded": s.get("warming_excluded", 0),
+            "warmup_complete_inboxes": s["inboxes"],
+            "total_capacity": s["total_capacity"],
+            "usable_capacity": s["usable_capacity"],
+            "deployed_capacity": s["deployed_capacity"],
+            "free_inboxes": s["idle_inboxes"],
+            "free_capacity": s["idle_capacity"],
+            "followup_only_inboxes": s.get("followup_only_inboxes", 0),
+            "followup_only_capacity": s.get("followup_only_capacity", 0),
+            "utilisation_pct": s["utilisation_pct"],
+            "sending_day_pct": s.get("sending_day_pct"),
+            "allocation_pct": s["allocation_pct"],
+            "blocked_inboxes": s["blocked_inboxes"],
+            "actual_per_day": s["actual_per_day"],
+            "free_by_state": {st: s["by_state"].get(st, {"inboxes": 0, "capacity": 0})
+                              for st in free_states},
+            "starved_campaigns": starved[:10],
+        }
+        return _cors(jsonify(out)), 200
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/acq-allocate", methods=["POST", "OPTIONS"])
 def acq_allocate_route():
     """Move acquisition inboxes between campaigns.
