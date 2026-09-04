@@ -21,6 +21,17 @@ RESERVE_MARK = "(generic reserve)"
 BURNED = "burned"
 AT_RISK = "at_risk"
 
+# Inboxes retired by hand carry a SmartLead tag instead of a client group, and the
+# overview surfaces that tag in the `client` field. Their live metrics are whatever
+# they were when someone pulled them, so the scorer almost never calls them burned —
+# which used to keep the entire hand-retired fleet out of this view. The tag IS the
+# decision, so it counts as burned regardless of what the 3-day numbers say.
+TAG_BURNED_CLIENTS = {"Retired - burned", "Burnt Acquisition"}
+
+
+def _tag_burned(r: dict) -> bool:
+    return r.get("client") in TAG_BURNED_CLIENTS
+
 
 def _source_of(client: str) -> str:
     if client == ACQ_MARK:
@@ -85,11 +96,17 @@ def domain_view() -> dict:
         # is IDLE now — its bounce/reply are just stale metrics; it doesn't need
         # reallocating and the domain shouldn't be cancel-flagged just because it
         # stopped sending. Those show as idle in the All-inboxes view, not here.
-        burned = [r for r in rows if r.get("status") == BURNED and _active(r.get("campaigns"))]
+        # Hand-retired inboxes count whether or not they're still in an active
+        # campaign: someone already decided they're done, so the domain needs a
+        # decision even when the tag never stopped the sender.
+        burned = [r for r in rows
+                  if _tag_burned(r)
+                  or (r.get("status") == BURNED and _active(r.get("campaigns")))]
         if not burned:
-            continue  # no actively-sending burned inbox on this domain — skip
-        at_risk = [r for r in rows if r.get("status") == AT_RISK]
-        healthy = [r for r in rows if r.get("status") not in (BURNED, AT_RISK)]
+            continue  # nothing burned on this domain — skip
+        at_risk = [r for r in rows if r.get("status") == AT_RISK and not _tag_burned(r)]
+        healthy = [r for r in rows
+                   if r.get("status") not in (BURNED, AT_RISK) and not _tag_burned(r)]
         niche = hr._niche(dom)
         clients = sorted({r.get("client") for r in rows if r.get("client")})
         source = _source_of(clients[0]) if len(clients) == 1 else (
@@ -102,7 +119,8 @@ def domain_view() -> dict:
             active = _active(camps)
             return {
                 "email": r.get("email"),
-                "status": r.get("status"),
+                "status": BURNED if _tag_burned(r) else r.get("status"),
+                "burn_source": "tag" if _tag_burned(r) else "metrics",
                 "client": r.get("client"),
                 "in_campaign": bool(active),           # in an ACTIVE (sending) campaign
                 "active_campaigns": active,
