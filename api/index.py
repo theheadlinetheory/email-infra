@@ -623,6 +623,26 @@ def health_domains():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/campaign-senders")
+def campaign_senders_route():
+    """ACTIVE campaigns with no senders left, and the ones heading that way.
+
+    A campaign with zero senders stays ACTIVE and reports clean — it just sends
+    nothing — so it never surfaces in any inbox- or capacity-based roll-up. Reads
+    live from SmartLead (one call per active campaign, ~35) and cross-checks the
+    Zapmail removal registry, so a campaign whose remaining senders are all on
+    already-scheduled domains is flagged BEFORE their billing dates land."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import campaign_senders as cs
+        res = cs.build()
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/acq-capacity")
 def acq_capacity_route():
     """Acquisition sending capacity vs actual usage, and which inboxes are idle.
