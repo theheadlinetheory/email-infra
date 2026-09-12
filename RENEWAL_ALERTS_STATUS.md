@@ -43,9 +43,10 @@ Re-apply by hand if lost; each is additive and self-contained:
 2. **Term must come from the CRM onboarding form**, not `DEFAULT_TERM_MONTHS = 3`. Terms are
    2/3/4 (a 7 was pitched), always whole months. Tim now fills that form on deal close.
 3. **Season close should be 25 Dec, not 31 Dec** — Christmas is the real end of lighting.
-4. **`SCHEDULE_BUFFER_DAYS = 3` is a guess.** Zapmail will not stop the current cycle if you
-   cancel too close to the billing date; the true cutoff is unknown and Tim is asking them
-   in writing. Everything downstream of this date is provisional.
+4. ~~`SCHEDULE_BUFFER_DAYS = 3` is a guess.~~ **RESOLVED 2026-09-13** — Zapmail confirmed a
+   cancellation filed even **1 day** before the billing date still optimises that cycle.
+   There is no long cut-off. Set to 2 days as operational slack only. Hard-stop dates are
+   no longer provisional.
 5. **Cost model is mailbox-only.** The 2026-09-12 audit shows domain renewals are a second
    ~$22k/yr bill, and per-mailbox removal does **not** reduce the Zapmail bill — the unit of
    cancellation is the domain. `removal_plan()`'s "unpick" pile saves nothing; hard-stop maths
@@ -56,3 +57,31 @@ Re-apply by hand if lost; each is additive and self-contained:
 Confirmed terms to load once (1) and (2) land: Galaxy 3mo, McFarlane Douglass 3mo,
 Wonderly 2mo (bi-weekly), Landry's / Merry & Bright / Mary & Brite's prepaid in full.
 From The Ground Up has churned.
+
+## Added 2026-09-13 — `domain_expiry_alert.py`
+
+The audit called this "the single highest-value thing to build" and it is now
+written. It joins the two signals that were already pulled daily but never
+compared:
+
+* registrar (Spaceship + Porkbun) — auto-renew OFF, expiring within 7/30/90 days
+* SmartLead — this domain's mailboxes are on an **ACTIVE** campaign
+
+and alerts when both are true. It also reports the mirror case, auto-renew ON on
+a domain with zero mailboxes.
+
+Why it exists: on 2026-09-13, 23 domains carrying **69 live senders on active
+campaigns** were set to lapse with auto-renew off, one of them five days out.
+Total cost to keep all 23 was **$244**. Nobody decided that — auto-renew gets
+switched off during an off-boarding while a domain looks empty, its inboxes are
+later recycled to a live client, and nothing re-checks.
+
+Verified against live registrars: 1,307 domains (1,055 Spaceship / 252 Porkbun),
+798 auto-renew on / 509 off, 229 expiring within 90 days.
+
+Wired into the daily `health-snapshot` cron and exposed at `/api/domain-expiry`
+(`?alert=1` to see the Slack text). Both touch points are in `api/index.py`,
+which is NOT committed here because that file carries other sessions' work.
+
+**Never read a renewal flag from Zapmail** — `autoRenew` is `false` on all 897
+domains and means nothing. The registrar is the only real switch.

@@ -72,7 +72,12 @@ import retainers
 COST_PER_MAILBOX = 3        # ~$3/mo per Zapmail Google Workspace mailbox
 WARMUP_DAYS = 14            # inboxes cannot send for their first 14 days
 DEFAULT_TERM_MONTHS = 3     # "it's usually on like a three-month agreement"
-SCHEDULE_BUFFER_DAYS = 3    # file the scheduled removal this far before it lands
+SCHEDULE_BUFFER_DAYS = 2    # operational slack only — Zapmail confirmed 2026-09-13
+                            # that a cancellation filed even 1 day before the
+                            # billing date still optimises that cycle. The buffer
+                            # guards against API latency and human slippage, not
+                            # against a billing cut-off (there isn't one). Being a
+                            # day late costs a whole cycle — they never refund.
 DECISION_LEAD_DAYS = 7      # answer required this far before the engagement ends
 NOTICE_DAYS = (7, 3, 1)     # countdown touches before decision_by
 

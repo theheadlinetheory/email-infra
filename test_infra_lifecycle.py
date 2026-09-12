@@ -95,7 +95,9 @@ class SeasonalScenario(unittest.TestCase):
         # Billing anchor is the 18th, so the last cycle runs 03-18 -> 04-18.
         r = self.row()
         self.assertEqual(r["hard_stop"], "2026-04-18")
-        self.assertEqual(r["schedule_by"], "2026-04-15")
+        # 2 days of operational slack, not a billing cut-off — Zapmail confirmed
+        # a cancellation filed 1 day out still optimises that cycle.
+        self.assertEqual(r["schedule_by"], "2026-04-16")
 
     def test_the_third_cycle_is_the_one_aidan_is_paying_for(self):
         # 01-18, 02-18, 03-18 = three cycles bought to deliver two months.
@@ -273,7 +275,7 @@ class MultipleCohorts(unittest.TestCase):
         # The client-level hard stop is the LAST one — nothing is gone before it.
         self.assertEqual(r["hard_stop"], "2026-12-28")
         # ...but the schedule deadline is driven by the FIRST one to bill.
-        self.assertEqual(r["schedule_by"], "2026-12-19")
+        self.assertEqual(r["schedule_by"], "2026-12-20")
 
 
 class FailLoud(unittest.TestCase):
