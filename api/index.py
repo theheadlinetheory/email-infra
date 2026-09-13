@@ -246,7 +246,7 @@ def health_snapshot():
     # message is missed the slots bill forever and nothing says so.
     try:
         import billing_followup as bf
-        out["billing_followup"] = bf.post(bf.outstanding(), dry_run=False)
+        out["billing_followup"] = bf.post(dry_run=False)
     except Exception as be:
         out["billing_followup"] = {"error": str(be)}
     return _cors(jsonify(out)), status
@@ -1829,9 +1829,9 @@ def billing_followup_route():
             if isinstance(ack, list):
                 return _cors(jsonify(bf.acknowledge(ack)))
             return _cors(jsonify({"error": "pass {\"ack\": true} or a list"})), 400
-        board = bf.outstanding()
+        board = bf.reconcile()
         if request.args.get("nudge") == "1":
-            board["nudge_text"] = bf.format_nudge(board) if board["count"] else None
+            board["nudge_text"] = bf.format_nudge(board)
         return _cors(jsonify(board))
     except Exception as e:
         return _cors(jsonify({"error": str(e)})), 500
