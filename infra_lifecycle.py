@@ -811,6 +811,20 @@ def notices(board: dict) -> list[dict]:
         # month-to-month client would otherwise page Aidan every single month.
         if d is None or r["decision"] == "renew" or r["phase"] not in ("committed", "ended"):
             continue
+        # A churned client has no renewal to decide. Their row still carries a
+        # decision_by because those dates fall out of the mailbox cohorts
+        # whether or not anyone is still a client, but counting down to it
+        # pages Aidan about somebody who already left — and the date is built
+        # on "assumed 3mo term", a fallback guess, not an agreement anyone
+        # made. Urban Growth Gardening Services (CRM status inactive, churned,
+        # 3 mailboxes, $9/mo) was two days from firing a T-1 notice when this
+        # was found. Their infrastructure is a cleanup task; `orphans` in the
+        # same board already reports it as one.
+        #
+        # A live client with no CRM row would also be caught here, which is
+        # what the `status: "active"` override exists for — see OVERRIDE_KEY.
+        if r.get("status") != "active":
+            continue
         if d in NOTICE_DAYS:
             out.append({"client": r["client"], "touch": f"T-{d}", "row": r,
                         "text": _notice_text(r, d)})
