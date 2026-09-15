@@ -174,9 +174,43 @@ def format_nudge(board: dict) -> str | None:
         if len(bydom) > 15:
             out.append(f"    …and {len(bydom) - 15} more domains.")
         out.append("")
-    out.append("Ask Zapmail to optimise the subscription quantity. This check runs "
-               "daily and stops on its own once billed matches actual — no manual "
-               "tick required.")
+    # The message itself, ready to paste. Zapmail does not reduce the
+    # subscription quantity on its own — a scheduled removal stops the mailbox
+    # existing and nothing else — so a human has to ask, every time a batch
+    # drops off. Making the reader compose that ask from the numbers above is
+    # the step where it gets postponed and then missed, which is exactly how
+    # an earlier batch stayed billed. So the alert carries the finished text.
+    out.append("*Copy this to Zapmail:*")
+    out.append("```")
+    out.append("Hi,")
+    out.append("")
+    out.append("We've removed a batch of mailboxes and they're now gone from "
+               "the workspace, so we'd like the billing optimised.")
+    out.append("")
+    for p in board["per_provider"]:
+        if p["gap"] > 0:
+            out.append(f"{p['provider'].title()} plan:")
+            out.append(f"  - Currently billed: {p['billed']} mailbox slots")
+            out.append(f"  - Actual mailboxes: {p['actual']}")
+            out.append(f"  - To be released: {p['gap']} slots")
+            out.append(f"  Please reduce the billed quantity to {p['actual']}.")
+            out.append("")
+    matched = [p for p in board["per_provider"] if p["gap"] <= 0 and p["billed"]]
+    for p in matched:
+        out.append(f"Our {p['provider'].title()} plan is already correct at "
+                   f"{p['billed']} billed / {p['actual']} actual — no change needed there.")
+    if matched:
+        out.append("")
+    out.append("Could you confirm once it's applied, and let me know whether "
+               "these slots are credited or prorated for the current period?")
+    out.append("")
+    out.append("Thanks,")
+    out.append("Tim")
+    out.append("```")
+    out.append("")
+    out.append("This check runs daily and stops on its own once billed matches "
+               "actual — no manual tick required. Expect it again as each "
+               "cancelled batch reaches its own billing date.")
     return "\n".join(out)
 
 
