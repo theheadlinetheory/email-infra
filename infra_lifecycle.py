@@ -93,6 +93,7 @@ NOTICE_DAYS = (7, 3, 1)     # countdown touches before decision_by
 OVERRIDE_KEY = "infra_lifecycle_overrides"   # {client: {term_months, effective_end, seasonal, vertical, status}}
 DECISION_KEY = "infra_lifecycle_decisions"   # {client: {decision, set_at, set_by, note}}
 PENDING_MSG_KEY = "infra_lifecycle_pending_msgs"
+HEARTBEAT_KEY = "infra_lifecycle_last_run"
 
 # Slack. This countdown gets its OWN webhook on purpose: the shared alerts
 # channel is too busy for a message whose whole value is that it is not missed.
@@ -894,6 +895,60 @@ def post_slack(text: str) -> str:
     except Exception:
         pass
     return "queued"
+
+
+def _write_heartbeat(payload: dict) -> None:
+    """Leave a trace of this run where it can be read without the dashboard password."""
+    try:
+        import db as store
+        store._request("POST", "/state",
+                       json_body={"key": HEARTBEAT_KEY,
+                                  "data": json.dumps(payload),
+                                  "updated_at": datetime.now().isoformat()},
+                       headers={"Prefer": "resolution=merge-duplicates"})
+    except Exception:
+        pass
+
+
+def last_run() -> dict:
+    """The most recent run's outcome: {ok, at, rows, notices, error}."""
+    return _state(HEARTBEAT_KEY, {}) or {}
+
+
+def run_daily() -> dict:
+    """Build the board, send today's touches, and record what happened either way.
+
+    WHY THIS WRAPPER EXISTS. Between 2026-09-11 and 2026-09-16 this module
+    raised on every single run: CRM_SUPABASE_KEY was unset on Vercel, so
+    fetch_crm_clients fell back to the anon key, which returns 200 with zero
+    rows, which the zero-row guard correctly refuses to treat as "no clients".
+    The caller's try/except folded that into a JSON field on an authenticated
+    response nobody reads. The countdown was dead for five days and the channel
+    just looked quiet.
+
+    That is the trap in any countdown: silence is what it looks like when
+    nothing is due, and silence is also what it looks like when it is broken.
+    So a failure now pages the same people the notices would have, and every
+    run — pass or fail — leaves a heartbeat in state that can be read with the
+    ordinary Supabase key.
+    """
+    started = datetime.now().isoformat(timespec="seconds")
+    try:
+        board = build()
+    except Exception as e:
+        _write_heartbeat({"ok": False, "at": started, "stage": "build",
+                          "error": f"{type(e).__name__}: {e}"})
+        post_slack(":rotating_light: *The infrastructure decision countdown did not "
+                   f"run today* — it could not build the board: `{type(e).__name__}: {e}`\n"
+                   "No client deadline was checked. This is silent by default, which is "
+                   "why it is being said out loud.")
+        return {"ok": False, "error": str(e)}
+    res = post_notices(board, dry_run=False)
+    _write_heartbeat({"ok": True, "at": started,
+                      "rows": len(board.get("rows") or []),
+                      "notices": res.get("count", 0),
+                      "sent": res.get("sent", 0), "queued": res.get("queued", 0)})
+    return res
 
 
 def post_notices(board: dict, dry_run: bool = True) -> dict:
