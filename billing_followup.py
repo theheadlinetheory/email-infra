@@ -53,7 +53,17 @@ from collections import defaultdict
 COST_PER_MAILBOX = 3
 REG_KEY = "zm_removal_registry"
 PROVIDERS = ("GOOGLE", "MICROSOFT")
-NOTIFY_MEMBER_IDS = ("U09B2673A4A",)
+# Nobody is @-mentioned here. This chase is Tim's — he is the one who
+# messages Zapmail — and Aidan asked to be taken off it on 2026-09-15:
+# "Bro you dont need to be concerned about this / I will take care of it /
+# I think I should remove your ping". The alert still posts to the channel,
+# so nothing is lost; it just stops paging someone who cannot action it.
+#
+# Deliberately NOT shared with infra_lifecycle.py or domain_expiry_alert.py,
+# which keep their own copies: the decision countdown MUST tag Aidan, since
+# he is the one who decides whether a client renews, and being tagged 7/3/1
+# days out is the entire point of #infra-renewals.
+NOTIFY_MEMBER_IDS: tuple[str, ...] = ()
 SLACK_WEBHOOK_VARS = ("SLACK_ZAPMAIL_WEBHOOK", "SLACK_INFRA_DECISIONS_WEBHOOK",
                       "SLACK_WEBHOOK_URL")
 
@@ -155,7 +165,8 @@ def format_nudge(board: dict) -> str | None:
     if board["reconciled"]:
         return None
     men = " ".join(f"<@{u}>" for u in NOTIFY_MEMBER_IDS)
-    out = [f"{men} 💸 *Zapmail is billing for {board['gap']} mailboxes that no longer "
+    lead = f"{men} " if men else ""
+    out = [f"{lead}💸 *Zapmail is billing for {board['gap']} mailboxes that no longer "
            f"exist* — ${board['monthly_cost']}/mo, ${board['annual_cost']:,}/yr.", ""]
     for p in board["per_provider"]:
         if p["gap"] > 0:
