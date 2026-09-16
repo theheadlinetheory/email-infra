@@ -228,7 +228,10 @@ def health_snapshot():
     # outage cannot take the health snapshot down with it.
     try:
         import infra_lifecycle as ilc
-        out["infra_lifecycle"] = ilc.post_notices(ilc.build(), dry_run=False)
+        # run_daily records a heartbeat and alerts Slack on failure. The bare
+        # post_notices(build()) this replaced put its exception in this dict
+        # and nowhere else, which hid a five-day outage.
+        out["infra_lifecycle"] = ilc.run_daily()
     except Exception as le:
         out["infra_lifecycle"] = {"error": str(le)}
 
