@@ -197,6 +197,53 @@ def _is_vercel_cron():
     return bool(request.headers.get("x-vercel-cron"))
 
 
+
+@app.route("/api/invariants")
+def invariants_route():
+    """The last stored run, with its age. `?refresh=1` recomputes.
+
+    The refresh deliberately SKIPS the campaign scan: it is 130 of the 210
+    seconds a full check takes, and Vercel stops a function at 300. The daily
+    cron does the complete one. The response says which it was, because a
+    result whose provenance is unstated is how a day-old cache gets read as
+    live — see /api/overview.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import check_invariants as civ
+    try:
+        if request.args.get("refresh"):
+            payload = civ.run_and_store(want_campaigns=False)
+        else:
+            payload = civ.load_result()
+            if not payload:
+                return _cors(jsonify({
+                    "error": "no run stored yet — add ?refresh=1, or wait for "
+                             "the daily cron"})), 404
+        gen = payload.get("generated_at")
+        age = None
+        if gen:
+            import datetime as _dt
+            try:
+                t = _dt.datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=_dt.timezone.utc)
+                age = int((_dt.datetime.now(_dt.timezone.utc) - t).total_seconds())
+            except ValueError:
+                pass
+        payload["age_seconds"] = age
+        payload["stale"] = (age is not None and age > 26 * 3600)
+        return _cors(jsonify(payload))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()[-800:]})), 500
+
+
+@app.route("/invariants")
+@app.route("/invariants.html")
+def invariants_page():
+    return send_from_directory(_PUBLIC_DIR, "invariants.html")
+
+
 @app.route("/api/health-snapshot", methods=["GET", "POST", "OPTIONS"])
 def health_snapshot():
     """Run today's snapshot: score the fleet from the cache, persist. Daily cron (GET)."""
@@ -243,6 +290,16 @@ def health_snapshot():
         out["domain_expiry"] = dea.post(dea.build(), dry_run=False)
     except Exception as de:
         out["domain_expiry"] = {"error": str(de)}
+
+    # The ten rules (docs/INFRA_RULES.md). Computed here because the full
+    # check takes ~210s — fine inside a 300s cron, impossible on a page load —
+    # and stored so /api/invariants can answer instantly with a timestamp.
+    try:
+        import check_invariants as civ
+        r = civ.run_and_store(want_campaigns=True)
+        out["invariants"] = {"counts": r.get("counts"), "stored": r.get("stored")}
+    except Exception as ie:
+        out["invariants"] = {"error": str(ie)}
 
     # Chase the Zapmail billing optimisation until it is actually done.
     # check_removals alerts ONCE and marks the entry notified; if that single

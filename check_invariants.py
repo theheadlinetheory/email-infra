@@ -32,7 +32,11 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 # (57 x 15/day = 855/day) instead of the standard 42 (630/day).
 SEASONAL_TARGET, STANDARD_TARGET = 57, 42
 RESERVE_CEILING = 84          # Generic Landscaping 1 + 2, 42 each
-REPLACEMENT_CEILING = 42      # a separate pool, for swapping burned inboxes
+REPLACEMENT_CEILING = 45      # a separate pool, for swapping burned inboxes.
+                              # Raised from 42 to 45 on 2026-09-18: the three
+                              # inboxes on landscapeservicehq.co were kept
+                              # deliberately rather than cancelled. Raising a
+                              # ceiling is a decision; drifting past one is not.
 EXPIRY_WINDOW_DAYS = 45
 
 RESERVE_TAGS = ("Generic Landscaping 1", "Generic Landscaping 2")
@@ -267,7 +271,12 @@ def rule_5_crm_rows(s) -> Result:
             bad.append(f"{tag}: CRM row has no launch_date")
         # Only a retainer client has a term; a per-lead client is billed per
         # lead and has no renewal date to count down to.
+        # A month-to-month client has no initial term — Denair has run on a
+        # rolling monthly retainer for a long time with no fixed end. Demanding
+        # one would invent a deadline, which is the failure rule 5 exists to
+        # prevent, pointed the other way.
         if (row.get("billing_model") == "retainer"
+                and (row.get("agreement_type") or "") != "month_to_month"
                 and not is_free_account(row)
                 and not row.get("initial_term_length")
                 and not row.get("prepaid_months")):
@@ -518,6 +527,61 @@ def collect(want_campaigns: bool = True) -> dict:
         except Exception as e:
             snap["errors"]["campaigns"] = str(e)
     return snap
+
+
+# ── storage ───────────────────────────────────────────────────────────────────
+
+RESULT_KEY = "invariants_last_run"
+
+
+def summarise(results, snap) -> dict:
+    """The stored shape. Small enough to serve instantly, complete enough that
+    the page never needs to recompute anything."""
+    return {
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "active_campaigns": snap.get("active_campaigns"),
+        "sources_unavailable": sorted((snap.get("errors") or {})),
+        "counts": dict(Counter(r.status for r in results)),
+        "results": [r.as_dict() for r in results],
+    }
+
+
+def store_result(payload: dict) -> bool:
+    try:
+        import db as store
+        store._request("POST", "/state",
+                       json_body={"key": RESULT_KEY, "data": json.dumps(payload),
+                                  "updated_at": payload.get("generated_at")},
+                       headers={"Prefer": "resolution=merge-duplicates"})
+        return True
+    except Exception:
+        return False
+
+
+def load_result() -> dict | None:
+    """The last stored run, or None. The caller shows its age: a result with no
+    timestamp beside it is how the Clients tab came to be a day stale without
+    anyone noticing."""
+    try:
+        import db as store
+        rows = store._request("GET", "/state",
+                              params={"select": "data", "key": f"eq.{RESULT_KEY}"})
+        if rows:
+            return json.loads(rows[0]["data"])
+    except Exception:
+        pass
+    return None
+
+
+def run_and_store(want_campaigns: bool = True) -> dict:
+    """Compute and persist. Called by the daily cron with the campaign scan,
+    and on demand without it — that scan is 130 of the 210 seconds a full run
+    takes, and Vercel's ceiling is 300."""
+    snap = collect(want_campaigns=want_campaigns)
+    payload = summarise(check(snap), snap)
+    payload["scanned_campaigns"] = bool(want_campaigns)
+    payload["stored"] = store_result(payload)
+    return payload
 
 
 def render(results, snap) -> str:

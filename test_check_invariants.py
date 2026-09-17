@@ -212,6 +212,20 @@ class RegressionsFromTheFirstLiveRun(unittest.TestCase):
         self.assertFalse(ci.is_free_account(
             {"monthly_retainer": 2000, "monthly_update_enabled": True}))
 
+    def test_month_to_month_clients_need_no_contract_term(self):
+        # Denair: a rolling monthly retainer with no fixed end. Demanding a
+        # term would invent a deadline nobody agreed to.
+        s = {"accounts": fleet("Denair Hvac, Inc.", 42),
+             "crm": [client("Denair Hvac, Inc.", agreement_type="month_to_month",
+                            initial_term_length=None, prepaid_months=None)]}
+        self.assertEqual(ci.rule_5_crm_rows(s).status, ci.PASS)
+
+    def test_a_fixed_term_client_still_needs_one(self):
+        s = {"accounts": fleet("Acme", 42),
+             "crm": [client("Acme", agreement_type="prepaid",
+                            initial_term_length=None, prepaid_months=None)]}
+        self.assertEqual(ci.rule_5_crm_rows(s).status, ci.FAIL)
+
     def test_per_lead_clients_need_no_contract_term(self):
         s = {"accounts": fleet("Airlast", 42),
              "crm": [client("Airlast", billing_model="per_lead",
