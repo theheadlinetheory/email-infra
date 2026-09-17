@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import time
 import os
 import re
 from datetime import date, datetime, timedelta
@@ -118,14 +119,16 @@ OPERATIONAL_BUCKET_RE = re.compile(
 
 # How many spare inboxes we are willing to hold with no client attached.
 #
-# Roughly one client's worth — enough to re-stand the largest allocation (57)
-# or to replace burned inboxes across the fleet. Past that it is stock nobody
+# TWO clients' worth. The pool is deliberately "Generic Landscaping 1" and
+# "Generic Landscaping 2", 42 each, held for the next two clients we sign.
+# Replacing burned inboxes comes out of a SEPARATE "Replacement Group", which
+# is not counted here. Past 84 it is stock nobody
 # ordered: the Sep-2026 audit found this pool had grown 40 -> 453 in five weeks
 # because off-boarding a client RECYCLED its inboxes instead of cancelling
 # them, so the bill never moved and the spend just stopped being attributable
 # to anyone. Acquisition is excluded — that is our own prospecting, a
 # deliberate spend with its own budget, not idle stock.
-RESERVE_CEILING = 57
+RESERVE_CEILING = 84
 
 # Verticals whose value dies on a calendar date regardless of contract length.
 # `season_end` is (month, day) — the last day the work is sellable.
@@ -750,6 +753,72 @@ def _urgency(days, outcome, phase):
     return ""
 
 
+_TAG_DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+
+
+def fetch_smartlead_tags() -> dict:
+    """email -> its one client tag, straight from SmartLead.
+
+    WHY NOT THE HEALTH TABLE. `health_status` is written by a sync that only
+    refreshes inboxes it happens to look at, so a just-re-tagged inbox keeps a
+    stale owner and one that has never been on a campaign is missing entirely.
+    That is exactly the population this module reports on. On 2026-09-17 it
+    named Urban Growth as holding 3 inboxes — health rows 15 days old, re-tagged
+    hours earlier — and reported Landy Rose as having none when she has 18, she
+    simply had no health rows at all. Tags are what we actually set, so read
+    those and keep health only as the fallback.
+
+    Returns {} if the call fails: a stale owner beats no owners, which would
+    rename every client to "(untagged)" in a single run.
+    """
+    import requests
+    key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
+    if not key:
+        return {}
+    out, offset = {}, 0
+    while True:
+        # Smartlead's 800/min cap is account-wide and shared with every other
+        # job on this cron, so a 429 mid-walk is routine rather than fatal.
+        # Give up only after backing off — bailing on the first one silently
+        # hands the whole run back to the stale health table, which is the
+        # thing this function exists to stop relying on.
+        r = None
+        for attempt in range(5):
+            try:
+                r = requests.get("https://server.smartlead.ai/api/v1/email-accounts",
+                                 params={"api_key": key, "limit": 100, "offset": offset},
+                                 timeout=60)
+            except requests.RequestException:
+                r = None
+            if r is not None and r.status_code == 200:
+                break
+            time.sleep(6 * (attempt + 1))
+        if r is None or r.status_code != 200:
+            return {}
+        try:
+            rows = r.json()
+        except ValueError:
+            return {}
+        if not isinstance(rows, list) or not rows:
+            break
+        for a in rows:
+            email = (a.get("from_email") or "").lower()
+            if not email:
+                continue
+            for t in (a.get("tags") or []):
+                name = (t.get("tag_name") or t.get("name") or "").strip()
+                # Skip the Zapmail marker and M/D/YY warm-up tags — neither
+                # names a client.
+                if name and name != "Zapmail" and not _TAG_DATE_RE.match(name):
+                    out[email] = name
+                    break
+        if len(rows) < 100:
+            break
+        offset += 100
+        time.sleep(1.1)
+    return out
+
+
 def build(today: date | None = None) -> dict:
     """The whole board: one row per client that has infrastructure."""
     today = today or date.today()
@@ -763,11 +832,13 @@ def build(today: date | None = None) -> dict:
     mailboxes = inv["mailboxes"]
 
     health = {r["email"]: r for r in store.get_health_status_all()}
+    sl_tags = fetch_smartlead_tags()
 
     # email -> owning client bucket, and domain -> the clients sitting on it
     by_bucket, dom_clients, dom_mailboxes = {}, {}, {}
     for email, mb in mailboxes.items():
-        owner = (health.get(email) or {}).get("client") or "(untagged)"
+        owner = (sl_tags.get(email) or (health.get(email) or {}).get("client")
+                 or "(untagged)")
         rec = dict(mb, email=email, bucket=owner)
         by_bucket.setdefault(owner, []).append(rec)
         dom_clients.setdefault(mb.get("domain"), set()).add(owner)
@@ -918,7 +989,7 @@ def _mentions() -> str:
     return " ".join(f"<@{uid}>" for uid in NOTIFY_MEMBER_IDS)
 
 
-def post_slack(text: str) -> str:
+def post_slack(text: str, mention: bool = True) -> str:
     """Post one notice, tagging whoever has to make the call.
 
     Returns 'webhook' or 'queued'. Queueing (rather than dropping) matters here:
@@ -926,7 +997,7 @@ def post_slack(text: str) -> str:
     so it is parked in state for a session to flush via the Slack MCP.
     """
     import requests
-    body = f"{_mentions()} {text}".strip() if NOTIFY_MEMBER_IDS else text
+    body = f"{_mentions()} {text}".strip() if (mention and NOTIFY_MEMBER_IDS) else text
     for var in SLACK_WEBHOOK_VARS:
         hook = (os.environ.get(var) or "").strip()
         if not hook:
@@ -997,15 +1068,24 @@ def unowned_infra(board: dict) -> list[str]:
                    "match their CRM name.")
 
     # 4. Spare stock above the ceiling, and inboxes belonging to nobody.
+    # Count the reserve from BOTH places a bucket can land. Once owners are
+    # read from Smartlead tags, "Generic Landscaping 1/2" are client-shaped
+    # names, so they stop appearing in `pools` (which only holds the hard-coded
+    # NON_CLIENT_BUCKETS) and show up as orphans instead. Reading only `pools`
+    # silently made the ceiling unenforceable.
     pools = board.get("pools") or {}
-    reserve = sum(v.get("mailboxes", 0) for k, v in pools.items()
+    sizes = {k: v.get("mailboxes", 0) for k, v in pools.items()}
+    for o in (board.get("orphans") or []):
+        sizes[str(o.get("client") or "")] = (sizes.get(str(o.get("client") or "")) or 0) \
+            + (o.get("mailboxes") or 0)
+    reserve = sum(n for k, n in sizes.items()
                   if "reserve" in k.lower() or "generic" in k.lower())
     if reserve > RESERVE_CEILING:
         over = reserve - RESERVE_CEILING
         out.append(f"Reserve pool is {reserve} inboxes, {over} over the {RESERVE_CEILING} "
                    f"ceiling — ${over * COST_PER_MAILBOX * 12:,}/yr of stock nobody "
                    "ordered. Cancel the excess or raise the ceiling deliberately.")
-    untagged = sum(v.get("mailboxes", 0) for k, v in pools.items() if "untagged" in k.lower())
+    untagged = sum(n for k, n in sizes.items() if "untagged" in k.lower())
     if untagged:
         out.append(f"{cost(untagged)} carry no client tag at all — they belong to "
                    "nobody and are invisible to every per-client rollup.")
@@ -1021,7 +1101,10 @@ def post_unowned(board: dict, dry_run: bool = True) -> dict:
             + "\n".join(f"   \u2022 {l}" for l in lines))
     if dry_run:
         return {"dry_run": True, "count": len(lines), "text": body}
-    return {"count": len(lines), "result": post_slack(body)}
+    # No @-mention. Every line here is Tim's to fix — a CRM row, a tag, a pool
+    # trim — and none of it is a decision Aidan makes. The countdown notices
+    # still tag him, because those ARE his call and missing one costs a month.
+    return {"count": len(lines), "result": post_slack(body, mention=False)}
 
 
 def _write_heartbeat(payload: dict) -> None:

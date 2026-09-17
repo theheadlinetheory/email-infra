@@ -391,13 +391,35 @@ class UnownedInfraTests(unittest.TestCase):
 
     def test_operational_buckets_are_not_clients(self):
         # These legitimately have no CRM row — they are where inboxes wait.
-        # Reporting them daily would bury the one line that is a real client.
+        # Reporting them as an unregistered CLIENT would bury the one line that
+        # is a real one. They may still trip the reserve ceiling or the
+        # untagged count; that is a different, wanted signal, so this asserts
+        # on the ghost message rather than on silence.
         for name in ("Cleanup 2026-09", "Replacement Group", "Generic Landscaping 2",
                      "(acquisition)", "Retired - burned", "Burnt Acquisition",
                      "Premium Inboxes", "(untagged)"):
             out = il.unowned_infra(self.board(
                 orphans=[{"client": name, "status": None, "mailboxes": 431}]))
-            self.assertEqual(out, [], f"{name} should not be reported as a client")
+            self.assertFalse([l for l in out if "no CRM row" in l],
+                             f"{name} should not be reported as a client")
+
+    def test_an_oversized_generic_pool_still_trips_the_ceiling(self):
+        # The counterpart to the above: not a client, but 431 spare inboxes is
+        # exactly the 40 -> 453 drift this whole alarm exists to catch.
+        out = il.unowned_infra(self.board(
+            orphans=[{"client": "Generic Landscaping 2", "status": None, "mailboxes": 431}]))
+        self.assertTrue([l for l in out if "ceiling" in l])
+
+    def test_reserve_counts_orphan_buckets_too(self):
+        # Owners now come from Smartlead tags, so "Generic Landscaping 1/2" are
+        # client-shaped names and land in `orphans`, not `pools`. Counting only
+        # `pools` made the ceiling silently unenforceable.
+        board = self.board(orphans=[
+            {"client": "Generic Landscaping 1", "status": None, "mailboxes": 42},
+            {"client": "Generic Landscaping 2", "status": None, "mailboxes": 42}])
+        self.assertEqual([l for l in il.unowned_infra(board) if "ceiling" in l], [])
+        board["orphans"][1]["mailboxes"] = 50
+        self.assertTrue([l for l in il.unowned_infra(board) if "8 over the 84" in l])
 
     def test_churned_client_still_holding_infra(self):
         out = il.unowned_infra(self.board(
