@@ -108,6 +108,25 @@ NOTIFY_MEMBER_IDS = ("U09B2673A4A",)
 NON_CLIENT_BUCKETS = {"(acquisition)", "(generic reserve)", "burnt acquisition",
                       "retired - burned", "rock pave"}
 
+# Operational holding buckets. These legitimately have no CRM row — they are
+# where inboxes wait between clients — so they must never be mistaken for a
+# live client nobody registered. Matched on the first word so a dated bucket
+# ("Cleanup 2026-09") or a numbered one ("Generic Landscaping 2") still counts.
+OPERATIONAL_BUCKET_RE = re.compile(
+    r"^\s*[\(]?\s*(cleanup|replacement|generic|acquisition|retired|burnt|premium|reserve|untagged)\b",
+    re.I)
+
+# How many spare inboxes we are willing to hold with no client attached.
+#
+# Roughly one client's worth — enough to re-stand the largest allocation (57)
+# or to replace burned inboxes across the fleet. Past that it is stock nobody
+# ordered: the Sep-2026 audit found this pool had grown 40 -> 453 in five weeks
+# because off-boarding a client RECYCLED its inboxes instead of cancelling
+# them, so the bill never moved and the spend just stopped being attributable
+# to anyone. Acquisition is excluded — that is our own prospecting, a
+# deliberate spend with its own budget, not idle stock.
+RESERVE_CEILING = 57
+
 # Verticals whose value dies on a calendar date regardless of contract length.
 # `season_end` is (month, day) — the last day the work is sellable.
 SEASONAL_VERTICALS = {
@@ -897,6 +916,79 @@ def post_slack(text: str) -> str:
     return "queued"
 
 
+def unowned_infra(board: dict) -> list[str]:
+    """Infrastructure nobody is accountable for, as one line each.
+
+    WHY THIS EXISTS. The countdown answers "this client's term is ending".
+    It cannot answer "these 57 inboxes belong to nobody", because a client
+    with no CRM row has no launch date, so no term, so no deadline to count
+    down to — it is absent from `rows` entirely rather than overdue in it.
+    That is the shape of the original loss: the Sep-2026 audit found the
+    unattached pool had grown 40 -> 453 inboxes in five weeks while the bill
+    stayed flat, because off-boarding recycled inboxes instead of cancelling
+    them. Every client row was correct the whole time.
+
+    `build()` already computes all of this and then drops it on the floor;
+    this is that data, said out loud.
+    """
+    out: list[str] = []
+    cost = lambda n: f"{n} inbox{'es' if n != 1 else ''}, ${n * COST_PER_MAILBOX * 12:,}/yr"
+
+    # 1. A client-shaped bucket with no CRM row. Live infrastructure that no
+    #    term, decision date or hard stop will ever be computed for.
+    ghosts = [o for o in (board.get("orphans") or [])
+              if not o.get("status")
+              and (o.get("mailboxes") or 0) > 0
+              and not OPERATIONAL_BUCKET_RE.match(str(o.get("client") or ""))]
+    for o in sorted(ghosts, key=lambda x: -(x.get("mailboxes") or 0)):
+        out.append(f"*{o['client']}* has {cost(o['mailboxes'])} and no CRM row — "
+                   "no term, so no decision date and no hard stop. Add the client "
+                   "in the CRM (name, launch date, agreement type) and it joins the "
+                   "countdown on the next run.")
+
+    # 2. A churned client still holding infrastructure. Not urgent — nobody is
+    #    being mis-billed — but it is spend attributed to a client who left.
+    left = [o for o in (board.get("orphans") or [])
+            if str(o.get("status") or "").lower() == "inactive"
+            and (o.get("mailboxes") or 0) > 0]
+    for o in sorted(left, key=lambda x: -(x.get("mailboxes") or 0)):
+        out.append(f"*{o['client']}* is churned but still holds {cost(o['mailboxes'])} — release it.")
+
+    # 3. An active client with nothing sending. The opposite failure, and the
+    #    one a client notices before we do.
+    for name in (board.get("active_clients_without_infra") or []):
+        out.append(f"*{name}* is active in the CRM with no inboxes at all — "
+                   "either nothing is sending for them, or their tag does not "
+                   "match their CRM name.")
+
+    # 4. Spare stock above the ceiling, and inboxes belonging to nobody.
+    pools = board.get("pools") or {}
+    reserve = sum(v.get("mailboxes", 0) for k, v in pools.items()
+                  if "reserve" in k.lower() or "generic" in k.lower())
+    if reserve > RESERVE_CEILING:
+        over = reserve - RESERVE_CEILING
+        out.append(f"Reserve pool is {reserve} inboxes, {over} over the {RESERVE_CEILING} "
+                   f"ceiling — ${over * COST_PER_MAILBOX * 12:,}/yr of stock nobody "
+                   "ordered. Cancel the excess or raise the ceiling deliberately.")
+    untagged = sum(v.get("mailboxes", 0) for k, v in pools.items() if "untagged" in k.lower())
+    if untagged:
+        out.append(f"{cost(untagged)} carry no client tag at all — they belong to "
+                   "nobody and are invisible to every per-client rollup.")
+    return out
+
+
+def post_unowned(board: dict, dry_run: bool = True) -> dict:
+    """Post the unowned-infrastructure report. Silent when there is nothing to say."""
+    lines = unowned_infra(board)
+    if not lines:
+        return {"count": 0}
+    body = ("\U0001f9ee *Infrastructure nobody is accountable for*\n"
+            + "\n".join(f"   \u2022 {l}" for l in lines))
+    if dry_run:
+        return {"dry_run": True, "count": len(lines), "text": body}
+    return {"count": len(lines), "result": post_slack(body)}
+
+
 def _write_heartbeat(payload: dict) -> None:
     """Leave a trace of this run where it can be read without the dashboard password."""
     try:
@@ -944,10 +1036,19 @@ def run_daily() -> dict:
                    "why it is being said out loud.")
         return {"ok": False, "error": str(e)}
     res = post_notices(board, dry_run=False)
+    unowned = post_unowned(board, dry_run=False)
+    # Which webhook variables EXIST — names only, never values. Without this the
+    # routing is unknowable until a notice actually fires, and the first one is
+    # 2026-10-29: if SLACK_INFRA_DECISIONS_WEBHOOK is unset, post_slack silently
+    # falls back to the Zapmail hook and Galaxy's countdown lands in the wrong
+    # channel, which is exactly the kind of thing that is only ever noticed late.
+    hooks = [v for v in SLACK_WEBHOOK_VARS if (os.environ.get(v) or "").strip()]
     _write_heartbeat({"ok": True, "at": started,
                       "rows": len(board.get("rows") or []),
                       "notices": res.get("count", 0),
-                      "sent": res.get("sent", 0), "queued": res.get("queued", 0)})
+                      "sent": res.get("sent", 0), "queued": res.get("queued", 0),
+                      "unowned": unowned.get("count", 0),
+                      "webhooks": hooks})
     return res
 
 
