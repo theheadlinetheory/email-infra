@@ -209,6 +209,41 @@ def match_client(infra_name: str, crm_names: list[str]) -> str | None:
 
 # ── dates ─────────────────────────────────────────────────────────────────────
 
+def contracted_term(override: dict, crm: dict) -> tuple[int, int, str]:
+    """(months, days, basis) for a client's initial term.
+
+    The CRM already records the real contracted term on the client row as
+    `initial_term_length` + `initial_term_unit` — the same pair the CRM's own
+    Terms tab computes its end date from — and it was simply never read here.
+    Until now every client without `prepaid_months` got DEFAULT_TERM_MONTHS,
+    which is a guess: the resulting `decision_by` looked exactly as
+    authoritative as one derived from a signed agreement.
+
+    Precedence: an explicit override, then the contracted term, then
+    prepaid_months, then the guess. Days are supported because the CRM offers
+    that unit; a term in days is added after the months, matching
+    client-terms.js in the CRM so both produce the same end date.
+    """
+    if override.get("term_months"):
+        return int(override["term_months"]), 0, "override term"
+
+    raw = (crm or {}).get("initial_term_length")
+    try:
+        n = int(raw) if raw not in (None, "") else 0
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        unit = str((crm or {}).get("initial_term_unit") or "months").lower()
+        if unit.startswith("day"):
+            return 0, n, f"contract term ({n} days)"
+        return n, 0, f"contract term ({n} months)"
+
+    prepaid = (crm or {}).get("prepaid_months")
+    if prepaid:
+        return int(prepaid), 0, "prepaid_months"
+    return DEFAULT_TERM_MONTHS, 0, f"assumed {DEFAULT_TERM_MONTHS}mo term"
+
+
 def _parse(s) -> date | None:
     if not s:
         return None
@@ -288,7 +323,7 @@ def fetch_crm_clients() -> list[dict]:
     key = os.environ.get("CRM_SUPABASE_KEY", "").strip() or retainers.CRM_KEY_DEFAULT
     fields = ("id,name,status,billing_model,agreement_type,launch_date,"
               "renewal_day,prepaid_months,monthly_retainer,retainer_currency,"
-              "services,has_inbox_mgmt")
+              "services,has_inbox_mgmt,initial_term_length,initial_term_unit")
     r = requests.get(f"{url}/rest/v1/clients?select={fields}",
                      headers={"apikey": key, "Authorization": f"Bearer {key}"},
                      timeout=20)
@@ -445,10 +480,10 @@ def contract_end(crm: dict | None, override: dict, today: date):
     if not launch:
         return None, "no launch date", "unknown"
 
-    term = override.get("term_months") or crm.get("prepaid_months")
-    basis = ("override term" if override.get("term_months")
-             else "prepaid_months" if term else f"assumed {DEFAULT_TERM_MONTHS}mo term")
-    end = retainers.add_months_clamped(launch, int(term or DEFAULT_TERM_MONTHS))
+    months, extra_days, basis = contracted_term(override, crm)
+    end = retainers.add_months_clamped(launch, months)
+    if extra_days:
+        end = end + timedelta(days=extra_days)
     # A term stays "committed" through its grace period. Flipping to "ended" on
     # the term date itself would mean the countdown and the default-to-stop went
     # silent during exactly the week we are waiting on an answer — the client

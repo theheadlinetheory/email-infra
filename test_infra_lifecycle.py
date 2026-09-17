@@ -431,3 +431,49 @@ class UnownedInfraTests(unittest.TestCase):
     def test_silent_when_everything_is_owned(self):
         self.assertEqual(il.unowned_infra(self.board()), [])
         self.assertEqual(il.post_unowned(self.board(), dry_run=True)["count"], 0)
+
+class ContractedTermTests(unittest.TestCase):
+    """The CRM's own contracted term beats the guess."""
+
+    def test_contract_term_in_months(self):
+        self.assertEqual(
+            il.contracted_term({}, {"initial_term_length": 2, "initial_term_unit": "months"}),
+            (2, 0, "contract term (2 months)"))
+
+    def test_contract_term_in_days(self):
+        # The CRM offers a days unit; it must not be silently read as months.
+        self.assertEqual(
+            il.contracted_term({}, {"initial_term_length": 45, "initial_term_unit": "days"}),
+            (0, 45, "contract term (45 days)"))
+
+    def test_override_wins(self):
+        self.assertEqual(
+            il.contracted_term({"term_months": 6},
+                               {"initial_term_length": 2, "initial_term_unit": "months"}),
+            (6, 0, "override term"))
+
+    def test_contract_term_beats_prepaid_months(self):
+        # Landry's: 3 prepaid months AND a 3-month term. Same answer, but the
+        # basis must name the agreement, not the payment.
+        m, d, basis = il.contracted_term(
+            {}, {"initial_term_length": 3, "initial_term_unit": "months", "prepaid_months": 3})
+        self.assertEqual((m, d), (3, 0))
+        self.assertIn("contract term", basis)
+
+    def test_prepaid_months_when_no_contract_term(self):
+        self.assertEqual(il.contracted_term({}, {"prepaid_months": 3}),
+                         (3, 0, "prepaid_months"))
+
+    def test_falls_back_to_the_guess_and_says_so(self):
+        m, d, basis = il.contracted_term({}, {})
+        self.assertEqual((m, d), (il.DEFAULT_TERM_MONTHS, 0))
+        self.assertTrue(basis.startswith("assumed"))
+
+    def test_blank_and_junk_values_fall_through(self):
+        for bad in (None, "", "three", 0, "0"):
+            m, d, basis = il.contracted_term({}, {"initial_term_length": bad})
+            self.assertTrue(basis.startswith("assumed"), f"{bad!r} should not be a term")
+
+    def test_missing_unit_defaults_to_months(self):
+        self.assertEqual(il.contracted_term({}, {"initial_term_length": 2}),
+                         (2, 0, "contract term (2 months)"))
