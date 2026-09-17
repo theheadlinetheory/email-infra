@@ -74,7 +74,10 @@ SEASONAL_CLIENTS = {
     "kinsley landscape ltd",              # snow removal
     "peak services colorado inc",         # snow removal
     "lightdmv",                           # holiday lighting
-    "mary brite christmas lites medford", # holiday lighting
+    # The same client, spelled two ways: the Smartlead tag and the CRM name.
+    # Whichever one reaches target_for has to match, so both are listed.
+    "mary brite christmas lites medford",            # holiday lighting (tag)
+    "mary brite s christmas lights installation",    # holiday lighting (CRM)
     "merry bright christmas lights",      # holiday lighting
     "wonderly lights of birmingham",      # holiday lighting
 }
@@ -116,9 +119,16 @@ def _words(n) -> str:
 def is_free_account(crm_row: dict) -> bool:
     """A client we never invoice: no amount to charge AND notices switched off.
     Both have to agree — either alone is a fault, not an intent."""
-    # Both fields read None in practice, not False — the CRM leaves them unset
-    # rather than writing an explicit zero, so `is False` never matched.
-    return (not crm_row.get("monthly_retainer")
+    # Three conditions, and all three are load-bearing:
+    #   retainer billing   — a per-lead client has no monthly amount by
+    #                        definition and is emphatically not free
+    #   no amount          — nothing to invoice
+    #   notices off        — for a month-to-month client the 7/3/1 notices are
+    #                        the only thing that ever asks for money
+    # Dropping the first made every per-lead client read as free, because
+    # `monthly_update_enabled` comes back None unless it is explicitly selected.
+    return (crm_row.get("billing_model") == "retainer"
+            and not crm_row.get("monthly_retainer")
             and not crm_row.get("monthly_update_enabled"))
 
 

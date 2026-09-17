@@ -199,6 +199,13 @@ class RegressionsFromTheFirstLiveRun(unittest.TestCase):
         self.assertEqual(ci.target_for("Lightning Lawn Care", None), 42)
         self.assertEqual(ci.target_for("Merry & Bright Christmas Lights", None), 57)
 
+    def test_both_spellings_of_a_client_resolve_to_57(self):
+        # The Smartlead tag and the CRM name differ; whichever reaches
+        # target_for has to match or the client reads 15 inboxes over target.
+        for n in ("Mary & Brite Christmas Lites (Medford)",
+                  "Mary & Brite's Christmas Lights Installation"):
+            self.assertEqual(ci.target_for(n, None), 57, n)
+
     def test_snow_clients_carry_no_seasonal_word(self):
         # Nothing in the name or the CRM services says snow, so they can only
         # come from the explicit list.
@@ -206,11 +213,21 @@ class RegressionsFromTheFirstLiveRun(unittest.TestCase):
                      "Gm Landscaping & Design"):
             self.assertEqual(ci.target_for(name, None), 57, name)
 
-    def test_free_account_fields_are_none_not_false(self):
-        self.assertTrue(ci.is_free_account(
-            {"monthly_retainer": None, "monthly_update_enabled": None}))
+    def test_a_free_account_needs_all_three_conditions(self):
+        free = {"billing_model": "retainer", "monthly_retainer": None,
+                "monthly_update_enabled": False}
+        self.assertTrue(ci.is_free_account(free))
+        # A per-lead client has no monthly amount by definition and is not free.
+        self.assertFalse(ci.is_free_account({**free, "billing_model": "per_lead"}))
+        self.assertFalse(ci.is_free_account({**free, "monthly_retainer": 2000}))
+        self.assertFalse(ci.is_free_account({**free, "monthly_update_enabled": True}))
+
+    def test_an_unselected_column_must_not_read_as_free(self):
+        # monthly_update_enabled comes back None unless fetch_crm_clients asks
+        # for it. With billing_model required, a per-lead client whose column
+        # was never fetched still cannot be mistaken for a free one.
         self.assertFalse(ci.is_free_account(
-            {"monthly_retainer": 2000, "monthly_update_enabled": True}))
+            {"billing_model": "per_lead", "monthly_retainer": None}))
 
     def test_month_to_month_clients_need_no_contract_term(self):
         # Denair: a rolling monthly retainer with no fixed end. Demanding a

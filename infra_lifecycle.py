@@ -326,7 +326,12 @@ def fetch_crm_clients() -> list[dict]:
     key = os.environ.get("CRM_SUPABASE_KEY", "").strip() or retainers.CRM_KEY_DEFAULT
     fields = ("id,name,status,billing_model,agreement_type,launch_date,"
               "renewal_day,prepaid_months,monthly_retainer,retainer_currency,"
-              "services,has_inbox_mgmt,initial_term_length,initial_term_unit")
+              "services,has_inbox_mgmt,initial_term_length,initial_term_unit,"
+              # Needed to tell a free account from an unbilled one. Absent from
+              # this list it read None for every client, which made
+              # is_free_account() true for anyone without a retainer amount —
+              # i.e. every per-lead client.
+              "monthly_update_enabled")
     r = requests.get(f"{url}/rest/v1/clients?select={fields}",
                      headers={"apikey": key, "Authorization": f"Bearer {key}"},
                      timeout=20)
