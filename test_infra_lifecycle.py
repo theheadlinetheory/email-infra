@@ -370,3 +370,64 @@ class FailLoud(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class UnownedInfraTests(unittest.TestCase):
+    """The alarm for infrastructure with nobody accountable for it."""
+
+    def board(self, **kw):
+        b = {"orphans": [], "active_clients_without_infra": [], "pools": {}}
+        b.update(kw)
+        return b
+
+    def test_client_with_no_crm_row_is_reported(self):
+        # LightDMV, 2026-09-17: 57 inboxes provisioned, no CRM row, so no
+        # launch date, so no term, so absent from `rows` rather than overdue.
+        out = il.unowned_infra(self.board(
+            orphans=[{"client": "LightDMV", "status": None, "mailboxes": 57}]))
+        self.assertEqual(len(out), 1)
+        self.assertIn("LightDMV", out[0])
+        self.assertIn("no CRM row", out[0])
+
+    def test_operational_buckets_are_not_clients(self):
+        # These legitimately have no CRM row — they are where inboxes wait.
+        # Reporting them daily would bury the one line that is a real client.
+        for name in ("Cleanup 2026-09", "Replacement Group", "Generic Landscaping 2",
+                     "(acquisition)", "Retired - burned", "Burnt Acquisition",
+                     "Premium Inboxes", "(untagged)"):
+            out = il.unowned_infra(self.board(
+                orphans=[{"client": name, "status": None, "mailboxes": 431}]))
+            self.assertEqual(out, [], f"{name} should not be reported as a client")
+
+    def test_churned_client_still_holding_infra(self):
+        out = il.unowned_infra(self.board(
+            orphans=[{"client": "Urban Growth", "status": "inactive", "mailboxes": 3}]))
+        self.assertEqual(len(out), 1)
+        self.assertIn("churned", out[0])
+
+    def test_active_client_with_no_infra(self):
+        out = il.unowned_infra(self.board(active_clients_without_infra=["Landy Rose Media"]))
+        self.assertEqual(len(out), 1)
+        self.assertIn("no inboxes", out[0])
+
+    def test_reserve_ceiling(self):
+        under = self.board(pools={"(generic reserve)": {"mailboxes": il.RESERVE_CEILING}})
+        self.assertEqual(il.unowned_infra(under), [])
+        over = self.board(pools={"(generic reserve)": {"mailboxes": il.RESERVE_CEILING + 26}})
+        out = il.unowned_infra(over)
+        self.assertEqual(len(out), 1)
+        self.assertIn("26 over", out[0])
+
+    def test_acquisition_is_not_counted_as_reserve(self):
+        # Our own prospecting is a deliberate spend, not idle stock.
+        out = il.unowned_infra(self.board(pools={"(acquisition)": {"mailboxes": 277}}))
+        self.assertEqual(out, [])
+
+    def test_untagged_is_reported(self):
+        out = il.unowned_infra(self.board(pools={"(untagged)": {"mailboxes": 22}}))
+        self.assertEqual(len(out), 1)
+        self.assertIn("no client tag", out[0])
+
+    def test_silent_when_everything_is_owned(self):
+        self.assertEqual(il.unowned_infra(self.board()), [])
+        self.assertEqual(il.post_unowned(self.board(), dry_run=True)["count"], 0)
