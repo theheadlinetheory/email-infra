@@ -1,14 +1,38 @@
 {
   "functions": {
-    "api/index.py": { "maxDuration": 300 }
+    "api/index.py": {
+      "maxDuration": 300
+    }
   },
   "crons": [
-    { "path": "/api/health-snapshot", "schedule": "0 13 * * *" }
+    {
+      "path": "/api/health-snapshot",
+      "schedule": "0 13 * * *"
+    }
   ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index.py" }
+    {
+      "source": "/health",
+      "destination": "/health.html"
+    },
+    {
+      "source": "/invariants",
+      "destination": "/invariants.html"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    }
   ],
   "headers": [
-    { "source": "/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }] }
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
+    }
   ]
 }
