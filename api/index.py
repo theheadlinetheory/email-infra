@@ -268,6 +268,102 @@ def _is_vercel_cron():
 
 
 
+
+@app.route("/api/clients")
+def clients_route():
+    """Active clients only: what they hold, what they should hold, when we decide.
+
+    /api/overview answers this today in 1.59 MB of everything-about-everything,
+    served from a sync cache that on 2026-09-18 listed 51 clients while 21 were
+    active — churned clients never left. This is the same question answered in a
+    few KB, from the lifecycle board, which already knows each client's term.
+
+    Off-boarding is what removes a client here: the roster is the CRM's `status`,
+    not a list anyone maintains by hand.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import infra_lifecycle as ilc
+        import check_invariants as civ
+
+        board = _slow_cache("cache:infra_lifecycle", ilc.build)
+        # The CRM row decides the target and the free-account exemption.
+        # infra_lifecycle's own `seasonal` flag is inferred from the vertical
+        # and does not know the snow clients — Kinsley, Peak and GM carry no
+        # seasonal word in their name or services, so it read them as 42 when
+        # they are on 57. check_invariants keeps the explicit list; use it.
+        crm_by = {}
+        try:
+            for c in (ilc.fetch_crm_clients() or []):
+                if c.get("name"):
+                    crm_by[civ._norm(c["name"])] = c
+        except Exception:
+            pass
+        rows, pools = [], []
+        for r in (board.get("rows") or []):
+            name = r.get("client")
+            if civ.OPERATIONAL_RE.match(str(name or "")):
+                pools.append({"name": name, "inboxes": r.get("mailboxes"),
+                              "monthly_cost": r.get("monthly_cost")})
+                continue
+            if (r.get("status") or "") != "active":
+                continue
+            crm_row = crm_by.get(civ._norm(name))
+            target = civ.target_for(str(name or ""), crm_row)
+            held = r.get("mailboxes") or 0
+            # A free account has no target — Landy Rose runs at 18 by design.
+            exempt = bool(crm_row and civ.is_free_account(crm_row))
+            rows.append({
+                "name": name,
+                "billing_model": r.get("billing_model"),
+                "agreement_type": r.get("agreement_type"),
+                "seasonal": target == civ.SEASONAL_TARGET,
+                "inboxes": held,
+                "target": None if exempt else target,
+                "delta": 0 if exempt else held - target,
+                "exempt": exempt,
+                "domains": r.get("exclusive_domains"),
+                "monthly_cost": r.get("monthly_cost"),
+                "launch_date": r.get("launch_date"),
+                # The three dates the whole countdown exists to produce.
+                "term_ends": r.get("effective_end"),
+                "term_basis": r.get("end_basis"),
+                "decide_by": r.get("decision_by"),
+                "days_to_decision": r.get("days_to_decision"),
+                "hard_stop": r.get("hard_stop"),
+                "outcome": r.get("outcome"),
+                "phase": r.get("phase"),
+                # An "assumed" term is a deadline nobody agreed to. Flag it
+                # rather than render it like a real one.
+                # An "assumed" term is a deadline nobody agreed to. A free
+                # account has no term to guess at, so it is not a fault there.
+                "term_is_a_guess": (not exempt
+                                    and str(r.get("end_basis") or "").startswith("assumed")),
+            })
+        rows.sort(key=lambda x: (x["decide_by"] is None, x["decide_by"] or "", x["name"]))
+        return _cors(jsonify({
+            "clients": rows,
+            "pools": sorted(pools, key=lambda x: -(x["inboxes"] or 0)),
+            "summary": {
+                "active_clients": len(rows),
+                "inboxes": sum(r["inboxes"] for r in rows),
+                "monthly_cost": sum(r["monthly_cost"] or 0 for r in rows),
+                "off_target": sum(1 for r in rows if r["delta"]),
+                "guessed_terms": sum(1 for r in rows if r["term_is_a_guess"]),
+                "decisions_due_30d": sum(
+                    1 for r in rows
+                    if r["days_to_decision"] is not None and 0 <= r["days_to_decision"] <= 30),
+            },
+            "_cached": board.get("_cached"),
+            "_generated_at": board.get("_generated_at"),
+            "_age_seconds": board.get("_age_seconds"),
+            "_stale": board.get("_stale"),
+        }))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()[-800:]})), 500
+
 @app.route("/api/invariants")
 def invariants_route():
     """The last stored run, with its age. `?refresh=1` recomputes.
