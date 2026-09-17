@@ -76,6 +76,76 @@ def favicon():
     return "", 204
 
 
+
+# ── slow-route cache ──────────────────────────────────────────────────────────
+
+def _slow_cache(key, builder, ttl_seconds=6 * 3600):
+    """Serve a stored answer with its age; recompute when asked or when stale.
+
+    Four routes rebuild their entire world per request — a full Zapmail walk, a
+    full Smartlead walk, sometimes both — and measured 13s, 47s, 77s and 98s.
+    /api/domain-expiry spent 98 seconds to return 181 bytes. A tab that takes
+    a minute is a tab nobody opens, and Vercel stops a function at 300s.
+
+    `?refresh=1` forces a rebuild. Every response carries `_cached`,
+    `_generated_at` and `_age_seconds`, because a number without its age is how
+    /api/overview came to serve a day-old roster of 51 clients while 21 were
+    active, with nothing on screen saying so.
+    """
+    import db as store
+    import datetime as _dt
+
+    def _now():
+        return _dt.datetime.now(_dt.timezone.utc)
+
+    def _stamp(payload, cached, generated):
+        if not isinstance(payload, dict):
+            payload = {"data": payload}
+        age = None
+        if generated:
+            try:
+                t = _dt.datetime.fromisoformat(str(generated).replace("Z", "+00:00"))
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=_dt.timezone.utc)
+                age = int((_now() - t).total_seconds())
+            except ValueError:
+                pass
+        payload["_cached"] = cached
+        payload["_generated_at"] = generated
+        payload["_age_seconds"] = age
+        payload["_stale"] = age is not None and age > ttl_seconds
+        return payload
+
+    fresh = request.args.get("refresh") == "1"
+    if not fresh:
+        try:
+            rows = store._request("GET", "/state",
+                                  params={"select": "data,updated_at", "key": f"eq.{key}"})
+            if rows:
+                payload = json.loads(rows[0]["data"])
+                gen = payload.get("_generated_at") or rows[0].get("updated_at")
+                stamped = _stamp(payload, True, gen)
+                # A cache past its TTL is worse than a slow answer: it is a
+                # wrong answer that looks instant. Fall through and rebuild.
+                if not stamped["_stale"]:
+                    return stamped
+        except Exception:
+            pass
+
+    payload = builder()
+    generated = _now().isoformat(timespec="seconds")
+    try:
+        body = dict(payload) if isinstance(payload, dict) else {"data": payload}
+        body["_generated_at"] = generated
+        store._request("POST", "/state",
+                       json_body={"key": key, "data": json.dumps(body),
+                                  "updated_at": generated},
+                       headers={"Prefer": "resolution=merge-duplicates"})
+    except Exception:
+        pass
+    return _stamp(payload, False, generated)
+
+
 @app.route("/api/healthz")
 def healthz():
     return "ok-v2-cache-readonly", 200
@@ -360,38 +430,6 @@ def zapmail_removals_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
-@app.route("/api/health-placement", methods=["GET", "POST", "OPTIONS"])
-def health_placement():
-    """Pull SmartLead warmup inbox-placement into today's daily rows, then it
-    feeds the model on the next snapshot.
-
-    A full fleet sweep is ~9 min (180/min SmartLead cap) so it can't finish in
-    one 60s function — advance it in chunks:
-        /api/health-placement?limit=150&offset=0   -> {..., next_offset: 150}
-        /api/health-placement?limit=150&offset=150  -> ...
-    Loops until next_offset is null. Optional &rescore=1 re-runs the snapshot
-    after the chunk so the new placement is scored immediately.
-    """
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not (_check_auth() or _is_vercel_cron()):
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    import db as store
-    store._CACHE_WRITE_ENABLED = True
-    try:
-        import health_placement as hp
-        offset = int(request.args.get("offset", 0))
-        limit = int(request.args.get("limit", 150))
-        res = hp.collect(offset=offset, limit=limit)
-        if request.args.get("rescore") in ("1", "true"):
-            import health_snapshot as hs
-            res["rescore"] = hs.snapshot_daily().get("counts")
-        return _cors(jsonify(res))
-    except Exception as e:
-        import traceback
-        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
-
-
 @app.route("/api/client-offboard", methods=["GET", "POST", "OPTIONS"])
 def client_offboard():
     """Free up an off-boarded client's inboxes -> fresh Generic group + warm-up.
@@ -514,22 +552,6 @@ def health_replace_all():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
-@app.route("/api/buy-check", methods=["POST", "OPTIONS"])
-def buy_check():
-    """Spaceship availability + est price for a list of domains. Read-only, no spend."""
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not _check_auth():
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    body = request.get_json(silent=True) or {}
-    try:
-        import buy_inboxes as bi
-        return _cors(jsonify(bi.check_domains(body.get("domains") or [])))
-    except Exception as e:
-        import traceback
-        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
-
-
 @app.route("/api/buy-plan", methods=["POST", "OPTIONS"])
 def buy_plan():
     """Full cost preview + provisioning batch config for a purchase spec. No spend.
@@ -599,7 +621,7 @@ def buy_orders_route():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import buy_inboxes as bi
-        return _cors(jsonify(bi.list_orders()))
+        return _cors(jsonify(_slow_cache("cache:buy_orders", bi.list_orders)))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
@@ -763,7 +785,7 @@ def generic_capacity_route():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import generic_capacity as gc
-        res = gc.build()
+        res = _slow_cache("cache:generic_capacity", gc.build)
         return _cors(jsonify(res)), (400 if res.get("error") else 200)
     except Exception as e:
         import traceback
@@ -924,38 +946,6 @@ def health_reallocate_campaigns():
                 return _cors(jsonify({"error": "done (campaign name) required"})), 400
             return _cors(jsonify(hr.clear_reallocation_campaign(name)))
         return _cors(jsonify(hr.reallocation_campaigns()))
-    except Exception as e:
-        import traceback
-        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
-
-
-@app.route("/api/health-retire", methods=["POST", "OPTIONS"])
-def health_retire():
-    """Retire burned inboxes: detach from every campaign, strip their client/group
-    tags so no future campaign can recruit them, and optionally delete the
-    SmartLead account. Body {emails:[...], delete: bool, confirm: bool}.
-    confirm=false is a dry-run. Pass delete=true only for mailboxes Zapmail has
-    already removed — the swap flow and the removal watcher do this automatically,
-    this endpoint is for clearing a backlog by hand."""
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not _check_auth():
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    import db as store
-    store._CACHE_WRITE_ENABLED = True
-    body = request.get_json(silent=True) or {}
-    emails = body.get("emails") or []
-    if not emails:
-        return _cors(jsonify({"error": "emails required"})), 400
-    dry = not bool(body.get("confirm"))
-    try:
-        import health_replace as hr
-        if body.get("delete"):
-            return _cors(jsonify(hr.purge_removed_accounts(
-                emails, dry_run=dry, force=bool(body.get("force")))))
-        out = [hr.retire_inbox(e, dry_run=dry) for e in emails]
-        return _cors(jsonify({"count": len(out), "results": out,
-                              **({"dry_run": True} if dry else {})}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
@@ -1908,7 +1898,7 @@ def domain_expiry_route():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import domain_expiry_alert as dea
-        board = dea.build()
+        board = _slow_cache("cache:domain_expiry", dea.build)
         if request.args.get("alert") == "1":
             board["alert_text"] = dea.format_alert(board)
         return _cors(jsonify(board))
@@ -1930,7 +1920,11 @@ def infra_lifecycle_route():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import infra_lifecycle as ilc
-        board = ilc.build(ilc._parse(request.args.get("as_of")))
+        as_of = request.args.get("as_of")
+        # Only the default "today" view is cached; an explicit as_of is a
+        # one-off question and must not poison the shared answer.
+        board = (ilc.build(ilc._parse(as_of)) if as_of
+                 else _slow_cache("cache:infra_lifecycle", ilc.build))
         if request.args.get("notices") == "1":
             board["notices"] = ilc.post_notices(board, dry_run=True)["messages"]
         return _cors(jsonify(board))
@@ -2237,26 +2231,6 @@ def update_replacement():
     return _cors(jsonify({"ok": True, "job": job}))
 
 
-@app.route("/api/replacements/delete", methods=["POST", "OPTIONS"])
-def delete_replacement():
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not _check_auth():
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    import db as store
-    body = request.get_json(silent=True) or {}
-    job_id = body.get("id")
-    if not job_id:
-        return _cors(jsonify({"error": "id required"})), 400
-    state = store.get_state("domain_replacements") or {"jobs": []}
-    before = len(state["jobs"])
-    state["jobs"] = [j for j in state["jobs"] if j["id"] != job_id]
-    if len(state["jobs"]) == before:
-        return _cors(jsonify({"error": "Job not found"})), 404
-    store.set_state("domain_replacements", state)
-    return _cors(jsonify({"ok": True}))
-
-
 # ─── Domain Purchase + Generic Group Creation Wizard ───
 
 _TLD_PRICES = {".com": "9.98", ".info": "3.98", ".co": "11.98", ".net": "10.98", ".org": "9.98", ".biz": "8.98"}
@@ -2369,64 +2343,6 @@ def find_available_domains():
                 _t.sleep(0.5)
 
         return _cors(jsonify({"results": found, "checked": len(tried), "target": target}))
-    except Exception as e:
-        import traceback
-        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
-
-
-@app.route("/api/domains/check", methods=["POST", "OPTIONS"])
-def check_domains():
-    """Check availability of domains on Spaceship and/or Porkbun."""
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not _check_auth():
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    try:
-        import time as _time
-        import requests as req
-        body = request.get_json(silent=True) or {}
-        domain_names = body.get("domains", [])
-        registrar = body.get("registrar", "spaceship")
-        if not domain_names:
-            return _cors(jsonify({"error": "No domains provided"})), 400
-
-        ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
-        sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
-        pk = os.environ.get("PORKBUN_API_KEY", "").strip()
-        ps = os.environ.get("PORKBUN_SECRET_KEY", "").strip()
-
-        results = []
-        for dn in domain_names[:50]:
-            dn = dn.strip().lower()
-            if not dn:
-                continue
-            try:
-                if registrar == "spaceship":
-                    r = req.get(f"https://spaceship.dev/api/v1/domains/{dn}/available",
-                                headers={"X-Api-Key": ak, "X-Api-Secret": sk}, timeout=15)
-                    data = r.json() if r.status_code == 200 else {}
-                    if data.get("result") == "available":
-                        tld = "." + dn.rsplit(".", 1)[-1] if "." in dn else ""
-                        price = _TLD_PRICES.get(tld, "~10")
-                        results.append({"domain": dn, "available": True, "price": price})
-                    else:
-                        results.append({"domain": dn, "available": False})
-                    _time.sleep(0.3)
-                else:
-                    r = req.post(f"https://api.porkbun.com/api/json/v3/domain/checkDomain/{dn}",
-                                 json={"apikey": pk, "secretapikey": ps}, timeout=10)
-                    data = r.json()
-                    resp = data.get("response", {})
-                    if data.get("status") == "SUCCESS" and resp.get("avail") == "yes":
-                        price = resp.get("price", "?")
-                        results.append({"domain": dn, "available": True, "price": price})
-                    else:
-                        results.append({"domain": dn, "available": False})
-                    _time.sleep(0.3)
-            except Exception:
-                results.append({"domain": dn, "available": False, "error": "timeout"})
-
-        return _cors(jsonify({"results": results}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
@@ -2747,162 +2663,6 @@ def available_domains():
         free_letters = [l for l in all_letters if l not in existing_letters]
         return _cors(jsonify({"domains": available, "existing_letters": sorted(existing_letters),
                               "free_letters": free_letters}))
-    except Exception as e:
-        import traceback
-        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
-
-
-@app.route("/api/create-generic-group", methods=["POST", "OPTIONS"])
-def create_generic_group():
-    """Phase 1: Connect domains to Zapmail, buy slots, create inboxes, set photos."""
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not _check_auth():
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    try:
-        import time as _time
-        import requests as req
-        body = request.get_json(silent=True) or {}
-        letter = body.get("letter", "").strip().upper()
-        domains = body.get("domains", [])
-        if not letter or len(letter) > 2:
-            return _cors(jsonify({"error": "Invalid group letter"})), 400
-        if not domains or len(domains) > 20:
-            return _cors(jsonify({"error": "Select 1-20 domains"})), 400
-
-        ZAPMAIL_API = "https://api.zapmail.ai/api"
-        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
-        SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
-        PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
-        NS_STR = "pns61.cloudns.net,pns62.cloudns.com,pns63.cloudns.net,pns64.cloudns.uk"
-
-        def zm_h():
-            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
-
-        import db as store
-        log_lines = []
-        def _log(msg):
-            log_lines.append(msg)
-
-        # Step 1: Connect each domain to Zapmail
-        _log(f"Connecting {len(domains)} domains to Zapmail...")
-        for dn in domains:
-            r = req.post(f"{ZAPMAIL_API}/v2/domains/connect", headers=zm_h(),
-                         json={"domainName": dn, "nameServers": NS_STR}, timeout=30)
-            _log(f"  {dn}: {r.json().get('message', r.text[:100])}")
-            _time.sleep(0.5)
-
-        # Step 2: Wait for domains to appear and get their IDs
-        _log("Waiting 30s for Zapmail to process...")
-        _time.sleep(30)
-
-        domain_info = []
-        page = 1
-        zm_map = {}
-        while True:
-            zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}", headers=zm_h(), timeout=30)
-            zd = zr.json().get("data", {})
-            for d in zd.get("domains", []):
-                zm_map[d.get("name", "")] = d.get("id", "")
-            if page >= zd.get("totalPages", 1):
-                break
-            page += 1
-
-        missing = []
-        for dn in domains:
-            zid = zm_map.get(dn)
-            if zid:
-                domain_info.append({"domain": dn, "zapmail_id": zid})
-            else:
-                missing.append(dn)
-
-        if missing:
-            _log(f"WARNING: {len(missing)} domains not found in Zapmail yet: {', '.join(missing[:5])}")
-
-        _log(f"{len(domain_info)} domains connected")
-
-        # Step 3: Buy mailbox slots if needed (retry on low wallet — auto-topoff takes ~60s)
-        inboxes_needed = len(domain_info) * 3
-        buy_ok = False
-        for buy_attempt in range(3):
-            ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
-            ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
-            purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-            assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-            free_slots = purchased - assigned
-
-            if free_slots >= inboxes_needed:
-                _log(f"Have {free_slots} free slots (need {inboxes_needed})")
-                buy_ok = True
-                break
-            to_buy = inboxes_needed - free_slots
-            _log(f"Buying {to_buy} mailbox slots...")
-            buy_r = req.post(f"{ZAPMAIL_API}/v2/wallet/buy-addon-mailboxes?quantity={to_buy}",
-                             headers=zm_h(), json={}, timeout=30)
-            buy_data = buy_r.json()
-            if buy_r.status_code == 200 and "Insufficient" not in str(buy_data.get("message", "")):
-                _log(f"Bought {to_buy} slots")
-                _time.sleep(3)
-                buy_ok = True
-                break
-            if "Insufficient" in str(buy_data.get("message", "")) and buy_attempt < 2:
-                wait_sec = 60 * (buy_attempt + 1)
-                _log(f"Wallet balance too low, waiting {wait_sec}s for auto-topoff (attempt {buy_attempt + 1}/3)...")
-                _time.sleep(wait_sec)
-                continue
-            return _cors(jsonify({"error": f"Failed to buy slots: {buy_data.get('message', buy_r.text[:200])}",
-                                  "log": log_lines})), 400
-        if not buy_ok:
-            return _cors(jsonify({"error": "Zapmail wallet balance too low after retries", "log": log_lines})), 400
-
-        # Step 4: Create mailboxes
-        SPECS = [
-            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "s.reynolds"},
-            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.r"},
-            {"firstName": "Sean", "lastName": "Reynolds", "mailboxUsername": "sean.reynolds"},
-        ]
-
-        all_mb_ids = []
-        created_domains = []
-        for di in domain_info:
-            mailboxes = [{**s, "domainName": di["domain"]} for s in SPECS]
-            payload = {di["zapmail_id"]: mailboxes}
-            r = req.post(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json=payload, timeout=30)
-            result = r.json()
-            mb_ids = result.get("data", [])
-            if isinstance(mb_ids, list):
-                all_mb_ids.extend(mb_ids)
-            emails = [f"{s['mailboxUsername']}@{di['domain']}" for s in SPECS]
-            created_domains.append({"domain": di["domain"], "emails": emails, "mb_ids": mb_ids if isinstance(mb_ids, list) else []})
-            _log(f"Created: {', '.join(emails)}")
-            _time.sleep(1)
-
-        # Step 5: Set profile photos
-        if all_mb_ids:
-            _log(f"Setting profile photos on {len(all_mb_ids)} mailboxes...")
-            for i in range(0, len(all_mb_ids), 20):
-                batch = all_mb_ids[i:i + 20]
-                mb_data = [{"mailboxId": mid, "profilePicture": PHOTO_URL} for mid in batch]
-                req.put(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json={"mailboxData": mb_data}, timeout=30)
-                _time.sleep(1)
-            _log("Photos set")
-
-        # Save state for Phase 2
-        state = store.get_state(f"generic_group_wizard_{letter}") or {}
-        state.update({
-            "letter": letter,
-            "domains": created_domains,
-            "all_mb_ids": all_mb_ids,
-            "phase": "mailboxes_created",
-            "created_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
-        store.set_state(f"generic_group_wizard_{letter}", state)
-
-        return _cors(jsonify({"ok": True, "letter": letter,
-                              "domains_count": len(created_domains),
-                              "mailboxes_count": len(all_mb_ids),
-                              "log": log_lines,
-                              "next_step": "finalize"}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
@@ -3232,53 +2992,6 @@ def group_setup_domain():
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
-
-
-@app.route("/api/group/fix-photos", methods=["POST", "OPTIONS"])
-def group_fix_photos():
-    """Set profile photos on all mailboxes for given domains."""
-    if request.method == "OPTIONS":
-        return _cors(make_response("", 200))
-    if not _check_auth():
-        return _cors(jsonify({"error": "Unauthorized"})), 401
-    try:
-        import requests as req
-        body = request.get_json(silent=True) or {}
-        domains = body.get("domains", [])
-        if not domains:
-            return _cors(jsonify({"error": "domains required"})), 400
-
-        ZAPMAIL_API = "https://api.zapmail.ai/api"
-        ZAPMAIL_KEY = os.environ.get("ZAPMAIL_API_KEY", "").strip()
-        SUPABASE_STORAGE = os.environ.get("SUPABASE_URL", "https://ghjmqpnqljgwykpjkvzy.supabase.co") + "/storage/v1/object/public/headshots"
-        PHOTO_URL = f"{SUPABASE_STORAGE}/sean_reynolds.png"
-        def zm_h():
-            return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}
-
-        all_mb_ids = []
-        page = 1
-        while True:
-            zr = req.get(f"{ZAPMAIL_API}/v2/domains?page={page}&limit=100", headers=zm_h(), timeout=30)
-            zd = zr.json().get("data", {})
-            for d in zd.get("domains", []):
-                if d.get("domain") in domains:
-                    for m in (d.get("mailboxes") or []):
-                        if isinstance(m, dict) and m.get("id"):
-                            all_mb_ids.append(m["id"])
-            if page >= zd.get("totalPages", 1):
-                break
-            page += 1
-
-        if not all_mb_ids:
-            return _cors(jsonify({"error": f"No mailbox IDs found for {len(domains)} domains"})), 404
-
-        mb_photo_data = [{"mailboxId": mid, "profilePicture": PHOTO_URL} for mid in all_mb_ids]
-        pr = req.put(f"{ZAPMAIL_API}/v2/mailboxes", headers=zm_h(), json={"mailboxData": mb_photo_data}, timeout=60)
-        ok = pr.status_code == 200
-        return _cors(jsonify({"ok": ok, "mailboxes": len(all_mb_ids),
-                              "status": pr.status_code, "photo_url": PHOTO_URL}))
-    except Exception as e:
-        return _cors(jsonify({"error": str(e)})), 500
 
 
 @app.route("/api/group/save-state", methods=["POST", "OPTIONS"])
