@@ -988,6 +988,52 @@ def acq_capacity_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/acquisition")
+def acquisition_route():
+    """The Acquisition tab: our own prospecting inboxes, and the domains under them.
+
+    Both inputs are cached (6h) because both are slow — the capacity build walks
+    every SmartLead account, and the registrar walk pages two APIs. ?live=1
+    rebuilds the capacity side, which is the half that changes hour to hour.
+
+    A registrar read that FAILS passes None rather than {}: an empty map would
+    make every domain report "no expiry recorded", which reads as reassurance.
+    None makes the page say it did not look.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        from datetime import date
+        import acq_capacity as ac
+        import acquisition_view as av
+
+        live = request.args.get("live") in ("1", "true", "yes")
+        acq = (ac.build(live=True) if live
+               else _slow_cache("cache:acq_capacity", ac.build))
+
+        # Wrapped in a dict on purpose: _slow_cache stamps its own keys onto
+        # whatever it stores, so handing it the bare {domain: ...} map would mix
+        # `_cached` in among the domains. `domains: None` survives the round
+        # trip and still means "we could not read the registrar".
+        def _registrar():
+            import domain_expiry_alert as dea
+            return {"domains": dea.fetch_registrar_domains() or None}
+
+        try:
+            reg = (_slow_cache("cache:registrar_domains", _registrar) or {}).get("domains")
+        except Exception:
+            reg = None
+
+        res = av.build(acq, reg, date.today().isoformat())
+        for k in ("_cached", "_generated_at", "_age_seconds", "_stale"):
+            if isinstance(acq, dict) and k in acq:
+                res[k] = acq[k]
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/generic-capacity")
 def generic_capacity_route():
     """Generic (non-acquisition) inbox capacity: what is genuinely free to deploy.
