@@ -103,7 +103,12 @@ def fetch_registrar_domains() -> dict:
 
 # ── which domains are actually carrying live senders ──────────────────────────
 
-def fetch_live_domains() -> dict:
+# The fleet has been 1,700-1,900 accounts all year. Anything under this is a
+# truncated walk, not a smaller fleet.
+MIN_PLAUSIBLE_ACCOUNTS = 1000
+
+
+def fetch_live_domains(getter=None) -> dict:
     """{domain: {"inboxes": n, "active": n, "sent": n, "clients": {...}}}.
 
     `active` counts mailboxes attached to an ACTIVE campaign — the number that
@@ -111,10 +116,12 @@ def fetch_live_domains() -> dict:
     """
     import requests
     key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
-    if not key:
+    if not key and getter is None:
         raise RuntimeError("SMARTLEAD_API_KEY is not set")
 
     def _get(url, params, tries=5):
+        if getter is not None:            # injected for tests; returns None on failure
+            return getter(url, params)
         for i in range(tries):
             r = requests.get(url, params=params, timeout=60)
             if r.status_code == 200:
@@ -122,20 +129,54 @@ def fetch_live_domains() -> dict:
             time.sleep(3 * (i + 1))
         return None
 
+    # ALL OR NOTHING. `if not batch: break` treated a failed page exactly like
+    # the end of the list, and Smartlead's rate limit is account-wide and shared
+    # with every other job here, so that happened routinely. The result is not a
+    # slightly-short roster — it is a board that reports live domains as EMPTY
+    # and recommends letting them lapse. Read on 2026-09-19 it claimed 286 empty
+    # auto-renewing domains costing $6,797/yr; a complete walk on the same data
+    # says 0. Wrong in the destructive direction, so a partial walk raises.
     accounts, off = {}, 0
     while True:
-        batch = _get("https://server.smartlead.ai/api/v1/email-accounts",
-                     {"api_key": key, "limit": 100, "offset": off})
+        batch = None
+        # One attempt when a getter is injected: a test's failure is deliberate,
+        # and backing off through it only makes the suite slow.
+        attempts = 1 if getter is not None else 5
+        for attempt in range(attempts):
+            batch = _get("https://server.smartlead.ai/api/v1/email-accounts",
+                         {"api_key": key, "limit": 100, "offset": off}, tries=1)
+            if batch is not None:
+                break
+            if getter is None:
+                time.sleep(5 * (attempt + 1))
+        if batch is None:
+            raise RuntimeError(
+                "Smartlead account walk failed part way through — refusing to "
+                "report domains as empty on an incomplete roster")
         if not batch:
             break
         for a in batch:
             accounts[(a.get("from_email") or "").lower()] = a
         off += 100
-        time.sleep(0.3)
+        if getter is None:
+            time.sleep(0.3)
         if len(batch) < 100:
             break
 
-    camps = _get("https://server.smartlead.ai/api/v1/campaigns", {"api_key": key}) or []
+    # A roster this far below the known fleet size is a truncated walk that
+    # happened to return 200s. Cheap backstop against the same failure wearing
+    # a different hat.
+    if len(accounts) < MIN_PLAUSIBLE_ACCOUNTS:
+        raise RuntimeError(
+            f"Smartlead returned only {len(accounts)} accounts — implausibly few, "
+            "refusing to judge which domains are empty")
+
+    camps = _get("https://server.smartlead.ai/api/v1/campaigns", {"api_key": key})
+    if camps is None:
+        # Without campaigns every domain reads "no active senders", which is the
+        # input to "safe to let lapse".
+        raise RuntimeError("Smartlead campaign list unavailable — cannot tell a "
+                           "domain with live senders from one without")
     active_emails = set()
     for c in camps:
         if (c.get("status") or "").upper() != "ACTIVE":
@@ -144,7 +185,8 @@ def fetch_live_domains() -> dict:
                     {"api_key": key})
         for a in (rows or []):
             active_emails.add((a.get("from_email") or "").lower())
-        time.sleep(0.05)
+        if getter is None:
+            time.sleep(0.05)
 
     out = defaultdict(lambda: {"inboxes": 0, "active": 0, "sent": 0, "clients": set()})
     for email, a in accounts.items():
