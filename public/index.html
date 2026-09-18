@@ -206,6 +206,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <button class="tab" onclick="showTab('acquisition')">Acquisition</button>
     <button class="tab" onclick="showTab('maintenance')">Maintenance</button>
     <button class="tab" onclick="showTab('domains')">Domains</button>
+    <button class="tab" onclick="showTab('retainers')">Retainers</button>
     <button class="tab" onclick="showTab('health')">Health</button>
 </div>
 
@@ -256,6 +257,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div id="domains-actions" style="padding:0 24px;margin-bottom:8px;"></div>
     <div id="domains-filters" style="padding:0 24px;margin-bottom:12px;"></div>
     <div id="domains-table-wrap" style="padding:0 24px;flex:1;overflow-y:auto;min-height:0;"></div>
+</div>
+
+<div id="retainers-tab" style="display:none;flex-direction:column;height:calc(100vh - 80px);">
+    <div class="stats-row" id="retainers-stats"></div>
+    <div id="retainers-mrr" style="padding:0 24px 12px;font-size:12px;color:#94a3b8;"></div>
+    <div id="retainers-filters" style="padding:0 24px;margin-bottom:12px;"></div>
+    <div id="retainers-table-wrap" style="padding:0 24px;flex:1;overflow-y:auto;min-height:0;"></div>
 </div>
 
 <div class="chart-tooltip" id="chart-tooltip"></div>
@@ -432,7 +440,8 @@ async function refreshStats() {
     if (btn) { btn.classList.remove('syncing'); btn.disabled = false; }
 }
 
-var currentTab = location.hash === '#acquisition' ? 'acquisition' : location.hash === '#maintenance' ? 'maintenance' : location.hash === '#domains' ? 'domains' : 'clients';
+var TABS = ['clients', 'acquisition', 'maintenance', 'domains', 'retainers', 'health'];
+var currentTab = TABS.indexOf(location.hash.slice(1)) > 0 ? location.hash.slice(1) : 'clients';
 
 function render() {
     document.getElementById('loading').style.display = 'none';
@@ -4355,6 +4364,183 @@ function renderDomainsTab() {
 
 /* ── Helpers ── */
 
+// ── Retainer renewals ────────────────────────────────────────────────────────
+// Retainer clients live in the CRM project, not this one. Their renewal day is
+// a stored CRM fact (clients.renewal_day) and is NOT the launch day — Denair
+// launched on the 23rd and renews on the 29th, Hammer launched on the 14th and
+// renews on the 2nd. The server mirrors the same date maths that drives the
+// 7/3/1 pre-renewal notices, so this table cannot disagree with those emails.
+var _retainersData = null;
+var _retainersFilter = { agreement: 'all', inactive: false };
+
+function _retMoney(v, cur) {
+    if (v == null || v === '') return '—';
+    var sym = { usd: '$', cad: 'CA$', aud: 'A$', gbp: '£', eur: '€' }[cur] || '';
+    return sym + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function _retDays(d) {
+    if (d == null) return '—';
+    if (d < 0) return Math.abs(d) + 'd ago';
+    if (d === 0) return 'today';
+    if (d === 1) return 'tomorrow';
+    return d + ' days';
+}
+
+function _retDaysColor(urgency) {
+    return { crit: '#ef4444', warn: '#f59e0b', soon: '#e2e8f0' }[urgency] || '#64748b';
+}
+
+function _retAgreementBadge(t) {
+    var m = {
+        month_to_month: { bg: '#1e3a5f', c: '#93c5fd', l: 'MONTH-TO-MONTH' },
+        multi_month: { bg: '#064e3b', c: '#6ee7b7', l: 'MULTI-MONTH' },
+        prepaid: { bg: '#312e81', c: '#c7d2fe', l: 'PREPAID' }
+    };
+    var x = m[t] || { bg: '#1e293b', c: '#64748b', l: (t || '?').toUpperCase() };
+    return '<span style="font-size:10px;padding:2px 8px;border-radius:4px;background:' + x.bg +
+        ';color:' + x.c + ';font-weight:600;white-space:nowrap;">' + x.l + '</span>';
+}
+
+function _retFlagChip(f) {
+    var bad = /no launch date|no renewal day|notices off|notices still fire/.test(f);
+    var col = bad ? { bg: '#7f1d1d', c: '#fca5a5' } : { bg: '#1e293b', c: '#94a3b8' };
+    return '<span style="font-size:9px;padding:1px 6px;border-radius:3px;background:' + col.bg +
+        ';color:' + col.c + ';margin-right:4px;white-space:nowrap;">' + esc(f) + '</span>';
+}
+
+function renderRetainersTab() {
+    if (!_retainersData) {
+        document.getElementById('retainers-stats').innerHTML = statBox('...', 'Loading');
+        document.getElementById('retainers-table-wrap').innerHTML =
+            '<div style="color:#64748b;padding:20px;text-align:center;">Loading retainer clients from the CRM...</div>';
+        fetch('/api/retainer-renewals' + _authQs(), { headers: _authHeaders() })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                // `d.rows` alone is not enough — an empty array is truthy, so a
+                // failed CRM read used to render as a clean "0 active retainers".
+                if (d && d.rows && d.rows.length && !d.error) { _retainersData = d; renderRetainersTab(); }
+                else {
+                    document.getElementById('retainers-stats').innerHTML = '';
+                    document.getElementById('retainers-table-wrap').innerHTML =
+                        '<div style="color:#ef4444;padding:20px;text-align:center;">Failed to load retainers' +
+                        (d && d.error ? ': ' + esc(d.error) : '') + '</div>';
+                }
+            })
+            .catch(function() {
+                document.getElementById('retainers-table-wrap').innerHTML =
+                    '<div style="color:#ef4444;padding:20px;text-align:center;">Failed to load retainers</div>';
+            });
+        return;
+    }
+
+    var s = _retainersData.summary || {};
+    document.getElementById('retainers-stats').innerHTML =
+        statBox(s.active || 0, 'Active Retainers') +
+        statBox(s.due_7d || 0, 'Renewing ≤ 7 Days', s.due_7d ? 'warn' : '') +
+        statBox(s.due_30d || 0, 'Renewing ≤ 30 Days') +
+        statBox(s.needs_attention || 0, 'Needs Attention', s.needs_attention ? 'warn' : '');
+
+    var mrr = s.mrr || {};
+    var mrrParts = Object.keys(mrr).sort().map(function(k) {
+        return _retMoney(mrr[k], k) + ' ' + k.toUpperCase();
+    });
+    document.getElementById('retainers-mrr').innerHTML = mrrParts.length
+        ? 'Monthly retainer value: <span style="color:#e2e8f0;font-weight:600;">' + mrrParts.join('</span> + <span style="color:#e2e8f0;font-weight:600;">') +
+          '</span> <span style="color:#64748b;">(not converted — currencies are shown as billed)</span>'
+        : '';
+
+    var f = _retainersFilter;
+    var btnS = function(active) { return 'padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:1px solid ' + (active ? '#22c55e' : '#334155') + ';background:' + (active ? '#064e3b' : 'transparent') + ';color:' + (active ? '#6ee7b7' : '#94a3b8') + ';margin-right:4px;'; };
+    var fhtml = '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">';
+    fhtml += '<div><span style="font-size:11px;color:#64748b;font-weight:600;margin-right:8px;">AGREEMENT</span>';
+    [['all', 'All'], ['month_to_month', 'Month-to-month'], ['prepaid', 'Prepaid'], ['multi_month', 'Multi-month']].forEach(function(v) {
+        fhtml += '<button onclick="_retainersFilter.agreement=\'' + v[0] + '\';renderRetainersTab()" style="' + btnS(f.agreement === v[0]) + '">' + v[1] + '</button>';
+    });
+    fhtml += '</div>';
+    fhtml += '<label style="font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:6px;cursor:pointer;">' +
+        '<input type="checkbox"' + (f.inactive ? ' checked' : '') +
+        ' onchange="_retainersFilter.inactive=this.checked;renderRetainersTab()" style="accent-color:#22c55e;">Show inactive</label>';
+    fhtml += '<button onclick="_retainersData=null;renderRetainersTab()" style="padding:6px 14px;font-size:12px;border-radius:6px;border:1px solid #334155;background:transparent;color:#94a3b8;cursor:pointer;margin-left:auto;">Refresh</button>';
+    fhtml += '</div>';
+    document.getElementById('retainers-filters').innerHTML = fhtml;
+
+    var rows = (_retainersData.rows || []).filter(function(r) {
+        if (!f.inactive && r.status !== 'active') return false;
+        if (f.agreement !== 'all' && r.agreement_type !== f.agreement) return false;
+        return true;
+    });
+
+    var html = '<div style="margin-bottom:8px;font-size:12px;color:#64748b;">Showing ' + rows.length +
+        ' of ' + (_retainersData.rows || []).length + ' retainer clients — as of ' + esc(_retainersData.as_of) + '</div>';
+    if (!rows.length) {
+        document.getElementById('retainers-table-wrap').innerHTML = html + '<div class="empty-state">No retainer clients match this filter.</div>';
+        return;
+    }
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">';
+    html += '<colgroup><col style="width:24%"><col style="width:130px"><col style="width:90px"><col style="width:100px">' +
+        '<col style="width:90px"><col style="width:60px"><col style="width:110px"><col style="width:95px"><col style="width:95px"></colgroup>';
+    html += '<thead><tr style="border-bottom:1px solid #1e293b;color:#64748b;text-align:left;position:sticky;top:0;background:#0f1117;z-index:1;">' +
+        '<th style="padding:8px 8px;">Client</th>' +
+        '<th style="padding:8px 8px;">Agreement</th>' +
+        '<th style="padding:8px 8px;">Retainer</th>' +
+        '<th style="padding:8px 8px;">Renews</th>' +
+        '<th style="padding:8px 8px;">In</th>' +
+        '<th style="padding:8px 8px;">Month</th>' +
+        '<th style="padding:8px 8px;">Next Notice</th>' +
+        '<th style="padding:8px 8px;">Launched</th>' +
+        '<th style="padding:8px 8px;">Last Paid</th></tr></thead><tbody>';
+
+    for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        var dim = r.status !== 'active' ? 'opacity:0.5;' : '';
+        var flags = (r.flags || []).map(_retFlagChip).join('');
+
+        // Where the renewal date came from, so a guessed date never reads as a fact.
+        var basisNote = r.basis === 'prepaid_term'
+                ? 'Prepaid block runs to this date, so no money is due before it.'
+            : r.basis === 'launch_date'
+                ? 'Estimated from the launch day — this client has no renewal_day set in the CRM.'
+            : r.renewal_day ? 'Renews on day ' + r.renewal_day + ' of each month.' : '';
+        if (r.anniversary && r.anniversary !== r.renewal_date) {
+            basisNote += ' Monthly anniversary: ' + r.anniversary + ' (what the 7/3/1 notices key on).';
+        }
+        var renewCell = r.renewal_date
+            ? '<span style="color:#f1f5f9;font-weight:600;">' + esc(r.renewal_date) + '</span>' +
+              (r.basis === 'prepaid_term' ? '<div style="font-size:9px;color:#c7d2fe;">prepaid term ends</div>'
+               : r.basis === 'launch_date' ? '<div style="font-size:9px;color:#f59e0b;">estimated</div>' : '')
+            : '<span style="color:#ef4444;">unknown</span>';
+
+        var noticeCell = r.notices
+            ? (r.next_notice
+                ? '<span style="color:#94a3b8;">' + esc(r.next_notice.date) + '</span>' +
+                  '<div style="font-size:9px;color:#64748b;">' + r.next_notice.touch + '-day notice</div>'
+                : '<span style="color:#64748b;">sent</span>')
+            : '<span style="color:#64748b;">—</span>';
+
+        html += '<tr style="border-bottom:1px solid #1e293b;' + dim + '" title="' + esc(basisNote) + '">' +
+            '<td style="padding:8px;color:#f1f5f9;font-weight:500;">' + esc(r.name) +
+                (flags ? '<div style="margin-top:3px;">' + flags + '</div>' : '') + '</td>' +
+            '<td style="padding:8px;">' + _retAgreementBadge(r.agreement_type) + '</td>' +
+            '<td style="padding:8px;color:#e2e8f0;font-variant-numeric:tabular-nums;">' + _retMoney(r.monthly_retainer, r.currency) +
+                (r.payment_terms ? '<div style="font-size:9px;color:#64748b;">' + esc(r.payment_terms) + '</div>' : '') + '</td>' +
+            '<td style="padding:8px;">' + renewCell + '</td>' +
+            '<td style="padding:8px;color:' + _retDaysColor(r.urgency) + ';font-weight:600;white-space:nowrap;">' + _retDays(r.days_until) + '</td>' +
+            '<td style="padding:8px;color:#94a3b8;">' + (r.month_number != null ? 'M' + r.month_number : '—') + '</td>' +
+            '<td style="padding:8px;">' + noticeCell + '</td>' +
+            '<td style="padding:8px;color:#64748b;">' + esc(r.launch_date || '—') + '</td>' +
+            '<td style="padding:8px;color:#64748b;">' + esc(r.last_paid || '—') + '</td>' +
+            '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div style="margin-top:14px;padding-bottom:24px;font-size:11px;color:#475569;line-height:1.6;">' +
+        'Source: CRM <code style="color:#64748b;">clients</code> where <code style="color:#64748b;">billing_model = \'retainer\'</code>. ' +
+        'The renewal date comes from <code style="color:#64748b;">renewal_day</code>, a stored fact that is not the launch day. ' +
+        '<code style="color:#64748b;">Last Paid</code> is when payment landed, not when we billed, so it is never used to work out the renewal date. ' +
+        'Month-to-month clients get 7/3/1-day notices to Aidan; prepaid and multi-month clients do not.</div>';
+    document.getElementById('retainers-table-wrap').innerHTML = html;
+}
+
 function showTab(tab) {
     currentTab = tab;
     location.hash = tab === 'clients' ? '' : tab;
@@ -4362,12 +4548,14 @@ function showTab(tab) {
     document.querySelectorAll('.tab').forEach(function(t) {
         if (t.textContent.trim().toLowerCase() === (tab === 'clients' ? 'clients' : tab)) t.classList.add('active');
     });
-    ['clients', 'acquisition', 'maintenance', 'domains', 'health'].forEach(function(id) {
+    ['clients', 'acquisition', 'maintenance', 'domains', 'retainers', 'health'].forEach(function(id) {
         var show = tab === id;
-        document.getElementById(id + '-tab').style.display = show ? (id === 'domains' ? 'flex' : 'block') : 'none';
+        var flex = id === 'domains' || id === 'retainers';
+        document.getElementById(id + '-tab').style.display = show ? (flex ? 'flex' : 'block') : 'none';
     });
     if (tab === 'maintenance') renderMaintenance();
     if (tab === 'domains') renderDomainsTab();
+    if (tab === 'retainers') renderRetainersTab();
     if (tab === 'health') { var f = document.getElementById('health-frame'); if (f && !f.src) f.src = '/health.html'; }
 }
 

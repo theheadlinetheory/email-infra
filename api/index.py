@@ -222,6 +222,25 @@ def health_snapshot():
         out["zapmail_removals"] = zr.check_removals()
     except Exception as ze:
         out["zapmail_removals"] = {"error": str(ze)}
+
+    # Same deal for the infra-decision countdown: it is the only thing that says
+    # "you have 7 days to decide on Galaxy" before the mailboxes silently re-bill.
+    # Isolated so a CRM outage cannot take the health snapshot down with it.
+    try:
+        import infra_lifecycle as ilc
+        out["infra_lifecycle"] = ilc.post_notices(ilc.build(), dry_run=False)
+    except Exception as le:
+        out["infra_lifecycle"] = {"error": str(le)}
+
+    # Domain-expiry alerting. Both inputs were already pulled daily and nothing
+    # joined them, which is how 69 live senders came within days of lapsing for
+    # the sake of $244. Isolated like the others so one failure cannot take the
+    # snapshot down.
+    try:
+        import domain_expiry_alert as dea
+        out["domain_expiry"] = dea.post(dea.build(), dry_run=False)
+    except Exception as de:
+        out["domain_expiry"] = {"error": str(de)}
     return _cors(jsonify(out)), status
 
 
@@ -1520,6 +1539,91 @@ def subscriptions():
         "total_mailboxes": total_mailboxes,
         "action_needed_count": action_needed_count,
     }))
+
+
+@app.route("/api/retainer-renewals")
+def retainer_renewals():
+    """Month-to-month retainer clients and when each one next renews.
+
+    Reads the CRM project live (there are ~10 rows) rather than going through
+    this project's cache — a stale renewal date is worse than a slow one.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import retainers
+        return _cors(jsonify(retainers.build_renewals(request.args.get("as_of"))))
+    except Exception as e:
+        # No `rows` key on the error path: `[]` is truthy in JS, so returning an
+        # empty list here made a failed CRM read render as "0 active retainers"
+        # instead of an error banner.
+        return _cors(jsonify({"error": str(e)})), 500
+
+
+@app.route("/api/domain-expiry")
+def domain_expiry_route():
+    """Domains about to lapse while still carrying live senders.
+
+    The registrar is the only real auto-renew switch — Zapmail's `autoRenew`
+    field reads false on every domain and means nothing.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import domain_expiry_alert as dea
+        board = dea.build()
+        if request.args.get("alert") == "1":
+            board["alert_text"] = dea.format_alert(board)
+        return _cors(jsonify(board))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/infra-lifecycle")
+def infra_lifecycle_route():
+    """Per-client infrastructure decision deadlines and hard stops.
+
+    `retainer-renewals` answers "when does the client next pay?". This answers
+    "when must we stop buying their inboxes, and when do we need the answer?" —
+    a different date, because the warm-up starts the Zapmail billing clock about
+    two weeks before the engagement starts.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import infra_lifecycle as ilc
+        board = ilc.build(ilc._parse(request.args.get("as_of")))
+        if request.args.get("notices") == "1":
+            board["notices"] = ilc.post_notices(board, dry_run=True)["messages"]
+        return _cors(jsonify(board))
+    except Exception as e:
+        import traceback
+        # Deliberately a 500 with no rows key: a CRM read that returns nothing
+        # must not render as an empty board with nothing due.
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/infra-lifecycle/decision", methods=["POST", "OPTIONS"])
+def infra_lifecycle_decision():
+    """Record renew/stop for a client so the countdown stops chasing it.
+
+    Body: {client, decision: "renew"|"stop", note?}
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    body = request.get_json(silent=True) or {}
+    try:
+        import infra_lifecycle as ilc
+        rec = ilc.record_decision(body.get("client", ""), body.get("decision", ""),
+                                  note=body.get("note", ""), by=body.get("by", "dashboard"))
+        return _cors(jsonify({"ok": True, "decision": rec}))
+    except ValueError as e:
+        return _cors(jsonify({"error": str(e)})), 400
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
 
 
 @app.route("/api/domain-renewals")

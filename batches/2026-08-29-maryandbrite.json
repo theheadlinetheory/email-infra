@@ -1,0 +1,72 @@
+{
+  "_comment": "Mary & Brite's Christmas Lites (mandblights.com) — Medford OR / Rogue Valley, Southern Oregon. Christmas light installs + year-round outdoor/permanent (Jellyfish) lighting, residential + commercial + municipal. Custom client infrastructure, planned 2026-08-29. 12 brand-derived .info domains x 3 Sean Reynolds inboxes = 36, ALL GOOGLE (Tim's call 2026-08-29 — the McFarlane / Merry & Bright pattern, not the Landry's provider split). All 12 confirmed available + non-premium on Spaceship 2026-08-29 and diffed against the 1,133 domains THT already owns (1,016 Spaceship + 781 Zapmail, union). NOTE: deliberately ZERO prefix/suffix modifiers — the brand yields enough distinct roots (maryandbrite / marybrite / mandb x lights / lites / lighting / christmaslights / holidaylights / outdoorlighting / displays) that we do not have to reuse the go/hello/meet/today modifier set that Merry & Bright Christmas Lights took on 2026-08-22. Two Christmas-lighting clients sharing a modifier fingerprint is exactly the clustering we avoid. Domains: Spaceship. Inboxes: Zapmail. Run: python scripts/buy_batch_domains.py --batch batches/2026-08-29-maryandbrite.json --execute, then acq_outlook.py --batch batches/2026-08-29-maryandbrite.json --label 'Mary & Brite Google' --execute --no-buy once NS propagate. TAG carries a geo disambiguator (Tim's call 2026-08-29): 'Merry & Bright Christmas Lights Group A/B' (Pittsburgh) is a DIFFERENT client already in the SmartLead tag list and sits one character away in the picker. GROUP_LETTER is tag.split()[-1] so '(Medford)' is harmless — it only feeds the default STATE_KEY, which apply_batch overrides from the label.",
+  "batches": [
+    {
+      "label": "Mary & Brite Google",
+      "tag": "Mary & Brite Christmas Lites (Medford) Group A",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "https://mandblights.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "marybritelights.info",
+        "maryandbritelites.info",
+        "marybritelites.info",
+        "maryandbritelighting.info",
+        "marybritelighting.info",
+        "maryandbritechristmaslights.info",
+        "maryandbriteholidaylights.info",
+        "maryandbriteoutdoorlighting.info",
+        "maryandbritedisplays.info",
+        "maryandbritechristmaslites.info",
+        "mandbchristmaslights.info",
+        "maryandbriteinstalls.info"
+      ],
+      "spares": [
+        "mandboutdoorlighting.info",
+        "maryandbritemedford.info",
+        "mandblightsmedford.info"
+      ],
+      "_lost_to_frontrunning": {
+        "domains": [
+          "mandblights.info",
+          "maryandbritelights.info",
+          "maryandbriteslights.info"
+        ],
+        "note": "Confirmed AVAILABLE + non-premium by two separate Spaceship checks (the last at 2026-08-28T23:52Z). Seven minutes later all three were registered AT SPACESHIP within 66 seconds of each other (23:59:13 / 23:59:15 / 00:00:19 UTC) and parked on launch1/launch2.spaceship.net — 14 min before our own purchase run reached them. Registry RDAP (rdap.identitydigital.services) is the evidence; the Spaceship availability API just says 'taken'. These were the three most brand-exact names in the set (the .com mirror + the two closest matches); the other 9 and all 6 spares were untouched. Treat Spaceship availability checks as LEAKY: check and buy in the same run, minutes apart at most, and never publish a wide sweep hours ahead of the purchase."
+      }
+    },
+    {
+      "label": "Mary & Brite Google Wave 2",
+      "tag": "Mary & Brite Christmas Lites (Medford) Group A",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "https://mandblights.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "maryandbriteoutdoorlighting.info",
+        "maryandbritedisplays.info"
+      ],
+      "spares": [],
+      "_note": "The 2 of 12 that missed run 1. Both were among the 6 whose FIRST Zapmail connect silently no-opped (200 'Success', but absent from zm_list_domains() and CloudNS SOA = undefined.localhost = no zone). A direct zm_connect_domain() re-issue at 04:26 fixed all 6; 4 built their zone within ~3 min and made run 1's last polls, these 2 took ~25 min. Split to its own LABEL (own STATE_KEY) but the SAME TAG on purpose: re-running the parent label would make step 5 wait on and re-export run 1's 30 live mailboxes. This batch BUYS: 6 Google slots (~$18/mo). Domains already registered - always run with --no-buy."
+    }
+  ]
+}

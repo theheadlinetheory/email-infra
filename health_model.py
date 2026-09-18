@@ -69,9 +69,25 @@ DEFAULT_CONFIG = {
     # status bands from the blended score
     "band_healthy": 80, "band_watch": 60, "band_atrisk": 40,
 
-    # data-quality gate
-    "min_sent_3d": 30,         # fewer sends than this over 3 days -> INSUFFICIENT
-    "warmup_days": 14,         # inboxes younger than this are WARMING, not scored
+    # --- data-quality gate ---
+    # The window is measured in SENDING days, not calendar days. THT sends only on
+    # weekdays, so a 3-CALENDAR-day window holds 3 sending days on Wed/Thu/Fri, 2 on
+    # Tue/Sat and just 1 on Mon/Sun -- an inbox at the full 15/day cap could reach
+    # only 15 sends, so on two days a week the ENTIRE fleet scored `insufficient`
+    # and no inbox could be flagged burned at all.
+    #
+    # 105 sends over 10 sending days (two working weeks, ~7/day against the 15/day
+    # cap) is the empirical optimum, measured on 22 real sending days of fleet data
+    # (2026-08-11..09-09, 258k sends). Against the fleet baseline (3.31% bounce,
+    # 1.76% reply) the chance a perfectly average inbox trips the burn rule anyway
+    # falls 37.4% -> 7.2%, while predictive lift peaks at 1.79x. Lower gates are
+    # noise (at 30 sends a SINGLE bounce is 3.3% and trips it); higher gates are
+    # unreachable -- 150 is the hard ceiling for 10 days and only 12% of inboxes
+    # get there, so coverage collapses to 12% and lift falls back to 1.33x.
+    "window_sending_days": 10,  # window length, counted in days that actually sent
+    "min_sends_window": 105,    # fewer sends than this in the window -> INSUFFICIENT
+    "min_sent_3d": 30,          # DEPRECATED legacy alias; only used if the above is absent
+    "warmup_days": 14,          # inboxes younger than this are WARMING, not scored
 
     # trend: reply drop (pts) vs the prior 3-day window that pulls a HEALTHY
     # inbox down into WATCH even before absolute thresholds are hit
@@ -153,9 +169,13 @@ def score_inbox(signals, cfg=None):
                 "subscores": {}, "reasons": ["no sends — idle"]}
 
     # --- data-quality gate: some volume, but too little to trust the rates ---
-    if sent < cfg["min_sent_3d"]:
+    min_sends = cfg.get("min_sends_window") or cfg.get("min_sent_3d", 30)
+    if sent < min_sends:
+        nd = signals.get("window_sending_days")
+        span = f"{nd} sending day{'s' if nd != 1 else ''}" if nd else "the window"
         return {"score": None, "status": INSUFFICIENT, "label": STATUS_LABEL[INSUFFICIENT],
-                "subscores": {}, "reasons": [f"only {sent} sends in 3d"]}
+                "subscores": {}, "reasons": [f"only {sent} sends over {span} "
+                                             f"(need {min_sends} to judge rates)"]}
 
     subs = sub_scores(signals, cfg)
     score = blended_score(subs, cfg)
@@ -217,28 +237,62 @@ def _worse(a, b):
     return a if STATUS_RANK.get(a, 0) >= STATUS_RANK.get(b, 0) else b
 
 
-def rolling(daily_rows, days=3):
-    """Aggregate the most recent `days` daily snapshot rows for one inbox into
-    window signals. Each row: {date, reply_rate, bounce_rate, ooo_rate, sent}.
-    Returns (window_signals, prev_window_reply) for trend.
+def rolling(daily_rows, days=None, cfg=None):
+    """Aggregate one inbox's recent daily snapshots into window signals.
+    Each row: {date, reply_rate, bounce_rate, ooo_rate, sent}.
+
+    Two deliberate choices, both of which the old 3-calendar-day mean got wrong:
+
+    1. The window counts SENDING days (sent > 0), not calendar days. THT sends
+       Mon-Fri, so a trailing 3-calendar-day window held only 1 sending day on
+       Mon/Sun -- capping sent at 15 and making the whole fleet unscoreable two
+       days a week. Skipping zero-send days makes the window mean the same thing
+       whatever weekday it is evaluated on.
+
+    2. Rates are POOLED (weighted by that day's sends), not averaged. An
+       unweighted mean of daily ratios lets a 2-send day with 1 bounce (50%)
+       outvote a 15-send day with 0 bounces, reporting 25% where the truth is
+       1/17 = 5.9%. Pooling is just total_bounces / total_sends.
+
+    Daily rows carry rates, not counts (the count columns were never migrated),
+    so counts are reconstructed as rate x sent -- exact to rounding, since
+    SmartLead derives the daily rate from those same counts.
     """
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    days = days or cfg.get("window_sending_days", 10)
+
     rows = sorted([r for r in daily_rows if r.get("date")], key=lambda r: r["date"])
-    recent = rows[-days:]
-    prior = rows[-2 * days:-days]
+    active = [r for r in rows if (r.get("sent") or 0) > 0]
+    recent = active[-days:]
+    prior = active[-2 * days:-days]
+
+    def _pooled(rs, key):
+        """Send-weighted rate over the window, or None if nothing measurable."""
+        num = den = 0.0
+        for r in rs:
+            v, sent = r.get(key), int(r.get("sent") or 0)
+            if v is None or sent <= 0:
+                continue
+            num += (float(v) / 100.0) * sent
+            den += sent
+        return round(100.0 * num / den, 2) if den else None
 
     def _avg(rs, key):
+        """Plain mean -- for signals that aren't per-send rates (placement)."""
         vals = [r[key] for r in rs if r.get(key) is not None]
         return round(sum(vals) / len(vals), 2) if vals else None
 
-    sig = {
-        "reply": _avg(recent, "reply_rate"),
-        "bounce": _avg(recent, "bounce_rate"),
-        "ooo": _avg(recent, "ooo_rate"),
+    return {
+        "reply": _pooled(recent, "reply_rate"),
+        "bounce": _pooled(recent, "bounce_rate"),
+        "ooo": _pooled(recent, "ooo_rate"),
         "placement": _avg(recent, "placement"),
+        # key name kept for the status table / dashboard column; it is now
+        # "sends over the window", not "sends over 3 calendar days".
         "sent_3d": sum(int(r.get("sent") or 0) for r in recent),
-        "reply_prev": _avg(prior, "reply_rate"),
+        "window_sending_days": len(recent),
+        "reply_prev": _pooled(prior, "reply_rate"),
     }
-    return sig
 
 
 if __name__ == "__main__":

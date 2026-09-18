@@ -80,14 +80,22 @@ def domain_view() -> dict:
 
     domains = []
     for dom, rows in by_dom.items():
-        # A burned inbox only matters here if it's ACTUALLY SENDING (in an active
-        # campaign). One that was burned and then had its campaign paused/completed
-        # is IDLE now — its bounce/reply are just stale metrics; it doesn't need
-        # reallocating and the domain shouldn't be cancel-flagged just because it
-        # stopped sending. Those show as idle in the All-inboxes view, not here.
-        burned = [r for r in rows if r.get("status") == BURNED and _active(r.get("campaigns"))]
+        # Burned inboxes split by whether they're still ACTUALLY SENDING.
+        # Actively-sending burned inboxes must be reallocated before the domain
+        # can be cancelled; idle ones (campaign paused/completed) have no live
+        # campaign to swap out of, so they're cancel-ready as-is.
+        #
+        # Domains where EVERY burned inbox is idle used to be dropped here, on the
+        # grounds that they need no reallocation. But that also removed the only
+        # place the domain could be cancelled from — so a domain that had stopped
+        # sending entirely, the purest wasted Zapmail spend there is, was invisible
+        # and billed forever. They're included now, flagged `idle_only`, and sorted
+        # below the domains that still need reallocation.
+        burned_active = [r for r in rows if r.get("status") == BURNED and _active(r.get("campaigns"))]
+        burned_idle = [r for r in rows if r.get("status") == BURNED and not _active(r.get("campaigns"))]
+        burned = burned_active + burned_idle
         if not burned:
-            continue  # no actively-sending burned inbox on this domain — skip
+            continue  # no burned inbox on this domain at all — skip
         at_risk = [r for r in rows if r.get("status") == AT_RISK]
         healthy = [r for r in rows if r.get("status") not in (BURNED, AT_RISK)]
         niche = hr._niche(dom)
@@ -142,6 +150,8 @@ def domain_view() -> dict:
             "reserve_pool": pool,
             "reserve_ok": pool >= len(need_realloc),
             "scheduled": dom in scheduled_domains,
+            # every burned inbox here is idle -> nothing to reallocate, cancel directly
+            "idle_only": not burned_active,
             # clean cancel = nothing healthy actively sending would be lost AND no
             # burned still actively sending (idle/paused burned don't block a cancel)
             "clean_cancel": len(collateral) == 0 and len(need_realloc) == 0,
@@ -152,7 +162,9 @@ def domain_view() -> dict:
         bs = [m["bounce_3d"] for m in d["burned_mailboxes"] if m["bounce_3d"] is not None]
         return sum(bs) / len(bs) if bs else 0
 
-    domains.sort(key=lambda d: (d["counts"]["burned"], d["clean_cancel"], _avg_bounce(d)),
+    # domains still actively burning lead; fully-idle ones follow as cancel candidates
+    domains.sort(key=lambda d: (not d["idle_only"], d["counts"]["burned"],
+                                d["clean_cancel"], _avg_bounce(d)),
                  reverse=True)
 
     summary = {
@@ -160,6 +172,9 @@ def domain_view() -> dict:
         "burned_mailboxes": sum(d["counts"]["burned"] for d in domains),
         "fully_dead": sum(1 for d in domains if d["counts"]["burned"] == d["total"]),
         "cancelable_now": sum(1 for d in domains if d["clean_cancel"] and not d["scheduled"]),
+        "idle_only_domains": sum(1 for d in domains if d["idle_only"] and not d["scheduled"]),
+        "idle_only_mailboxes": sum(d["counts"]["burned"] for d in domains
+                                   if d["idle_only"] and not d["scheduled"]),
         "already_scheduled": sum(1 for d in domains if d["scheduled"]),
     }
     return {"summary": summary, "domains": domains}

@@ -1,0 +1,27 @@
+{
+  "batches": [
+    {
+      "label": "McFarlane Douglass & Companies Group A",
+      "provider": "GOOGLE",
+      "tag": "McFarlane Douglass & Companies Group A",
+      "sender": "sean_reynolds",
+      "forward_to": "https://mcfarlanedouglass.com/",
+      "domains": [
+        "mcfarlanedouglasspros.info",
+        "mcfarlanedouglassservices.info",
+        "meetmcfarlanedouglass.info",
+        "teammcfarlanedouglass.info",
+        "mcfarlanedouglassonline.info",
+        "mcfarlanedouglasstoday.info",
+        "mcfarlanedouglasshub.info",
+        "joinmcfarlanedouglass.info",
+        "mcfarlanedouglassreach.info",
+        "mcfarlanedouglassnow.info",
+        "hellomcfarlanedouglass.info",
+        "mcfarlanedouglassservice.info",
+        "mcfarlanedouglassemail.info",
+        "mcfarlanedouglassdirect.info"
+      ]
+    }
+  ]
+}

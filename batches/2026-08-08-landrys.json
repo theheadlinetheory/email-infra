@@ -1,0 +1,65 @@
+{
+  "_comment": "Landry's Landscape (landryslandscape.com) — custom client infrastructure, ordered 2026-08-08. 14 .info domains x 3 Sean Reynolds inboxes = 42, split 10 Google (30 inboxes) + 4 Outlook (12 inboxes) so the client is not single-provider. Both halves carry the SAME SmartLead tag 'Landry's Landscape Group A' — the split is provider-only, not two rotation groups. Domains are brand-derived (the acquisition-batch pattern applied to the client's brand instead of ours), all confirmed available + non-premium on Spaceship and diffed against the 1,211 domains THT already owns or sends from. Domains: Spaceship. Inboxes: Zapmail. Run: python scripts/buy_batch_domains.py --batch batches/2026-08-08-landrys.json --execute, then acq_outlook.py --batch ... --label '<label>' --execute --no-buy for each half.",
+  "batches": [
+    {
+      "label": "Landry's Landscape Google",
+      "tag": "Landry's Landscape Group A",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "https://www.landryslandscape.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "landryslandscape.info",
+        "landryslandscapes.info",
+        "landrylandscape.info",
+        "landryslandscapeco.info",
+        "landryslandscapegroup.info",
+        "landryslandscapecare.info",
+        "landryslandscapeteam.info",
+        "landryslandscapepros.info",
+        "landryslandscapeworks.info",
+        "golandryslandscape.info"
+      ],
+      "spares": [
+        "landryslandscapehq.info",
+        "landryslandscapecrew.info"
+      ]
+    },
+    {
+      "label": "Landry's Landscape Outlook",
+      "tag": "Landry's Landscape Group A",
+      "provider": "MICROSOFT",
+      "sender": "sean_reynolds",
+      "forward_to": "https://www.landryslandscape.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "landryslandscapedirect.info",
+        "landryslandscapepartners.info",
+        "landrysgroundscare.info",
+        "landryslandcare.info"
+      ],
+      "spares": [
+        "landryspropertycare.info",
+        "thelandryslandscape.info"
+      ]
+    }
+  ]
+}

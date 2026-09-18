@@ -28,6 +28,7 @@ if env_path.exists():
 import db as store
 store._CACHE_WRITE_ENABLED = True
 from setup import sl_gql, _RateLimiter, SMARTLEAD_GQL, SMARTLEAD_JWT
+from setup import sl_internal_headers as _setup_internal_headers
 from tag_utils import parse_group_tag, get_group_tag_from_account
 
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
@@ -41,7 +42,16 @@ CRM_SUPABASE_KEY = os.environ.get("CRM_SUPABASE_KEY", "")
 
 
 def sl_internal_headers():
-    return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
+    """Auth for SmartLead's INTERNAL API (analytics/health metrics).
+
+    Delegates to setup's version, which mints a fresh JWT from
+    SMARTLEAD_LOGIN_EMAIL/PASSWORD. Defining this locally off the static
+    SMARTLEAD_JWT env var shadowed that auto-refresh: the var is blank by
+    default, so name-wise-health-metrics 401'd, fetch_health_metrics returned
+    {}, and sync aborted at "Got 0 health records" before ever rebuilding the
+    overview - leaving the cache (and every reserve count read off it) frozen.
+    """
+    return _setup_internal_headers()
 
 
 def fetch_all_accounts():
@@ -353,6 +363,12 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
             email = a.get("from_email", "")
             domain = email.split("@")[-1] if "@" in email else ""
             h = health.get(email, {})
+            # `health` is a TRAILING 7-DAY window; `health_today` is just today.
+            # Both are carried explicitly so no consumer has to guess which one a
+            # bare `sent` means. inbox_health_daily rows must use the _today
+            # fields - writing the 7-day figure into a row keyed by one date made
+            # a day's sends read ~7x high and corrupted every rolling window.
+            ht = health_today.get(email, {})
             acct_camps = campaign_map.get(email, [])
             raw_rep = (a.get("warmup_details") or {}).get("warmup_reputation", "?")
             warmup_reputation = None
@@ -368,6 +384,10 @@ def build_overview(accounts, health, crm_names, campaign_map, health_today=None)
                 "bounce_rate": parse_rate(h.get("bounce_rate")),
                 "reply_rate": parse_rate(h.get("reply_rate")),
                 "sent": h.get("sent", 0),
+                "sent_today": ht.get("sent", 0),
+                "bounce_rate_today": parse_rate(ht.get("bounce_rate")),
+                "reply_rate_today": parse_rate(ht.get("reply_rate")),
+                "has_today": bool(ht),
                 "smtp_ok": bool(a.get("is_smtp_success")),
                 "warmup_enabled": bool(a.get("warmup_enabled")),
                 "in_campaign": len(acct_camps) > 0,
@@ -711,6 +731,12 @@ def sync(progress_cb=None):
     # we just built; writes health_fleet cache). No SmartLead/JWT call.
     try:
         import health_snapshot
+        # Rebuild the recent daily rows from SmartLead's per-date endpoint FIRST,
+        # so the rolling window never depends on what time of day this sync ran
+        # (at 04:00 nothing has sent yet and today's figures are all zero).
+        bf = health_snapshot.backfill_daily(days=14)
+        print(f"  Daily backfill: {bf.get('rows_written', 0)} rows"
+              + (f", skipped {bf['skipped']}" if bf.get("skipped") else ""))
         hres = health_snapshot.snapshot_daily(overview=overview)
         print(f"  Health V1: {hres.get('inboxes', 0)} inboxes scored — {hres.get('counts')}")
     except Exception as e:

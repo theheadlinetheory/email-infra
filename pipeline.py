@@ -566,16 +566,13 @@ def step_smartlead_tags(pipeline):
                 if cn == client_lower or client_lower in cn or cn in client_lower:
                     sl_client_id = c["id"]
                     break
+            # Never create one here — a tht.<slug>.client@gmail.com client
+            # blocks the CRM's Closed Won step from creating the client's real
+            # portal on their own address. No portal yet is expected when
+            # provisioning runs ahead of the deal card; clientId is optional.
             if not sl_client_id:
-                slug = client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
-                cl_email = f"tht.{slug}.client@gmail.com"
-                cr = requests.post(
-                    f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
-                    json={"name": client_name, "email": cl_email, "password": "THTclient2026!"},
-                    timeout=30,
-                )
-                if cr.status_code == 201:
-                    sl_client_id = cr.json().get("clientId")
+                log.info("No SmartLead portal for %s yet — tagging inboxes "
+                         "but leaving them unassigned", client_name)
     except Exception as e:
         log.warning("SmartLead client lookup failed: %s", e)
 

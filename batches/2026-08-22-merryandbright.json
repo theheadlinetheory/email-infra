@@ -1,0 +1,106 @@
+{
+  "_comment": "Merry & Bright Christmas Lights (merryandbrightchristmaslights.com) — Carnegie/Pittsburgh PA holiday lighting. Custom client infrastructure, planned 2026-08-22. 14 .info domains x 3 Sean Reynolds inboxes = 42, ALL GOOGLE (Tim's call 2026-08-22, the McFarlane pattern rather than the Landry's provider split). Domains are brand-derived, all confirmed available + non-premium on Spaceship 2026-08-22 and diffed against the 987 domains THT already owns. Modifiers chosen from the low-frequency tail of our existing fleet (go/hello/meet/today all <8 uses) so these do not cluster into a detectable network; pros/crew/group/team/service/outdoor deliberately avoided as they run 48-85 uses each. Domains: Spaceship. Inboxes: Zapmail. Run: python scripts/buy_batch_domains.py --batch batches/2026-08-22-merryandbright.json --execute, then acq_outlook.py --batch batches/2026-08-22-merryandbright.json --label 'Merry & Bright Google' --execute --no-buy once NS propagate.",
+  "batches": [
+    {
+      "label": "Merry & Bright Google",
+      "tag": "Merry & Bright Christmas Lights Group A",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "https://merryandbrightchristmaslights.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "merryandbrightchristmaslights.info",
+        "merrybrightchristmaslights.info",
+        "merryandbrightlights.info",
+        "merrybrightlights.info",
+        "merryandbrightlighting.info",
+        "merrybrightlighting.info",
+        "merryandbrightholidaylights.info",
+        "merryandbrightdisplays.info",
+        "merryandbrightinstalls.info",
+        "merryandbrightpgh.info",
+        "gomerryandbrightlights.info",
+        "hellomerryandbrightlights.info",
+        "meetmerryandbrightlights.info",
+        "merryandbrightlightstoday.info"
+      ],
+      "spares": [
+        "joinmerryandbrightlights.info",
+        "themerryandbrightlights.info",
+        "merryandbrightlightsonline.info",
+        "merryandbrightlightspgh.info",
+        "merryandbrightlightsnow.info",
+        "merryandbrightco.info"
+      ]
+    },
+    {
+      "label": "Merry & Bright Google Resume",
+      "tag": "Merry & Bright Christmas Lights Group A",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "https://merryandbrightchristmaslights.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "merryandbrightchristmaslights.info",
+        "merrybrightchristmaslights.info",
+        "merryandbrightlights.info",
+        "merrybrightlights.info",
+        "merryandbrightlighting.info",
+        "merrybrightlighting.info",
+        "merryandbrightholidaylights.info",
+        "merryandbrightdisplays.info",
+        "merryandbrightinstalls.info",
+        "gomerryandbrightlights.info",
+        "hellomerryandbrightlights.info",
+        "meetmerryandbrightlights.info",
+        "merryandbrightlightstoday.info"
+      ],
+      "spares": [],
+      "_note": "The 13 of 14 domains that connected to Zapmail on the 2026-08-22 first run and already have 3 mailboxes each. Split out so the finishing run (export->tag->warmup) does not spend 60 polls waiting on merryandbrightpgh.info, whose NS delegation the registry never published. Same tag as the parent batch on purpose - one client group, two runs."
+    },
+    {
+      "label": "Merry & Bright Google PGH",
+      "tag": "Merry & Bright Christmas Lights Group A",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "https://merryandbrightchristmaslights.com/",
+      "domain_cost": 4,
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "merryandbrightlightspgh.info"
+      ],
+      "spares": [
+        "merryandbrightlightsnow.info",
+        "merryandbrightco.info",
+        "themerryandbrightlights.info"
+      ],
+      "_note": "REPLACEMENT for merryandbrightpgh.info, swapped 2026-08-25 (Tim's call). The original was registered 2026-08-21 and charged for, but the .info registry never published NS or SOA for it - still dead 3 days later - so Zapmail could never connect it. Registrar record looks healthy (registered / verificationStatus success / no EPP hold / CloudNS set and re-pushed), which is exactly why it is worth a support ticket rather than a retry. merryandbrightlightspgh.info keeps the Pittsburgh geo angle. This batch BUYS: 1 domain (~$4) + 3 Google slots (~$9/mo)."
+    }
+  ]
+}

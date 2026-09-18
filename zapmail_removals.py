@@ -37,11 +37,23 @@ import db as store
 
 ZK = (os.environ.get("ZAPMAIL_API_KEY") or "").strip()
 ZBASE = "https://api.zapmail.ai/api/v2"
-ZH = {
-    "Content-Type": "application/json",
-    "x-auth-zapmail": ZK,
-    "x-service-provider": "GOOGLE",
-}
+# Zapmail partitions its inventory by x-service-provider: a GOOGLE-headed request
+# cannot see MICROSOFT domains or mailboxes AT ALL, and vice versa. Scanning only
+# GOOGLE silently excluded the entire Outlook fleet from removal detection — those
+# mailboxes could vanish on their billing date and nothing here would notice. Every
+# scan now walks both providers.
+PROVIDERS = ("GOOGLE", "MICROSOFT")
+
+
+def _zh(provider="GOOGLE"):
+    return {
+        "Content-Type": "application/json",
+        "x-auth-zapmail": ZK,
+        "x-service-provider": provider,
+    }
+
+
+ZH = _zh("GOOGLE")   # kept for callers predating the multi-provider scan
 
 # Dedicated channel webhook, else fall back to the repo-wide alerts webhook.
 SLACK_WEBHOOK = (
@@ -81,10 +93,11 @@ def _today():
 # Zapmail inventory
 # ---------------------------------------------------------------------------
 
-def _get_page(page):
+def _get_page(page, provider="GOOGLE"):
     for _ in range(8):
         try:
-            r = requests.get(f"{ZBASE}/domains?page={page}&limit=100", headers=ZH, timeout=90)
+            r = requests.get(f"{ZBASE}/domains?page={page}&limit=100",
+                             headers=_zh(provider), timeout=90)
             if r.status_code == 200 and r.text.strip():
                 return r.json().get("data", {})
         except requests.RequestException:
@@ -102,62 +115,78 @@ def snapshot_mailboxes():
     could not be completed (never overwrite a good snapshot with a partial one).
     Side effect: on a complete scan, refreshes the cached domain-name -> id map
     (DOMID_KEY) so cancel_domains() can resolve ids instantly."""
-    out, dom_ids, page, tot, failed = {}, {}, 1, 99, 0
-    while page <= tot:
-        d = _get_page(page)
-        if not d:
-            failed += 1
+    out, dom_ids, dom_provs, failed = {}, {}, {}, 0
+    for provider in PROVIDERS:
+        page, tot = 1, 99
+        while page <= tot:
+            d = _get_page(page, provider)
+            if not d:
+                failed += 1
+                page += 1
+                continue
+            tot = d.get("totalPages", 1)
+            for dom in d.get("domains", []):
+                dn = dom.get("domain")
+                if dn and dom.get("id"):
+                    dom_ids[dn] = dom.get("id")
+                    dom_provs[dn] = provider
+                for m in (dom.get("mailboxes") or []):
+                    email = f"{m.get('username')}@{dn}"
+                    out[email] = {"domain": dn, "id": m.get("id"), "status": m.get("status"),
+                                  # createdAt is what lets us derive the deletion date
+                                  # (see derive_removal_dates)
+                                  "created": m.get("createdAt"),
+                                  # a deletion date may only be derived from the
+                                  # subscriptions of the mailbox's OWN provider
+                                  "provider": provider}
             page += 1
-            continue
-        tot = d.get("totalPages", 1)
-        for dom in d.get("domains", []):
-            dn = dom.get("domain")
-            if dn and dom.get("id"):
-                dom_ids[dn] = dom.get("id")
-            for m in (dom.get("mailboxes") or []):
-                email = f"{m.get('username')}@{dn}"
-                out[email] = {"domain": dn, "id": m.get("id"), "status": m.get("status"),
-                              # createdAt is what lets us derive the deletion date
-                              # (see derive_removal_dates)
-                              "created": m.get("createdAt")}
-        page += 1
     if failed:
         # Partial scan -> unsafe to diff (would look like mass removals).
         return None
     if dom_ids:
-        store.set_state(DOMID_KEY, {"map": dom_ids, "taken": _now_iso()})
+        store.set_state(DOMID_KEY, {"map": dom_ids, "providers": dom_provs,
+                                    "taken": _now_iso()})
     return out
 
 
 def resolve_domain_ids(domains):
     """Map domain names -> Zapmail ids. Reads the cached map first; live-scans
     (paged, early-exit) only for domains not in the cache."""
-    cached = (store.get_state(DOMID_KEY) or {}).get("map", {})
+    state = store.get_state(DOMID_KEY) or {}
+    cached = state.get("map", {})
+    cached_provs = state.get("providers", {})
     want = {d.lower(): d for d in domains}
-    found, missing = {}, []
+    found, provs, missing = {}, {}, []
     for low, orig in want.items():
         # cache keys are the canonical domain names
-        hit = next((v for k, v in cached.items() if k.lower() == low), None)
+        hit = next(((k, v) for k, v in cached.items() if k.lower() == low), None)
         if hit:
-            found[orig] = hit
+            found[orig] = hit[1]
+            # snapshots taken before the multi-provider scan carry no provider map
+            provs[orig] = cached_provs.get(hit[0], "GOOGLE")
         else:
             missing.append(orig)
     if missing:
         miss = {m.lower() for m in missing}
-        page, tot = 1, 99
-        while page <= tot and miss:
-            d = _get_page(page)
-            if not d:
+        for provider in PROVIDERS:
+            page, tot = 1, 99
+            while page <= tot and miss:
+                d = _get_page(page, provider)
+                if not d:
+                    page += 1
+                    continue
+                tot = d.get("totalPages", 1)
+                for dom in d.get("domains", []):
+                    dn = (dom.get("domain") or "")
+                    if dn.lower() in miss and dom.get("id"):
+                        found[want[dn.lower()]] = dom.get("id")
+                        provs[want[dn.lower()]] = provider
+                        miss.discard(dn.lower())
                 page += 1
-                continue
-            tot = d.get("totalPages", 1)
-            for dom in d.get("domains", []):
-                dn = (dom.get("domain") or "")
-                if dn.lower() in miss and dom.get("id"):
-                    found[want[dn.lower()]] = dom.get("id")
-                    miss.discard(dn.lower())
-            page += 1
-    return {"found": found, "missing": [d for d in domains if d not in found]}
+            if not miss:
+                break
+    return {"found": found, "providers": provs,
+            "missing": [d for d in domains if d not in found]}
 
 
 def cancel_domains(domains, dry_run=True, source="dashboard-cancel"):
@@ -177,13 +206,27 @@ def cancel_domains(domains, dry_run=True, source="dashboard-cancel"):
     if not found:
         return {"error": "none of these domains resolve to a Zapmail id "
                          "(external / already removed?)", **plan}
-    r = requests.put(f"{ZBASE}/mailboxes/scheduled-removal", headers=ZH,
-                     json={"domainIds": list(found.values()), "remove": True}, timeout=90)
-    ok = r.status_code in (200, 201)
-    reg = register_domains(list(found.keys()), source=source) if ok else {"added": 0}
-    return {"ok": ok, "status_code": r.status_code, "response": r.text[:200],
-            "scheduled": list(found.keys()), "missing": missing,
-            "registered": reg.get("added", 0), **({} if ok else {"error": "zapmail rejected the request"})}
+    # One call per provider — a domain id is only addressable under the header of
+    # the provider that owns it, so a mixed batch would silently drop half.
+    provs = res.get("providers", {})
+    by_prov = {}
+    for name, did in found.items():
+        by_prov.setdefault(provs.get(name, "GOOGLE"), []).append((name, did))
+    results, scheduled = {}, []
+    for provider, items in by_prov.items():
+        r = requests.put(f"{ZBASE}/mailboxes/scheduled-removal", headers=_zh(provider),
+                         json={"domainIds": [d for _, d in items], "remove": True},
+                         timeout=90)
+        good = r.status_code in (200, 201)
+        results[provider] = {"ok": good, "status_code": r.status_code,
+                             "response": r.text[:200], "domains": [n for n, _ in items]}
+        if good:
+            scheduled += [n for n, _ in items]
+    ok = bool(scheduled) and all(v["ok"] for v in results.values())
+    reg = register_domains(scheduled, source=source) if scheduled else {"added": 0}
+    return {"ok": ok, "by_provider": results, "scheduled": scheduled,
+            "missing": missing, "registered": reg.get("added", 0),
+            **({} if ok else {"error": "zapmail rejected part of the request"})}
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +247,10 @@ def cancel_domains(domains, dry_run=True, source="dashboard-cancel"):
 # date the Zapmail dashboard shows.
 # ---------------------------------------------------------------------------
 
-def fetch_subscriptions():
+def fetch_subscriptions(provider="GOOGLE"):
     """ACTIVE subscriptions sorted by creation time, or None if the call failed."""
     try:
-        r = requests.get(f"{ZBASE}/subscriptions", headers=ZH, timeout=60)
+        r = requests.get(f"{ZBASE}/subscriptions", headers=_zh(provider), timeout=60)
     except requests.RequestException:
         return None
     if r.status_code != 200 or not r.text.strip():
@@ -226,19 +269,30 @@ def derive_removal_dates(current, subs=None):
     replacement slot) can match a newer subscription and come out wrong, so the
     absence-detection diff stays the source of truth for what ACTUALLY happened.
     This only drives the heads-up alert."""
+    # Matching is per provider: a MICROSOFT mailbox must only ever be matched
+    # against MICROSOFT subscriptions. Pooling them would pick whichever
+    # subscription happened to be created closest in time and derive a wrong date.
     if subs is None:
-        subs = fetch_subscriptions()
-    if not subs:
+        subs = {p: fetch_subscriptions(p) for p in PROVIDERS}
+    elif isinstance(subs, list):          # legacy callers passed a flat GOOGLE list
+        subs = {"GOOGLE": subs}
+    keyed = {p: ([s["subscriptionCreationDate"] for s in v], v)
+             for p, v in (subs or {}).items() if v}
+    if not keyed:
         return {}
-    keys = [s["subscriptionCreationDate"] for s in subs]
     out = {}
     for email, info in (current or {}).items():
         created = (info or {}).get("created")
         if not created:
             continue
+        # snapshots predating the multi-provider scan carry no provider
+        prov = (info or {}).get("provider") or "GOOGLE"
+        if prov not in keyed:
+            continue
+        keys, rows = keyed[prov]
         i = bisect.bisect_right(keys, created) - 1
         if i >= 0:
-            out[email] = subs[i]["periodEnd"][:10]
+            out[email] = rows[i]["periodEnd"][:10]
     return out
 
 

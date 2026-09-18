@@ -402,12 +402,39 @@ def list_jobs() -> list[dict]:
     return [_annotate(j) for j in _load().get("jobs", [])]
 
 
+MAX_CACHE_AGE_HOURS = 24
+
+
+def cache_age_hours():
+    """Age of the overview cache's data, in hours, or None if unknown.
+
+    Reads `generated_at` (written only by a COMPLETED sync), never the row's
+    updated_at — /api/refresh-stats patches the cache in place, which refreshes
+    updated_at while leaving the account roster frozen. Trusting updated_at is
+    how a 5-day-old roster read as fresh.
+    """
+    ov, _ = store.cache_get("overview_v2")
+    gen = (ov or {}).get("generated_at")
+    if not gen:
+        return None
+    try:
+        return max(0.0, (datetime.now() - datetime.fromisoformat(gen)).total_seconds() / 3600.0)
+    except Exception:
+        return None
+
+
 def reserve_summary() -> dict:
     """How many warmed reserve inboxes are ready to deploy right now, broken down
     by niche. Reads generic groups from the overview cache; 'ready' = warmed >=
-    WARMUP_DAYS. 'available' subtracts inboxes already claimed by reserved jobs."""
+    WARMUP_DAYS. 'available' subtracts inboxes already claimed by reserved jobs.
+
+    Carries `stale`/`age_hours` so callers can tell "we counted, there are few"
+    apart from "we could not count". A stale cache silently reports a SMALLER
+    fleet (groups tagged after the last good sync are simply absent), which
+    reads as "we are out of inboxes" when the reserve is actually full."""
     from collections import Counter
     ov, _ = store.cache_get("overview_v2")
+    age = cache_age_hours()
     # A reserve inbox is spent once a job has claimed it — whether the job is still
     # 'reserved' or already 'swapped'. Until the next sync re-tags it out of its
     # generic group, it still appears in the cache, so exclude it BY EMAIL. This is
@@ -433,6 +460,9 @@ def reserve_summary() -> dict:
                 avail_by[nic] += 1
     return {"ready": ready, "claimed": len(claimed_emails), "available": available,
             "groups": groups,
+            "age_hours": None if age is None else round(age, 1),
+            "stale": age is None or age > MAX_CACHE_AGE_HOURS,
+            "generated_at": (ov or {}).get("generated_at"),
             "ready_by_niche": {k: ready_by.get(k, 0) for k in ("hvac", "landscaping", "generic")},
             "available_by_niche": {k: avail_by.get(k, 0) for k in ("hvac", "landscaping", "generic")}}
 
@@ -524,6 +554,11 @@ def advance(job_id: int, action: str, new_domain: str | None = None, confirm: bo
         # NICHE GUARD: a landscaping inbox may only be replaced by landscaping or
         # generic; HVAC only by HVAC or generic. Never cross HVAC<->landscaping.
         want = required_niche(job)
+        _rs = reserve_summary()
+        if _rs.get("stale"):
+            return {"error": "reserve unknown - overview cache is "
+                             f"{_rs.get('age_hours')}h old; run sync.py before reserving "
+                             "(a stale cache under-reports the reserve)"}
         used = {j.get("reserve_email") for j in st["jobs"] if j.get("reserve_email")}
         pick = pick_reserve_inbox(used, want_niche=want)
         if not pick:
@@ -678,7 +713,8 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
     client_emails = [e for e in emails if not _is_acq(e)]
 
     # --- client reserve, per niche (exact + generic) ---
-    rs = reserve_summary().get("available_by_niche", {})
+    _rs_full = reserve_summary()
+    rs = _rs_full.get("available_by_niche", {})
     per_niche: dict[str, list] = {}
     for e in client_emails:
         n = required_niche({"old_email": e, "client": status_by.get(e, {}).get("client")})
@@ -697,17 +733,35 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
                   "enough": len(acq_cands) >= len(acq_emails)}
     acq_ok = acq_report["enough"] or not acq_emails
 
+    # A stale overview cache under-reports the reserve (whole generic groups
+    # tagged since the last good sync are simply missing), so "not enough
+    # reserve" would be a lie. Say we cannot count, and don't swap anything.
+    stale = bool(_rs_full.get("stale")) and bool(client_emails)
+    stale_msg = ("reserve unknown - the overview cache was last rebuilt "
+                 f"{_rs_full.get('age_hours')}h ago ({_rs_full.get('generated_at')}). "
+                 "It under-reports the reserve, so this is NOT a shortage. "
+                 "Run sync.py (or the dashboard's Sync), then reallocate.")
+
     plan = {"reallocatable": len(client_emails) + len(acq_emails),
             "by_niche": need_report, "acquisition": acq_report,
-            "enough": client_ok and acq_ok,
+            "enough": (client_ok and acq_ok) and not stale,
+            "reserve_stale": stale,
+            "reserve_age_hours": _rs_full.get("age_hours"),
             "emails": client_emails + acq_emails}
+    if stale:
+        plan["stale_reason"] = stale_msg
     if not confirm:
         return {"dry_run": True, **plan}
     if not plan["emails"]:
         return {"error": "nothing to reallocate", **plan}
     errs = []
+    if stale:
+        return {"error": stale_msg, **plan}
     if client_emails and not client_ok:
-        errs.append("not enough client reserve")
+        errs.append(
+            "not enough client reserve for niche(s): "
+            + ", ".join(f"{n} (need {r['need']}, have {r['reserve']})"
+                        for n, r in need_report.items() if not r["enough"]))
     if acq_emails and not acq_ok:
         errs.append("not enough idle acquisition reserve (warm/free more acquisition inboxes)")
     if errs:

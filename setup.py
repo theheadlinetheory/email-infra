@@ -242,12 +242,28 @@ class Spaceship:
 
     @staticmethod
     def check_domain(domain):
-        r = requests.get(f"{SPACESHIP_API}/domains/{domain}/available",
-                         headers=Spaceship._headers(), timeout=15)
-        data = r.json() if r.status_code == 200 else {}
-        if data.get("result") == "available":
-            return {"available": True}
-        return {"available": False}
+        """Availability + premium flag.
+
+        Spaceship caps availability checks at 5 per domain per 300s and answers
+        429 with a Retry-After. Reporting that as `available: False` is a false
+        negative that silently drops a perfectly free domain from a purchase
+        run, so back off and retry, and when we still cannot tell, say so with
+        `error` rather than claiming the domain is taken.
+        """
+        for attempt in range(4):
+            r = requests.get(f"{SPACESHIP_API}/domains/{domain}/available",
+                             headers=Spaceship._headers(), timeout=20)
+            if r.status_code == 200:
+                data = r.json() if r.text else {}
+                return {"available": data.get("result") == "available",
+                        "premium": bool(data.get("premiumPricing"))}
+            if r.status_code == 429 and attempt < 3:
+                wait = int(r.headers.get("Retry-After") or 0) or 30 * (attempt + 1)
+                time.sleep(min(wait, 130))
+                continue
+            return {"available": False,
+                    "error": f"HTTP {r.status_code}: {r.text[:120]}"}
+        return {"available": False, "error": "rate limited after 4 attempts"}
 
     @staticmethod
     def purchase_domain(domain):
@@ -912,9 +928,16 @@ ACQUISITION_SENDERS = {
 # Default acquisition specs (backwards compatible)
 ACQUISITION_INBOX_SPECS = ACQUISITION_SENDERS["aidan_hutchinson"]["specs"]
 
-def generate_mailbox_specs(domain_name, count=3, offset=0, mode="client", sender=None):
-    """Return the standard 3 inbox specs for a domain."""
-    if mode == "acquisition" and sender and sender in ACQUISITION_SENDERS:
+def generate_mailbox_specs(domain_name, count=3, offset=0, mode="client", sender=None,
+                           custom_specs=None):
+    """Return the standard 3 inbox specs for a domain.
+
+    `custom_specs` lets a client config carry its own persona (the client-mode
+    default is Sean Reynolds); pass a list of {firstName,lastName,mailboxUsername}.
+    """
+    if custom_specs:
+        specs = custom_specs
+    elif mode == "acquisition" and sender and sender in ACQUISITION_SENDERS:
         specs = ACQUISITION_SENDERS[sender]["specs"]
     elif mode == "acquisition":
         specs = ACQUISITION_INBOX_SPECS
@@ -1456,7 +1479,7 @@ def run_pipeline(config, config_path):
                 continue
 
             log(f"  {domain_name} is ACTIVE — creating {ACCOUNTS_PER_DOMAIN} inboxes...")
-            specs = generate_mailbox_specs(domain_name, ACCOUNTS_PER_DOMAIN, mode=config.get("mode", "client"), sender=config.get("sender"))
+            specs = generate_mailbox_specs(domain_name, ACCOUNTS_PER_DOMAIN, mode=config.get("mode", "client"), sender=config.get("sender"), custom_specs=config.get("inbox_specs"))
 
             max_retries = 5
             retry_delay = 15  # seconds
@@ -1584,6 +1607,8 @@ def run_pipeline(config, config_path):
             photo_url = ACQUISITION_PHOTO_URL
         else:
             photo_url = PROFILE_PHOTO_URL
+        # a client config may carry its own persona photo
+        photo_url = config.get("profile_photo_url") or photo_url
 
         # Collect all mailbox IDs
         all_mb_ids = []
@@ -2036,20 +2061,15 @@ def run_pipeline(config, config_path):
                         sl_client_id = c["id"]
                         log(f"  Matched SmartLead client: '{c['name']}' (ID: {sl_client_id})")
                         break
+                # Never create one here. A client on tht.<slug>.client@gmail.com
+                # squats the identity the CRM's Closed Won step needs for the
+                # real portal, which it makes on the client's own email address —
+                # Smartlead 403s the duplicate and the portal step fails (Light
+                # DMV, 2026-09-16). Provisioning before the deal card moves is
+                # normal, so no portal yet is expected; clientId is optional.
                 if not sl_client_id:
-                    slug = client.lower().replace("'", "").replace(" ", "").replace("&", "")
-                    cl_email = f"tht.{slug}.client@gmail.com"
-                    _sl_rest_limiter.wait()
-                    cr = requests.post(
-                        f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
-                        json={"name": client, "email": cl_email, "password": "THTclient2026!"},
-                        timeout=30
-                    )
-                    if cr.status_code == 201:
-                        sl_client_id = cr.json().get("clientId")
-                        log(f"  Created SmartLead client: '{client}' (ID: {sl_client_id})")
-                    else:
-                        log(f"  Could not create SmartLead client: {cr.status_code} {cr.text[:200]}", "WARN")
+                    log("  No SmartLead portal for this client yet — "
+                        "inboxes will be tagged but left unassigned")
             except Exception as e:
                 log(f"  SmartLead client lookup failed: {e}", "WARN")
 

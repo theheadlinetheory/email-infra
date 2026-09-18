@@ -50,9 +50,17 @@ def build_fleet_from_overview(overview: dict) -> list[dict]:
             "group_letter": letter,
             "source": SOURCE_DEFAULT,
             "in_warmup": in_warmup,
-            "reply_rate": _num(ad.get("reply_rate")),
-            "bounce_rate": _num(ad.get("bounce_rate")),
-            "sent": int(ad.get("sent") or 0),
+            # DAILY figures — this row is keyed by a single date. `reply_rate` /
+            # `bounce_rate` / `sent` on the account are a TRAILING 7-DAY window;
+            # storing those here made one day look like seven and inflated every
+            # rolling window built from these rows. Fall back to the 7-day fields
+            # only for a cache written before sync carried the daily ones.
+            "reply_rate": _num(ad.get("reply_rate_today") if ad.get("has_today") is not None
+                               else ad.get("reply_rate")),
+            "bounce_rate": _num(ad.get("bounce_rate_today") if ad.get("has_today") is not None
+                                else ad.get("bounce_rate")),
+            "sent": int((ad.get("sent_today") if ad.get("has_today") is not None
+                         else ad.get("sent")) or 0),
             "smtp_ok": ad.get("smtp_ok"),
             "warmup_reputation": _num(ad.get("warmup_reputation")),
             "campaigns": ad.get("campaign_names") or [],
@@ -112,7 +120,13 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     # 2) re-score each inbox off its trailing 3-day window
     #    (one bulk fetch of the last week, not one query per inbox)
     from datetime import timedelta
-    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+    # The window is N SENDING days and we send Mon-Fri, so N sending days span
+    # ~N*7/5 calendar days. Pull double that (plus the prior window for the trend
+    # comparison) so the window is never silently short of history.
+    win_days = int((cfg or {}).get("window_sending_days",
+                                   hm.DEFAULT_CONFIG["window_sending_days"]))
+    lookback = max(14, int(win_days * 2 * 7 / 5) + 7)
+    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=lookback)).strftime("%Y-%m-%d")
     history = store.get_health_daily_bulk(since)
 
     status_rows = []
@@ -131,7 +145,7 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
 
     for r in fleet:
         rows = history.get(r["email"], [])
-        sig = hm.rolling(rows, days=3)
+        sig = hm.rolling(rows, cfg=cfg)
         sig["in_warmup"] = r["in_warmup"]
         sig["smtp_ok"] = r["smtp_ok"]
         sig["in_campaign"] = r["in_campaign"]
@@ -166,6 +180,7 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
             "reply_3d": sig.get("reply"), "bounce_3d": sig.get("bounce"),
             "ooo_3d": sig.get("ooo"), "placement": sig.get("placement"),
             "sent_3d": sig.get("sent_3d", 0),
+            "window_sending_days": sig.get("window_sending_days", 0),
             "smtp_ok": r["smtp_ok"], "warmup_reputation": r["warmup_reputation"],
             "campaigns": r["campaigns"],
             "updated_at": datetime.now().isoformat(),
@@ -194,3 +209,73 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
 if __name__ == "__main__":
     import json
     print(json.dumps(snapshot_daily(), indent=2, default=str))
+
+
+def backfill_daily(days: int = 14, end: str | None = None) -> dict:
+    """Rewrite the last `days` of inbox_health_daily from SmartLead's per-day
+    analytics endpoint, which returns absolute counts for an explicit date.
+
+    Why this exists: the daily row used to be derived from whatever window the
+    overview cache happened to hold, so *when* the sync ran changed what a day
+    meant. Run it at 04:00 and `sent_today` is 0 for the whole fleet, which would
+    write a day of zeros over real sends and hollow out every rolling window.
+    Asking SmartLead for a specific date removes the timing dependency entirely,
+    and re-running it is idempotent (upsert on email+date).
+    """
+    from datetime import date, timedelta
+    import health_smartlead as hsl
+    import requests
+
+    jwt = hsl.get_jwt()
+    if not jwt:
+        return {"ok": False, "error": "no SmartLead JWT (set SMARTLEAD_LOGIN_EMAIL/PASSWORD)"}
+    end_d = date.fromisoformat(end) if end else date.today()
+
+    def _rate(v):
+        if v is None:
+            return None
+        try:
+            return float(str(v).replace("%", "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    # attribution (client/domain/etc) for rows we may be creating for the first time
+    meta = {r["email"]: r for r in store.get_health_status_all()}
+    written, skipped = 0, []
+    for i in range(days):
+        d = (end_d - timedelta(days=i)).isoformat()
+        try:
+            resp = requests.get(
+                "https://server.smartlead.ai/api/analytics/mailbox/name-wise-health-metrics",
+                params={"start_date": d, "end_date": d,
+                        "timezone": "America/New_York", "full_data": "true"},
+                headers={"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"},
+                timeout=60)
+        except Exception as e:
+            skipped.append((d, str(e)[:60]))
+            continue
+        if resp.status_code != 200:
+            skipped.append((d, f"HTTP {resp.status_code}"))
+            continue
+        metrics = {m["from_email"]: m
+                   for m in (resp.json().get("data") or {}).get("email_health_metrics", [])}
+        if not metrics:
+            continue        # a genuine no-send day (weekend) — leave existing rows alone
+        rows = []
+        for em, m in metrics.items():
+            base = meta.get(em, {})
+            rows.append({
+                "email": em, "date": d,
+                "client": base.get("client"), "group_letter": base.get("group_letter"),
+                "source": base.get("source") or SOURCE_DEFAULT, "domain": base.get("domain")
+                or (em.split("@", 1)[1] if "@" in em else ""),
+                "reply_rate": _rate(m.get("reply_rate")),
+                "bounce_rate": _rate(m.get("bounce_rate")),
+                "ooo_rate": None,
+                "sent": int(m.get("sent") or 0),
+                "smtp_ok": base.get("smtp_ok"),
+                "warmup_reputation": base.get("warmup_reputation"),
+            })
+        store.upsert_health_daily(rows)
+        written += len(rows)
+    return {"ok": True, "days": days, "rows_written": written, "skipped": skipped}

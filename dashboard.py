@@ -3495,21 +3495,24 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
                 if client_lower in cn or cn in client_lower:
                     sl_client_id = c["id"]
                     break
+        # No portal yet? Tag the inboxes and move on — never create one here.
+        #
+        # This used to POST a client on tht.<slug>.client@gmail.com with its own
+        # password. That squatted the identity the CRM's Closed Won step wants:
+        # that step creates the portal on the client's REAL email, and Smartlead
+        # 403s a second client on a duplicate — so the portal step failed and
+        # the client was left with a dummy-email login nobody held the password
+        # for (Light DMV, 2026-09-16; portal 588715).
+        #
+        # A missing portal is normal, not an error: provisioning runs before the
+        # deal card moves, because warm-up needs its runway. client_id is
+        # optional on an inbox — sl_tag_account already defaults it to None, and
+        # only 2 of 28 clients ever carried one. Grouping is by tag, not this.
         if not sl_client_id:
-            slug = new_client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
-            cl_email = f"tht.{slug}.client@gmail.com"
-            _sl_rate.wait()
-            cr = requests.post(
-                f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
-                json={"name": new_client_name, "email": cl_email, "password": "THTclient2026!"},
-                timeout=30,
-            )
-            if cr.status_code == 201:
-                sl_client_id = cr.json().get("clientId")
-            else:
-                yield event(1, "error", f"Failed to create client: {cr.status_code} {cr.text[:200]}")
-                return
-        yield event(1, "done")
+            yield event(1, "done", "no Smartlead portal for this client yet — "
+                                   "inboxes will be tagged but left unassigned")
+        else:
+            yield event(1, "done")
     except Exception as e:
         yield event(1, "error", str(e))
         return
@@ -3548,7 +3551,9 @@ def transition_client_sse(client_id, client_name, new_client_name, forwarding_do
     # ── Step 3: Verify client assignment ──
     yield event(3, "running")
     try:
-        if accounts:
+        # Only meaningful when there is a portal to assign to. With none, the
+        # inboxes are deliberately unassigned and there is nothing to verify.
+        if accounts and sl_client_id:
             _sl_rate.wait()
             sample = requests.get(
                 f"{SMARTLEAD_API}/email-accounts/{accounts[0]['id']}/?api_key={SMARTLEAD_KEY}",
@@ -3709,21 +3714,15 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
                 if client_lower in cn or cn in client_lower:
                     sl_client_id = c["id"]
                     break
+        # No portal yet? Tag the inboxes and move on — never create one here.
+        # See the note on the same lookup in the reassignment flow above: a
+        # slug-email client created here collides with the portal the CRM's
+        # Closed Won step makes on the client's real address.
         if not sl_client_id:
-            slug = client_name.lower().replace("'", "").replace(" ", "").replace("&", "")
-            cl_email = f"tht.{slug}.client@gmail.com"
-            _sl_rate.wait()
-            cr = requests.post(
-                f"{SMARTLEAD_API}/client/save?api_key={SMARTLEAD_KEY}",
-                json={"name": client_name, "email": cl_email, "password": "THTclient2026!"},
-                timeout=30,
-            )
-            if cr.status_code == 201:
-                sl_client_id = cr.json().get("clientId")
-            else:
-                yield event(1, "error", f"Failed to create client: {cr.status_code} {cr.text[:200]}")
-                return
-        yield event(1, "done")
+            yield event(1, "done", "no Smartlead portal for this client yet — "
+                                   "inboxes will be tagged but left unassigned")
+        else:
+            yield event(1, "done")
     except Exception as e:
         yield event(1, "error", str(e))
         return
@@ -3826,7 +3825,9 @@ def assign_client_sse(pipeline_id, client_name, forwarding_domain, is_new_client
     try:
         # Already handled in step 2 via client_id param in sl_tag_account
         # Verify a sample account
-        if our_accounts:
+        # Only meaningful when there is a portal to assign to. With none, the
+        # inboxes are deliberately unassigned and there is nothing to verify.
+        if our_accounts and sl_client_id:
             _sl_rate.wait()
             sample = requests.get(
                 f"{SMARTLEAD_API}/email-accounts/{our_accounts[0]['id']}/?api_key={SMARTLEAD_KEY}",
@@ -4105,18 +4106,10 @@ def build_pipeline_config(body: dict) -> dict:
                 if cn == name_lower or name_lower in cn or cn in name_lower:
                     sl_client_id = c["id"]
                     break
-            if not sl_client_id:
-                slug = name.lower().replace("'", "").replace(" ", "").replace("&", "")
-                _sl_rate.wait()
-                cr = requests.post(
-                    f"{SMARTLEAD_API}/client/save",
-                    params={"api_key": SMARTLEAD_KEY},
-                    json={"name": name, "email": f"tht.{slug}.client@gmail.com",
-                          "password": "THTclient2026!"},
-                    timeout=30,
-                )
-                if cr.status_code == 201:
-                    sl_client_id = cr.json().get("clientId")
+            # Deliberately no create-on-miss: a client on
+            # tht.<slug>.client@gmail.com blocks the CRM's Closed Won step from
+            # making the real portal on the client's own address. Leaving
+            # smartlead_client_id None is fine — it is optional downstream.
         except Exception as e:
             print(f"[PIPELINE] SmartLead client lookup failed: {e}")
 

@@ -37,8 +37,8 @@ class Dates(unittest.TestCase):
         self.assertEqual(il.anniversary_on_or_after(a, date(2026, 1, 1)), a)
 
     def test_season_end_rolls_to_next_year(self):
-        self.assertEqual(il.season_end_on_or_after(12, 31, date(2026, 9, 1)), date(2026, 12, 31))
-        self.assertEqual(il.season_end_on_or_after(12, 31, date(2027, 1, 5)), date(2027, 12, 31))
+        self.assertEqual(il.season_end_on_or_after(12, 25, date(2026, 9, 1)), date(2026, 12, 25))
+        self.assertEqual(il.season_end_on_or_after(12, 25, date(2027, 1, 5)), date(2027, 12, 25))
 
 
 class Naming(unittest.TestCase):
@@ -107,11 +107,21 @@ class SeasonalScenario(unittest.TestCase):
         self.assertEqual(cohort["sendable_from"], "2026-02-01")   # 14-day warm-up
         self.assertEqual(cohort["wasted_days"], 17)               # 04-01 -> 04-18
 
-    def test_decision_deadline_precedes_the_end_and_the_schedule(self):
+    def test_the_client_is_asked_at_the_end_then_given_silent_grace(self):
+        # Aidan's model: ask ON the end date, then a week of grace the client is
+        # never told about. The first build had this inverted (end - 7), which
+        # chased clients a week early and gave no grace at all.
         r = self.row()
-        self.assertEqual(r["decision_by"], "2026-03-25")          # end - 7
-        self.assertLess(r["decision_by"], r["effective_end"])
-        self.assertLess(r["decision_by"], r["schedule_by"])
+        self.assertEqual(r["ask_on"], "2026-04-01")               # the term end itself
+        self.assertEqual(r["grace_until"], "2026-04-08")          # +7, undisclosed
+        self.assertEqual(r["decision_by"], "2026-04-08")
+        self.assertGreater(r["decision_by"], r["effective_end"])  # AFTER, not before
+
+    def test_grace_cannot_outrun_the_billing_date(self):
+        # If the first cohort re-bills before grace expires, the billing date
+        # wins — there is no point granting grace we cannot act on.
+        r = self.row()
+        self.assertLessEqual(r["decision_by"], r["schedule_by"])
 
     def test_dedicated_domains_are_cancelled(self):
         self.assertEqual(self.row()["action"], "cancel")
@@ -136,7 +146,9 @@ class SeasonalScenario(unittest.TestCase):
         r = il.build_client("Twinkle Lights Co Group", self.mbs, crm, {}, {},
                             self.dom, date(2026, 10, 1))
         self.assertTrue(r["seasonal"])
-        self.assertEqual(r["effective_end"], "2026-12-31")
+        # Christmas, not 31 Dec — Aidan: "Christmas probably would be when they
+        # would be done, because that would be all the last minute."
+        self.assertEqual(r["effective_end"], "2026-12-25")
         self.assertEqual(r["end_basis"], "season close (before contract end)")
 
     def test_a_contract_ending_before_the_season_is_left_alone(self):
@@ -154,13 +166,22 @@ class SeasonalScenario(unittest.TestCase):
         self.assertEqual(r["effective_end"], "2027-04-01")
 
     def test_unanswered_deadline_defaults_to_stop(self):
-        r = self.row(today=date(2026, 3, 26))                     # one day past
+        r = self.row(today=date(2026, 4, 9))                      # one day past grace
         self.assertTrue(r["outcome"].startswith("stop (defaulted"))
         self.assertEqual(r["urgency"], "crit")
 
+    def test_the_client_stays_committed_through_the_grace_week(self):
+        # Flipping to "ended" on the term date silenced the countdown during the
+        # exact week we are waiting for an answer.
+        for d, want in ((date(2026, 4, 1), "committed"),    # term end
+                        (date(2026, 4, 5), "committed"),    # mid-grace
+                        (date(2026, 4, 8), "committed"),    # last grace day
+                        (date(2026, 4, 9), "ended")):       # grace expired
+            self.assertEqual(self.row(today=d)["phase"], want, d)
+
     def test_a_recorded_renewal_stops_the_default(self):
         r = il.build_client("Twinkle Lights Co Group", self.mbs, self.crm, {},
-                            {"decision": "renew"}, self.dom, date(2026, 3, 26))
+                            {"decision": "renew"}, self.dom, date(2026, 4, 9))
         self.assertEqual(r["outcome"], "renew")
 
 
@@ -193,6 +214,55 @@ class SharedDomainSafety(unittest.TestCase):
         dom = {"generichq.info": {"Client A Group", "(generic reserve)"}}
         r = il.build_client("Client A Group", mbs, None, {}, {}, dom, date(2026, 2, 1))
         self.assertEqual(r["action"], "recycle")
+
+
+class RecoverableCost(unittest.TestCase):
+    """What actually stops when a client leaves — proven on 2026-09-14."""
+
+    crm = {"name": "Acme Co", "status": "active", "billing_model": "retainer",
+           "agreement_type": "prepaid", "launch_date": "2026-02-01", "prepaid_months": 3}
+
+    def test_exclusive_domains_recover_slots_and_the_renewal(self):
+        mbs = [mb("2026-01-18", "acmeco1.info", "a@acmeco1.info"),
+               mb("2026-01-18", "acmeco1.info", "b@acmeco1.info"),
+               mb("2026-01-18", "acmeco1.info", "c@acmeco1.info")]
+        dm = {"acmeco1.info": mbs}
+        r = il.build_client("Acme Co", mbs, self.crm, {}, {},
+                            {"acmeco1.info": {"Acme Co"}}, date(2026, 2, 1), dm)
+        self.assertEqual(r["exclusive_domains"], 1)
+        self.assertEqual(r["slot_cost_yr"], 3 * 3 * 12)          # 3 mailboxes
+        self.assertAlmostEqual(r["domain_cost_yr"], 22.14)        # .info renewal
+        self.assertAlmostEqual(r["recoverable_yr"], 108 + 22.14)
+
+    def test_a_shared_domain_recovers_no_renewal(self):
+        mine = [mb("2026-01-18", "shared.info", "a@shared.info")]
+        theirs = [mb("2026-01-18", "shared.info", "z@shared.info")]
+        dm = {"shared.info": mine + theirs}
+        r = il.build_client("Acme Co", mine, self.crm, {}, {},
+                            {"shared.info": {"Acme Co", "Other"}}, date(2026, 2, 1), dm)
+        self.assertEqual(r["exclusive_domains"], 0)
+        self.assertEqual(r["domain_cost_yr"], 0)                  # domain keeps renewing
+        self.assertEqual(r["recoverable_yr"], 1 * 3 * 12)          # slots only
+
+    def test_an_admin_mailbox_on_a_shared_domain_is_stranded(self):
+        # Zapmail refuses to remove the earliest-created mailbox while a sibling
+        # remains. 35 mailboxes were stranded by this in a single pass.
+        mine = [mb("2026-01-01", "shared.info", "admin@shared.info")]   # earliest = admin
+        theirs = [mb("2026-02-01", "shared.info", "z@shared.info")]
+        dm = {"shared.info": mine + theirs}
+        r = il.build_client("Acme Co", mine, self.crm, {}, {},
+                            {"shared.info": {"Acme Co", "Other"}}, date(2026, 2, 1), dm)
+        self.assertEqual(r["admin_blocked"], 1)
+        self.assertEqual(r["stranded_yr"], 36)
+        self.assertIn("admin mailbox", " ".join(r["flags"]))
+
+    def test_not_the_admin_when_a_sibling_is_older(self):
+        mine = [mb("2026-03-01", "shared.info", "later@shared.info")]
+        theirs = [mb("2026-01-01", "shared.info", "admin@shared.info")]
+        dm = {"shared.info": theirs + mine}
+        r = il.build_client("Acme Co", mine, self.crm, {}, {},
+                            {"shared.info": {"Acme Co", "Other"}}, date(2026, 2, 1), dm)
+        self.assertEqual(r["admin_blocked"], 0)
 
 
 class Phases(unittest.TestCase):

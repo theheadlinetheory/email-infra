@@ -688,9 +688,16 @@ def upsert_health_status(rows: list[dict]) -> None:
         return
     # serialize jsonb columns on COPIES — never mutate the caller's dicts
     # (the same list objects are reused for the health_fleet cache).
+    # Only columns that exist in inbox_health_status — the scorer carries extra
+    # diagnostic fields (e.g. window_sending_days) that live in the health_fleet
+    # cache blob; PostgREST 400s on any key without a column.
+    _COLS = ("email", "score", "status", "reasons", "subscores", "client",
+             "group_letter", "source", "domain", "reply_3d", "bounce_3d",
+             "ooo_3d", "placement", "sent_3d", "smtp_ok", "warmup_reputation",
+             "campaigns", "updated_at")
     payload = []
     for r in rows:
-        row = dict(r)
+        row = {k: v for k, v in r.items() if k in _COLS}
         for col in ("reasons", "subscores", "campaigns"):
             if col in row and not isinstance(row[col], str):
                 row[col] = json.dumps(row[col])
@@ -726,3 +733,11 @@ def get_health_config(key: str = "default") -> dict:
     rows = _request("GET", "/inbox_health_config",
                     params={"select": "value", "key": f"eq.{key}"})
     return rows[0]["value"] if rows else {}
+
+
+def set_health_config(value: dict, key: str = "default") -> None:
+    """Persist tunable weights/thresholds (upsert on key)."""
+    _request("POST", "/inbox_health_config", params={"on_conflict": "key"},
+             headers={"Prefer": "resolution=merge-duplicates"},
+             json_body=[{"key": key, "value": value,
+                         "updated_at": datetime.now().isoformat()}])

@@ -71,14 +71,22 @@ import retainers
 
 COST_PER_MAILBOX = 3        # ~$3/mo per Zapmail Google Workspace mailbox
 WARMUP_DAYS = 14            # inboxes cannot send for their first 14 days
-DEFAULT_TERM_MONTHS = 3     # "it's usually on like a three-month agreement"
+DEFAULT_TERM_MONTHS = 3     # LAST-RESORT fallback only. Terms genuinely vary —
+                            # Aidan has sold 2, 3 and 4 months and pitched a 7 —
+                            # and the real number comes from the CRM onboarding
+                            # form Tim fills on deal close. Any row resting on
+                            # this assumption is flagged, because it is setting a
+                            # real cancellation date off a guess.
 SCHEDULE_BUFFER_DAYS = 2    # operational slack only — Zapmail confirmed 2026-09-13
                             # that a cancellation filed even 1 day before the
                             # billing date still optimises that cycle. The buffer
                             # guards against API latency and human slippage, not
                             # against a billing cut-off (there isn't one). Being a
                             # day late costs a whole cycle — they never refund.
-DECISION_LEAD_DAYS = 7      # answer required this far before the engagement ends
+GRACE_DAYS = 7              # undisclosed grace AFTER the term ends. The warm-up
+                            # bought ~2 weeks of infra we have already paid for,
+                            # so a silent week costs nothing and catches the
+                            # clients who simply had not replied yet.
 NOTICE_DAYS = (7, 3, 1)     # countdown touches before decision_by
 
 # State keys (this project's `state` table, via db.py).
@@ -108,9 +116,11 @@ SEASONAL_VERTICALS = {
         # a bare "light" would swallow "Lightning Lawn Care".
         "match": ("christmas light", "christmas lite", "holiday light",
                   "lights of", "merry and bright", "merry & bright"),
-        # Installs sell Sep–Dec and come down in January. Nothing sells after
-        # Christmas, so the infra is worthless into the new year.
-        "season_end": (12, 31),
+        # Aidan, 2026-09-10: "the latest would be December 31st, but even that
+        # would be pretty late... Christmas probably would be when they would be
+        # done, because that would be all the last minute." 25 Dec is the real
+        # commercial end; 31 Dec was the outside bound, not the working date.
+        "season_end": (12, 25),
     },
     "snow_removal": {
         "label": "Snow removal",
@@ -355,6 +365,27 @@ def load_decisions() -> dict:
 
 # ── the maths ─────────────────────────────────────────────────────────────────
 
+def renewal_price(domain: str) -> float:
+    """Annual registrar renewal. `.info` registers at $3.60 and renews at $22.14,
+    a 6x step-up, so the renewal — not the purchase — is the number that matters."""
+    return {"com": 11.08, "info": 22.14, "co": 31.20}.get(
+        (domain or "").rsplit(".", 1)[-1], 22.14)
+
+
+def admin_mailbox(domain_mailboxes) -> str | None:
+    """The mailbox Zapmail treats as the domain's admin — the earliest created.
+
+    Proven the hard way on 2026-09-14: Zapmail refuses to remove it while any
+    sibling remains ("Before removing admin mailbox, you need to remove all
+    mailboxes associated with this domain"). So a client's hard stop is only
+    achievable if EVERY mailbox on the domain goes at the same time. 35 mailboxes
+    were stranded by this in one pass.
+    """
+    dated = [(m.get("created_at") or "", m.get("email") or "")
+             for m in (domain_mailboxes or []) if m.get("email")]
+    return sorted(dated)[0][1] if dated else None
+
+
 def domain_role(domain: str, client_name: str, clients_on_domain: set) -> str:
     """dedicated | shared | pool — decides whether the domain may be cancelled."""
     real = {c for c in clients_on_domain if c and c.lower() not in NON_CLIENT_BUCKETS}
@@ -398,7 +429,11 @@ def contract_end(crm: dict | None, override: dict, today: date):
     basis = ("override term" if override.get("term_months")
              else "prepaid_months" if term else f"assumed {DEFAULT_TERM_MONTHS}mo term")
     end = retainers.add_months_clamped(launch, int(term or DEFAULT_TERM_MONTHS))
-    if end >= today:
+    # A term stays "committed" through its grace period. Flipping to "ended" on
+    # the term date itself would mean the countdown and the default-to-stop went
+    # silent during exactly the week we are waiting on an answer — the client
+    # would sail through grace and nothing would fire.
+    if end + timedelta(days=GRACE_DAYS) >= today:
         return end, basis, "committed"
 
     # Term already served. A month-to-month client simply renews, so the next
@@ -409,7 +444,8 @@ def contract_end(crm: dict | None, override: dict, today: date):
     return end, basis + " (served)", "ended"
 
 
-def build_client(name, mailboxes, crm, override, decision, dom_clients, today):
+def build_client(name, mailboxes, crm, override, decision, dom_clients, today,
+                 dom_mailboxes=None):
     """One client's lifecycle row. `mailboxes` is a list of Zapmail records."""
     # Name matching is a heuristic — the CRM has no vertical column, so a
     # lighting client called "Twinkle & Co" would look evergreen. The override
@@ -472,12 +508,28 @@ def build_client(name, mailboxes, crm, override, decision, dom_clients, today):
     schedule_by = (min(hard_stops) - timedelta(days=SCHEDULE_BUFFER_DAYS)
                    if hard_stops else None)
 
-    # The answer has to arrive early enough to still stop the first cohort.
-    decision_by = None
-    if end:
-        decision_by = end - timedelta(days=DECISION_LEAD_DAYS)
-        if schedule_by and schedule_by < decision_by:
-            decision_by = schedule_by
+    # Aidan's model (2026-09-10 call), which is NOT "warn them early":
+    #
+    #   ask_on       the term end itself — "your term is up, what do you want
+    #                to do?" Asking before the end invites a decision the client
+    #                has no reason to make yet.
+    #   grace_until  ask_on + 7 days. The client is NOT told this exists. The
+    #                warm-up bought us ~2 extra weeks of infra, so a week of
+    #                silence costs nothing and catches the ones who just hadn't
+    #                got round to replying.
+    #   decision_by  the last day an answer can still change what we do, i.e.
+    #                late enough to give the full grace period, early enough
+    #                that a removal filed then still lands on the hard stop.
+    #
+    # The first build had this inverted (end - 7), which would have chased
+    # clients a week BEFORE their term was up and given no grace at all.
+    ask_on = end
+    grace_until = end + timedelta(days=GRACE_DAYS) if end else None
+    decision_by = grace_until
+    if decision_by and schedule_by and schedule_by < decision_by:
+        # The grace period cannot run past the point of no return: if the first
+        # cohort bills before grace expires, the deadline is the billing date.
+        decision_by = schedule_by
 
     # Domains, split by whether they may ever be cancelled.
     roles = {}
@@ -513,6 +565,33 @@ def build_client(name, mailboxes, crm, override, decision, dom_clients, today):
     }[action]
 
     n = len(mailboxes)
+
+    # What actually STOPS when this client leaves.
+    #
+    # Cancelling a mailbox only removes it from the Zapmail bill; the domain's
+    # registrar renewal keeps running unless the whole domain is released. And a
+    # domain can only be released when every mailbox on it goes -- Zapmail will
+    # not remove the admin mailbox while a sibling remains. So the recoverable
+    # figure is NOT "mailboxes x $3": it is the slots, plus the renewal on the
+    # domains this client owns outright, and nothing at all on domains it shares.
+    dm = dom_mailboxes or {}
+    mine = {mb.get("email") for mb in mailboxes}
+    exclusive, entangled, blocked_admin = [], [], []
+    for d in roles:
+        siblings = dm.get(d) or []
+        others = [x for x in siblings if x.get("email") not in mine]
+        if siblings and not others:
+            exclusive.append(d)
+        else:
+            entangled.append(d)
+            adm = admin_mailbox(siblings)
+            if adm in mine:
+                blocked_admin.append(adm)
+    slot_yr = n * COST_PER_MAILBOX * 12
+    domain_yr = sum(renewal_price(d) for d in exclusive)
+    recoverable = slot_yr + domain_yr
+    stranded = len(blocked_admin) * COST_PER_MAILBOX * 12
+
     days_to_decision = (decision_by - today).days if decision_by else None
     recorded = (decision or {}).get("decision")
     # "We will default to no" — an unanswered deadline is a stop, not a pause.
@@ -520,7 +599,11 @@ def build_client(name, mailboxes, crm, override, decision, dom_clients, today):
     # a per-lead client never had a term to miss.
     if recorded in ("renew", "stop"):
         outcome = recorded
-    elif phase == "committed" and days_to_decision is not None and days_to_decision < 0:
+    elif phase in ("committed", "ended") and days_to_decision is not None \
+            and days_to_decision < 0:
+        # "ended" is a committed term whose grace has expired — that IS the
+        # defaulted case, and gating this on "committed" alone meant the default
+        # never fired for the very clients it was written for.
         outcome = "stop (defaulted — no answer by the deadline)"
     elif phase in ("rolling", "per_lead"):
         outcome = "ongoing"
@@ -546,6 +629,9 @@ def build_client(name, mailboxes, crm, override, decision, dom_clients, today):
         flags.append(basis + " — no contract-term field in the CRM")
     if by_role["shared"]:
         flags.append(f"{len(by_role['shared'])} shared domain(s) — never cancel the domain")
+    if blocked_admin:
+        flags.append(f"{len(blocked_admin)} admin mailbox(es) cannot be removed until "
+                     f"their domain empties — ${stranded:,.0f}/yr stranded")
 
     return {
         "client": name,
@@ -563,12 +649,21 @@ def build_client(name, mailboxes, crm, override, decision, dom_clients, today):
         "season_close": season_close.isoformat() if season_close else None,
         "effective_end": end.isoformat() if end else None,
         "end_basis": basis,
+        "ask_on": ask_on.isoformat() if ask_on else None,
+        "grace_until": grace_until.isoformat() if grace_until else None,
         "decision_by": decision_by.isoformat() if decision_by else None,
         "days_to_decision": days_to_decision,
         "hard_stop": hard_stop.isoformat() if hard_stop else None,
         "schedule_by": schedule_by.isoformat() if schedule_by else None,
         "mailboxes": n,
         "monthly_cost": n * COST_PER_MAILBOX,
+        "recoverable_yr": round(recoverable, 2),
+        "slot_cost_yr": slot_yr,
+        "domain_cost_yr": round(domain_yr, 2),
+        "exclusive_domains": len(exclusive),
+        "entangled_domains": len(entangled),
+        "admin_blocked": len(blocked_admin),
+        "stranded_yr": stranded,
         "wasted_cost": round(wasted, 2),
         "cohorts": rows,
         "domains": by_role,
@@ -615,11 +710,13 @@ def build(today: date | None = None) -> dict:
     health = {r["email"]: r for r in store.get_health_status_all()}
 
     # email -> owning client bucket, and domain -> the clients sitting on it
-    by_bucket, dom_clients = {}, {}
+    by_bucket, dom_clients, dom_mailboxes = {}, {}, {}
     for email, mb in mailboxes.items():
         owner = (health.get(email) or {}).get("client") or "(untagged)"
-        by_bucket.setdefault(owner, []).append(dict(mb, email=email, bucket=owner))
+        rec = dict(mb, email=email, bucket=owner)
+        by_bucket.setdefault(owner, []).append(rec)
         dom_clients.setdefault(mb.get("domain"), set()).add(owner)
+        dom_mailboxes.setdefault(mb.get("domain"), []).append(rec)
 
     # SmartLead splits one client across several tag buckets ("Denair Group" and
     # "Denair Hvac, Inc." are 106 + 3 mailboxes of the same client). Roll them up
@@ -646,7 +743,7 @@ def build(today: date | None = None) -> dict:
             matched_crm.add(crm_name)
         rows.append(build_client(labels[key], mbs, crm_by_name.get(crm_name),
                                  overrides.get(key, {}), decisions.get(key, {}),
-                                 dom_clients, today))
+                                 dom_clients, today, dom_mailboxes))
 
     # Real deadlines first, then rolling reviews, then everything undated.
     phase_rank = {"committed": 0, "ended": 0, "rolling": 1, "per_lead": 2, "unknown": 2}
@@ -712,7 +809,7 @@ def notices(board: dict) -> list[dict]:
         d = r["days_to_decision"]
         # Only a committed term has a deadline to count down to. A rolling
         # month-to-month client would otherwise page Aidan every single month.
-        if d is None or r["decision"] == "renew" or r["phase"] != "committed":
+        if d is None or r["decision"] == "renew" or r["phase"] not in ("committed", "ended"):
             continue
         if d in NOTICE_DAYS:
             out.append({"client": r["client"], "touch": f"T-{d}", "row": r,

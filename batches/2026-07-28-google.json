@@ -1,0 +1,102 @@
+{
+  "_comment": "2026-07-28 batch: 6 acquisition domains for Aidan + 2 generic reserve groups for Sean Reynolds. All Google (Zapmail), all .info. Names checked available + non-premium on Spaceship and diffed against all 964 domains already owned or sending. Run with: python acq_outlook.py --batch batches/2026-07-28-google.json --label '<label>' [--plan|--execute]",
+  "batches": [
+    {
+      "label": "Acquisition N",
+      "provider": "GOOGLE",
+      "sender": "aidan_hutchinson",
+      "forward_to": "https://theheadlinetheory.com/",
+      "warmup": {
+        "reply_rate": 35,
+        "max_emails_per_day": 20,
+        "warmup_max_count": 20,
+        "warmup_min_count": 3,
+        "enable_rampup": true,
+        "weekdays_only": true,
+        "daily_reply_limit": 20
+      },
+      "domains": [
+        "theheadlinetheorybulletin.info",
+        "theheadlinetheorydigest.info",
+        "theheadlinetheorydispatch.info",
+        "theheadlinetheoryfeature.info",
+        "theheadlinetheoryledger.info",
+        "theheadlinetheorymemo.info"
+      ],
+      "spares": [
+        "theheadlinetheorycolumn.info",
+        "theheadlinetheorybyline.info",
+        "theheadlinetheoryreport.info",
+        "theheadlinetheorynotes.info"
+      ]
+    },
+    {
+      "label": "Generic S",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "",
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "contractgroup.info",
+        "contractops.info",
+        "corecontractors.info",
+        "crewservicegroup.info",
+        "directlinkcontractors.info",
+        "fieldservicepros.info",
+        "firsthq.info",
+        "firsthub.info",
+        "jobcrew.info",
+        "maintaintechexperts.info",
+        "onsiteexperts.info",
+        "sitecarecontractors.info"
+      ],
+      "spares": [
+        "protradeservices.info",
+        "servicecrewgroup.info",
+        "fieldworkpros.info"
+      ]
+    },
+    {
+      "label": "Generic T",
+      "provider": "GOOGLE",
+      "sender": "sean_reynolds",
+      "forward_to": "",
+      "warmup": {
+        "reply_rate": 40,
+        "max_emails_per_day": 15,
+        "warmup_max_count": 15,
+        "warmup_min_count": 10,
+        "enable_rampup": true,
+        "weekdays_only": false,
+        "daily_reply_limit": 15
+      },
+      "domains": [
+        "primeopshq.info",
+        "primepathexperts.info",
+        "primepointsolutions.info",
+        "projectflowzone.info",
+        "readyflowhub.info",
+        "reliableservicecrew.info",
+        "sitesidepoint.info",
+        "skilledforceservices.info",
+        "skilledgroup.info",
+        "skilledservice.info",
+        "skilledtechexperts.info",
+        "trustedworkgroup.info"
+      ],
+      "spares": [
+        "steadycrewservices.info",
+        "trustedtradeservices.info",
+        "readyfieldservices.info"
+      ]
+    }
+  ]
+}

@@ -150,6 +150,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <button class="tab" data-tab="capacity" onclick="showTab('capacity')">Acquisition capacity</button>
     <button class="tab" data-tab="buy" onclick="showTab('buy')">Buy inboxes</button>
     <button class="tab" data-tab="renewals" onclick="showTab('renewals')">Renewals &amp; reserve</button>
+    <button class="tab" data-tab="lifecycle" onclick="showTab('lifecycle')">Infra decisions</button>
   </div>
 
   <!-- ══ OVERVIEW ══ -->
@@ -163,7 +164,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
     <div class="panel" id="esppanel" style="display:none"></div>
 
     <div class="sect" id="domsect"><h2>🔥 Burned domains — reallocate &amp; cancel</h2><span class="eye" id="domsub">loading…</span></div>
-    <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%) for <b>3 straight days</b> <b>while actively sending</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot. Burned inboxes whose campaign is paused/completed are idle — they show in <b>All inboxes</b>, not here.</div>
+    <div class="note"><b>Top priority.</b> Inboxes burned (bounce ≥3% &amp; reply ≤0.5%, pooled over the last <b>10 sending days</b> and needing <b>105+ sends</b> to be judged) for <b>3 straight days</b>, grouped by domain — Zapmail bills by <b>whole domain</b>, so decisions are made per domain. <b>Reallocate</b> swaps burned inboxes out of their campaign for niche-matched reserve (frontend only, no code). <b>Cancel domain</b> schedules Zapmail removal on the next billing date and registers it with the <b>#zapmail-billing</b> bot, which pings you when the mailboxes actually drop so you can have Zapmail cut the slot billing. Domains whose burned inboxes are all idle (paused/completed campaign) need no reallocation — they appear below the active ones with a <b>Cancel directly on Zapmail</b> button.</div>
     <div id="domcards"><div class="panel"><span class="eye">loading…</span></div></div>
 
     <div class="sect" id="reallocsect" style="display:none"><h2>📋 Campaigns to reallocate in SmartLead</h2><span class="eye" id="reallocsub"></span></div>
@@ -218,7 +219,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
       <thead><tr>
         <th></th><th>Inbox / Domain</th><th>Source</th><th>Client</th><th>Grp</th>
         <th>Status</th><th class="num">Score</th>
-        <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Placement</th><th class="num">Sent 3d</th>
+        <th class="num" title="pooled over the scoring window (last 10 sending days)">Reply</th><th class="num" title="pooled over the scoring window (last 10 sending days)">Bounce</th><th class="num">OOO</th><th class="num">Placement</th><th class="num" title="sends over the last 10 sending days; under 105 the inbox can't be scored">Sent (10 send-days)</th>
         <th>Why</th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
@@ -377,6 +378,34 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
       </tr></thead>
       <tbody id="renrows"><tr><td colspan="6" class="empty">Loading renewals…</td></tr></tbody>
     </table></div>
+  </div>
+
+  <!-- ══ INFRA DECISIONS ══ -->
+  <div class="tabpanel" data-panel="lifecycle">
+    <div class="sect"><h2>Infrastructure decisions</h2><span class="eye" id="lcsub">loading…</span></div>
+    <div class="note">
+      Warm-up starts the Zapmail billing clock about <b>two weeks before the client can send</b>, so the
+      infra cycle and the engagement never line up. <b>Hard stop</b> is the first billing anniversary on or
+      after the engagement ends — the day the mailboxes must be gone. <b>Decide by</b> is the last day an
+      answer is still useful; past it we <b>default to no</b>.
+      Seasonal clients (holiday lighting) also stop at the season close, whatever the contract says.
+    </div>
+    <div class="panel costbar" id="lcbar" style="display:none"></div>
+    <div class="toolbar" id="lcfilters">
+      <button class="chip" data-lf="deadline" aria-pressed="true">With a deadline</button>
+      <button class="chip" data-lf="orphan" aria-pressed="false">No active client</button>
+      <button class="chip" data-lf="seasonal" aria-pressed="false">Seasonal</button>
+      <button class="chip" data-lf="all" aria-pressed="false">All</button>
+      <button class="btn sm" id="lcrefresh" style="margin-left:auto">Refresh</button>
+    </div>
+    <div class="panel tablewrap"><table>
+      <thead><tr>
+        <th>Client</th><th>Ends</th><th class="num">Decide by</th><th class="num">Hard stop</th>
+        <th class="num">Inboxes</th><th class="num">$/mo</th><th>Action</th><th>Decision</th>
+      </tr></thead>
+      <tbody id="lcrows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+    <div id="lcmsg"></div>
   </div>
 </div>
 
@@ -684,18 +713,27 @@ function domainCard(d){
   const collat = c.collateral ? `<div class="note" style="margin:6px 0;color:var(--serious);background:var(--serious-bg);border-color:var(--serious)">⚠ ${c.collateral} healthy inbox(es) actively sending on this domain would ALSO be deleted on cancel: ${d.collateral.map(x=>x.email).join(', ')}. Reallocate/replace them first.</div>` : '';
   const needR = d.need_reallocate.length;
   const acqHint = d.source==='acquisition' ? ' idle-acq' : '';
-  let reBtn;
+  let reBtn, directCancel = false;
   if(needR){
     reBtn = d.reserve_ok
       ? `<button class="btn pri sm" onclick="reallocateDomain('${d.domain}')">Reallocate ${needR} burned</button>`
       : `<button class="btn pri sm" disabled title="compatible reserve: ${d.reserve_pool}">Reallocate ${needR} — reserve ${d.reserve_pool}${acqHint} (warm more)</button>`;
   } else {
     const idleBurned = d.burned_mailboxes.some(m=>m.idle || !m.in_campaign);
-    reBtn = `<span class="eye" style="color:var(--good)">✓ ${idleBurned?'burned not actively sending — cancel directly':'burned reallocated'}</span>`;
+    // "cancel directly" = every burned mailbox here is idle (paused/completed
+    // campaign), so there is no live campaign to swap senders out of and no
+    // reallocation step. That used to be stated as bare text with no action next
+    // to it; it now drives an explicit one-click cancel below.
+    directCancel = idleBurned && !d.scheduled;
+    reBtn = idleBurned
+      ? `<span class="eye" style="color:var(--info)">burned, not actively sending — no reallocation needed, cancel directly →</span>`
+      : `<span class="eye" style="color:var(--good)">✓ burned reallocated</span>`;
   }
   const canBtn = d.scheduled
     ? `<span class="eye" style="color:var(--info)">⏳ scheduled for removal</span>`
-    : `<button class="btn danger sm" onclick="cancelDomain('${d.domain}')">Cancel domain${d.clean_cancel?'':' ⚠'}</button>`;
+    : directCancel
+      ? `<button class="btn danger sm" onclick="cancelDomain('${d.domain}')" title="Schedules Zapmail removal on the next billing date and registers it with the #zapmail-billing bot, which pings you when the mailboxes actually drop so you can have Zapmail cut the slot billing.">Cancel directly on Zapmail${d.clean_cancel?'':' ⚠'}</button>`
+      : `<button class="btn danger sm" onclick="cancelDomain('${d.domain}')">Cancel domain${d.clean_cancel?'':' ⚠'}</button>`;
   const bc = c.burned>=3?'var(--crit)':c.burned===2?'var(--serious)':'var(--warn)';
   const nb = `<span class="pill ${d.niche==='hvac'?'watch':d.niche==='landscaping'?'healthy':'insufficient'}" style="text-transform:none">${d.niche}</span>`;
   return `<div class="panel" style="margin-bottom:10px">
@@ -1537,6 +1575,91 @@ document.getElementById('capselall').addEventListener('change',e=>{
   renderCapInboxes();
 });
 
+// ── Infrastructure decisions ──
+let LIFECYCLE=null, lcFilter='deadline';
+async function loadLifecycle(){
+  const sub=document.getElementById('lcsub'); sub.textContent='loading…';
+  try{
+    const r=await fetch(api('/api/infra-lifecycle'),{credentials:'include'});
+    const d=await r.json();
+    // A CRM read that returns nothing comes back as a 500, never as an empty
+    // board — "nothing due" and "we couldn't look" must not look the same.
+    if(!r.ok || d.error){ sub.textContent='error: '+((d&&d.error)||r.status);
+      document.getElementById('lcrows').innerHTML='<tr><td colspan="8" class="empty">'+
+        ((d&&d.error)||'could not load').toString().slice(0,300)+'</td></tr>'; return; }
+    LIFECYCLE=d; renderLifecycle();
+  }catch(e){ sub.textContent='error: '+e; }
+}
+function lcPhaseTag(r){
+  if(!r.crm_name) return '<span class="tag" style="color:var(--crit)">no CRM client</span>';
+  if(r.phase==='committed') return '<span class="tag">term</span>';
+  if(r.phase==='rolling') return '<span class="tag">rolling</span>';
+  if(r.phase==='per_lead') return '<span class="tag">per-lead</span>';
+  return '<span class="tag">no dates</span>';
+}
+function renderLifecycle(){
+  if(!LIFECYCLE) return;
+  const s=LIFECYCLE.summary||{}, rows=LIFECYCLE.rows||[];
+  const b=document.getElementById('lcbar'); b.style.display='flex';
+  b.innerHTML=`
+    <div class="ci"><span class="l">Clients with infra</span><span class="v">${s.clients||0}</span></div>
+    <div class="ci"><span class="l">Inboxes</span><span class="v">${(s.mailboxes||0).toLocaleString()}</span></div>
+    <div class="ci"><span class="l">Fleet cost</span><span class="v">$${(s.monthly_cost||0).toLocaleString()}/mo</span></div>
+    <div class="ci"><span class="l">Decisions ≤30d</span><span class="v${s.decisions_due_30d?' crit':''}">${s.decisions_due_30d||0}</span></div>
+    <div class="ci"><span class="l">Overdue (defaulted to no)</span><span class="v${s.decisions_overdue?' crit':''}">${s.decisions_overdue||0}</span></div>
+    <div class="ci big"><span class="l">No active client</span><span class="v">$${(s.orphan_monthly_cost||0).toLocaleString()}/mo</span></div>`;
+  let f=rows;
+  if(lcFilter==='deadline') f=rows.filter(r=>r.phase==='committed'||r.phase==='ended');
+  else if(lcFilter==='orphan') f=rows.filter(r=>!r.crm_name||r.status!=='active');
+  else if(lcFilter==='seasonal') f=rows.filter(r=>r.seasonal);
+  document.getElementById('lcsub').textContent=
+    `${f.length} shown · as of ${LIFECYCLE.as_of}`+
+    (s.wasted_cost?` · ~$${Math.round(s.wasted_cost).toLocaleString()} committed past end dates`:'');
+  document.getElementById('lcrows').innerHTML = f.length ? f.map(r=>{
+    const cls = r.urgency==='crit'?'crit':(r.urgency==='warn'?'serious':(r.urgency==='soon'?'mut':'mut'));
+    const days = r.days_to_decision!=null ? `<div class="dom">${r.days_to_decision<0?
+      Math.abs(r.days_to_decision)+'d overdue':'in '+r.days_to_decision+'d'}</div>` : '';
+    const decided = r.decision ? `<span class="vpill ${r.decision==='renew'?'good':'crit'}">${r.decision}</span>`
+      : (r.phase==='committed'
+          ? `<button class="btn sm" data-lcdec="renew" data-lcclient="${encodeURIComponent(r.client)}">Renew</button>
+             <button class="btn sm danger" data-lcdec="stop" data-lcclient="${encodeURIComponent(r.client)}">Stop</button>`
+          : '<span class="dom">—</span>');
+    return `<tr>
+      <td><div class="em">${r.client}</div><div class="dom">${lcPhaseTag(r)} ${r.vertical_label?('<span class="tag">'+r.vertical_label+'</span>'):''}</div>
+        ${r.flags && r.flags.length?('<div class="dom" style="color:var(--warn)">'+r.flags.join(' · ')+'</div>'):''}</td>
+      <td>${r.effective_end||'—'}<div class="dom">${r.end_basis||''}</div></td>
+      <td class="num"><span class="vpill ${cls}">${r.decision_by||'—'}</span>${days}</td>
+      <td class="num">${r.hard_stop||'—'}<div class="dom">${r.schedule_by?('file by '+r.schedule_by):''}</div></td>
+      <td class="num">${r.mailboxes}</td>
+      <td class="num">$${r.monthly_cost}</td>
+      <td><span class="tag">${r.action}</span><div class="dom">${r.action_detail||''}</div></td>
+      <td>${decided}</td>
+    </tr>`;}).join('')
+    : '<tr><td colspan="8" class="empty">none in this filter</td></tr>';
+}
+document.getElementById('lcfilters').addEventListener('click',e=>{
+  const c=e.target.closest('.chip'); if(!c) return;
+  lcFilter=c.dataset.lf;
+  document.querySelectorAll('#lcfilters .chip').forEach(x=>x.setAttribute('aria-pressed', x===c));
+  renderLifecycle();
+});
+document.getElementById('lcrefresh').addEventListener('click', loadLifecycle);
+document.getElementById('lcrows').addEventListener('click', async e=>{
+  const btn=e.target.closest('[data-lcdec]'); if(!btn) return;
+  const client=decodeURIComponent(btn.dataset.lcclient), decision=btn.dataset.lcdec;
+  if(decision==='stop' && !confirm(`Record STOP for ${client}?\n\nThis is the infra decision, not a cancellation — nothing is removed yet.`)) return;
+  btn.disabled=true;
+  try{
+    const r=await fetch(api('/api/infra-lifecycle/decision'),{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({client, decision})});
+    const d=await r.json();
+    document.getElementById('lcmsg').innerHTML = d.error
+      ? `<div class="note" style="color:var(--crit)">${d.error}</div>`
+      : `<div class="note">Recorded <b>${decision}</b> for ${client}.</div>`;
+    loadLifecycle();
+  }catch(err){ document.getElementById('lcmsg').innerHTML=`<div class="note" style="color:var(--crit)">${err}</div>`; btn.disabled=false; }
+});
+
 // ── Tabs ──
 function showTab(name){
   document.querySelectorAll('.tabpanel').forEach(p=>p.classList.toggle('active', p.dataset.panel===name));
@@ -1551,6 +1674,7 @@ loadReplacements();
 loadRenewals();
 loadReplenish();
 loadCapacity();
+loadLifecycle();
 </script>
 </body>
 </html>

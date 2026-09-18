@@ -1,0 +1,78 @@
+{
+  "_comment": "2026-09-03 batch: 24 acquisition domains / 72 Google inboxes for Aidan Hutchinson, split into two groups of 12 (Acquisition Y, Acquisition Z). All GOOGLE (Zapmail), all .info per Tim. Every name checked live on Spaceship (available + non-premium) and diffed against all 1,095 domains THT already owns across Spaceship, Zapmail (Google+Microsoft) and SmartLead. Run: .venv/bin/python acq_outlook.py --batch batches/2026-09-03-acq-yz.json --label 'Acquisition Y' [--plan|--execute]",
+  "batches": [
+    {
+      "label": "Acquisition Y",
+      "provider": "GOOGLE",
+      "sender": "aidan_hutchinson",
+      "forward_to": "https://theheadlinetheory.com/",
+      "warmup": {
+        "reply_rate": 35,
+        "max_emails_per_day": 20,
+        "warmup_max_count": 20,
+        "warmup_min_count": 3,
+        "enable_rampup": true,
+        "weekdays_only": true,
+        "daily_reply_limit": 20
+      },
+      "domains": [
+        "theheadlinetheorychronicle.info",
+        "theheadlinetheorycopy.info",
+        "theheadlinetheoryedition.info",
+        "theheadlinetheoryfolio.info",
+        "theheadlinetheorygazette.info",
+        "theheadlinetheoryherald.info",
+        "theheadlinetheoryissue.info",
+        "theheadlinetheoryjournal.info",
+        "theheadlinetheorynotes.info",
+        "theheadlinetheoryprint.info",
+        "theheadlinetheoryreport.info",
+        "theheadlinetheorysignal.info"
+      ],
+      "spares": [
+        "theheadlinetheorydateline.info",
+        "theheadlinetheorymasthead.info",
+        "theheadlinetheorystringer.info",
+        "theheadlinetheoryreprint.info",
+        "theheadlinetheoryarchive.info",
+        "theheadlinetheoryregister.info"
+      ]
+    },
+    {
+      "label": "Acquisition Z",
+      "provider": "GOOGLE",
+      "sender": "aidan_hutchinson",
+      "forward_to": "https://theheadlinetheory.com/",
+      "warmup": {
+        "reply_rate": 35,
+        "max_emails_per_day": 20,
+        "warmup_max_count": 20,
+        "warmup_min_count": 3,
+        "enable_rampup": true,
+        "weekdays_only": true,
+        "daily_reply_limit": 20
+      },
+      "domains": [
+        "theheadlinetheorybureau.info",
+        "theheadlinetheoryfeed.info",
+        "theheadlinetheorylede.info",
+        "theheadlinetheorymethod.info",
+        "theheadlinetheorynewsroom.info",
+        "theheadlinetheorypitch.info",
+        "theheadlinetheoryproof.info",
+        "theheadlinetheoryquote.info",
+        "theheadlinetheoryrecap.info",
+        "theheadlinetheoryreview.info",
+        "theheadlinetheoryroundup.info",
+        "theheadlinetheoryscoop.info"
+      ],
+      "spares": [
+        "theheadlinetheorycaption.info",
+        "theheadlinetheoryclipping.info",
+        "theheadlinetheoryextra.info",
+        "theheadlinetheoryinsert.info",
+        "theheadlinetheoryrecord.info"
+      ]
+    }
+  ]
+}
