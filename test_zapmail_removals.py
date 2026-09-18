@@ -149,3 +149,30 @@ def test_the_success_path_still_names_what_it_skipped(monkeypatch):
     assert r["ok"] is True
     assert r["scheduled"] == ["ours@shared.info"]
     assert r["blocked_admin"] == ["admin@solo.info"]
+
+
+def test_the_admin_is_found_when_every_createdAt_is_identical():
+    """A domain's mailboxes are provisioned in one batch and stamped with the
+    same createdAt to the millisecond. min() then breaks the tie by list order,
+    which is arbitrary — it picked `sean.reynolds` on lawnworkspecialists.info
+    when the admin is `s.reynolds`, and the address sailed past the guard into
+    a 400 that killed the whole batch."""
+    same = "2026-04-16T01:35:33.585Z"
+    mbs = [{"username": "sean.reynolds", "createdAt": same},
+           {"username": "sean.r", "createdAt": same},
+           {"username": "s.reynolds", "createdAt": same}]
+    assert zr._admin_username(mbs) == "s.reynolds"
+
+
+def test_a_genuinely_earlier_mailbox_still_wins():
+    """Creation time is still the rule; the provisioning order only breaks ties."""
+    mbs = [{"username": "s.reynolds", "createdAt": "2026-05-01T00:00:00Z"},
+           {"username": "sean.r", "createdAt": "2026-04-01T00:00:00Z"}]
+    assert zr._admin_username(mbs) == "sean.r"
+
+
+def test_an_unknown_username_sorts_after_the_known_ones_on_a_tie():
+    same = "2026-04-16T01:35:33.585Z"
+    mbs = [{"username": "someoneelse", "createdAt": same},
+           {"username": "s.reynolds", "createdAt": same}]
+    assert zr._admin_username(mbs) == "s.reynolds"
