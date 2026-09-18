@@ -551,6 +551,23 @@ def inboxes_route():
             holds = (hp.list_holds() or {}).get("holds") or []
         except Exception:
             holds = []
+        # Campaigns that had a sender swapped and still need SmartLead's manual
+        # "Reallocate mailboxes" click. There is NO API for that step, so a swap
+        # is not finished until someone does it — and until then the campaign is
+        # sending from a set of mailboxes that no longer matches what is tagged.
+        realloc = {"campaigns": [], "count": 0}
+        try:
+            import health_replace as hr
+            realloc = hr.reallocation_campaigns() or realloc
+        except Exception:
+            pass
+        reserve_by_niche = {}
+        try:
+            import health_replace as hr
+            reserve_by_niche = hr.reserve_summary() or {}
+        except Exception:
+            reserve_by_niche = {}
+
         try:
             import health_replace as hr
             all_jobs = hr.list_jobs() or []
@@ -581,6 +598,8 @@ def inboxes_route():
             "burn_rate": burn,
             "holds": holds,
             "jobs": jobs,
+            "reallocate_queue": realloc,
+            "reserve_by_niche": reserve_by_niche,
             "summary": {
                 "inboxes": len(fleet.get("inboxes") or []),
                 "burned": len(burned),
