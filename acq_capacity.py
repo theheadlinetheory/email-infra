@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from datetime import datetime
 
@@ -55,6 +56,9 @@ SL_CAMPAIGN_URL = "https://app.smartlead.ai/app/email-campaign/{id}/analytics"
 
 DEFAULT_PER_DAY = 15          # Zapmail/SmartLead default; used only when the real value is missing
 USAGE_WINDOW_DAYS = 7         # how many complete days of true daily rows we average over
+_TAG_DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+_ACQ_TAG_RE = re.compile(r"^\s*Acquisition\s+[A-Z]\s*$", re.I)
+
 LIVE_DAY_FRACTION = 0.20      # a day counts as a sending day at >=20% of a median day
 TARGET_BURN_DAYS = 7          # a campaign's queue "should" clear in about a week
 MIN_SENDERS_ACTIVE = 1        # an ACTIVE campaign may never be taken below this
@@ -101,6 +105,48 @@ def _per_day(ad: dict) -> int:
 
 
 # --- inputs ---------------------------------------------------------------
+
+def _acq_roster_from_tags(live_facts: dict, overview: dict) -> list[dict] | None:
+    """The acquisition roster straight from Smartlead tags, or None.
+
+    WHY. `acquisition_groups` lives in the overview_v2 cache, which on
+    2026-09-18 was a day stale while a SECOND cache under the plain `overview`
+    key had been refreshed that morning and carries no acquisition data at all.
+    Reading the wrong one returned 0 inboxes; reading the stale one returned
+    307; Smartlead actually held 302. Three answers to one question, and the
+    capacity denominator is built on it.
+
+    Tags are what we set, so the roster comes from them and the cache is used
+    only to enrich each row with detail it already has. An inbox present in
+    Smartlead but missing from the cache still counts — being absent from the
+    denominator is the failure that matters.
+    """
+    tagged = {e: f for e, f in (live_facts or {}).items()
+              if _ACQ_TAG_RE.match(str(f.get("tag") or ""))}
+    if not tagged:
+        return None
+    detail = {}
+    for g in (overview or {}).get("acquisition_groups") or []:
+        for ad in g.get("account_details") or []:
+            if ad.get("email"):
+                detail[ad["email"]] = ad
+    out = []
+    for email, f in tagged.items():
+        ad = detail.get(email) or {}
+        out.append({
+            "email": email,
+            "account_id": f.get("account_id") or ad.get("id"),
+            "domain": ad.get("domain") or email.split("@", 1)[-1],
+            "group": (f.get("tag") or "").strip(),
+            "esp": (f.get("esp") or ad.get("esp") or "").upper() or None,
+            "per_day": _per_day({**ad, "message_per_day": f.get("message_per_day")}),
+            "smtp_ok": f.get("smtp_ok") is not False,
+            "sent_7d": int(ad.get("sent") or 0),
+            "warmup_enabled": bool(ad.get("warmup_enabled")),
+            "campaigns": list(ad.get("campaign_names") or []),
+        })
+    return out
+
 
 def _acq_inboxes(overview: dict) -> list[dict]:
     """Every acquisition-tagged inbox, deduped by email, with its group name.
@@ -186,13 +232,20 @@ def _group_tag(account: dict) -> str:
 
 
 def _live_account_facts() -> dict:
-    """{email: {message_per_day, esp, smtp_ok}} straight from SmartLead.
+    """{email: {...}} for EVERY Smartlead account, or {} if the walk could not
+    be completed.
 
-    `message_per_day` and `type` were only added to the overview cache on
-    2026-08-21, so until a full sync has run the cache has neither and capacity
-    silently falls back to 15/inbox for everything. This overlay (~17 paged calls,
-    well inside the rate cap) makes the numbers real on the "Refresh live" path
-    instead of making Lars wait for the nightly sync.
+    ALL OR NOTHING, DELIBERATELY. This used to `break` out of the pagination on
+    any non-200 and return whatever it had. Smartlead's rate limit is
+    account-wide and shared with every other job, so that happened routinely —
+    on 2026-09-18 it returned 200 accounts out of ~1,900 and the caller, which
+    uses this to decide which inboxes are still acquisition-tagged, dropped 93
+    real inboxes purely because a truncated response did not mention them. The
+    acquisition denominator read 214 where 302 was the truth.
+
+    A partial answer here is worse than none: none falls back to the cached
+    roster, which is merely stale. So every page is retried, and a page that
+    still fails abandons the whole result.
     """
     import requests
     key = _sl_key()
@@ -200,30 +253,42 @@ def _live_account_facts() -> dict:
         return {}
     out, offset = {}, 0
     while True:
-        try:
-            r = requests.get(f"{SL}/email-accounts/",
-                             params={"api_key": key, "offset": offset, "limit": 100},
-                             timeout=30)
-        except requests.RequestException:
-            break
-        if r.status_code != 200:
-            break
-        batch = r.json() if r.text.strip() else []
+        batch = None
+        for attempt in range(5):
+            try:
+                r = requests.get(f"{SL}/email-accounts/",
+                                 params={"api_key": key, "offset": offset, "limit": 100},
+                                 timeout=60)
+            except requests.RequestException:
+                time.sleep(5 * (attempt + 1))
+                continue
+            if r.status_code == 200:
+                try:
+                    batch = r.json() if r.text.strip() else []
+                except ValueError:
+                    batch = None
+                if batch is not None:
+                    break
+            time.sleep(5 * (attempt + 1))
+        if batch is None:
+            return {}                      # incomplete — never return a partial roster
         if not isinstance(batch, list) or not batch:
             break
         for a in batch:
             email = a.get("from_email")
             if email:
                 out[email] = {"message_per_day": a.get("message_per_day"),
+                              "account_id": a.get("id"),
                               "esp": a.get("type"),
                               "smtp_ok": bool(a.get("is_smtp_success")),
-                              # live group tag — the roster check below needs to
-                              # know whether this mailbox is STILL acquisition
+                              # the live client/group tag — the roster is built
+                              # from this rather than from the overview cache
                               "tag": _group_tag(a),
                               "created_at": a.get("created_at")}
         if len(batch) < 100:
             break
         offset += 100
+        time.sleep(1.1)
     return out
 
 
@@ -514,9 +579,20 @@ def build(live: bool = False, live_accounts: bool | None = None,
         # and 1 untagged, a phantom 270/day of stock we had already taken out of
         # the fleet. Having just paid for the live list, believe its tags.
         if facts_live:
-            inboxes = [i for i in inboxes
-                       if (facts_live.get(i["email"], {}).get("tag") or ""
-                           ).lower().startswith("acquisition")]
+            # Take the roster FROM the tags, not merely filtered BY them. The
+            # old line could only ever SHRINK the cached list, so an inbox
+            # tagged acquisition but absent from a stale cache was invisible:
+            # on 2026-09-18 the cache held 307, this filter cut it to 214, and
+            # Smartlead actually had 302 tagged. ~88 real inboxes were missing
+            # from the capacity denominator, which is the direction that
+            # matters — it understates the stock we are paying for.
+            roster = _acq_roster_from_tags(facts_live, overview)
+            if roster:
+                inboxes = roster
+            else:
+                inboxes = [i for i in inboxes
+                           if (facts_live.get(i["email"], {}).get("tag") or ""
+                               ).lower().startswith("acquisition")]
         for i in inboxes:
             f = facts_live.get(i["email"])
             if not f:
