@@ -161,7 +161,18 @@ def resolve_domain_ids(domains):
     return {"found": found, "missing": [d for d in domains if d not in found]}
 
 
-def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox"):
+def _domain_mailbox_count(snapshot, domain, S_mod) -> int:
+    """How many mailboxes the domain has in total (admin included)."""
+    if not domain:
+        return 0
+    for d in (snapshot if snapshot is not None else (S_mod.zm_list_domains() or [])):
+        if (d.get("domain") or "").lower() == domain:
+            return len([m for m in (d.get("mailboxes") or []) if isinstance(m, dict)])
+    return 0
+
+
+def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox",
+                     snapshot=None):
     """Schedule removal for INDIVIDUAL mailboxes, leaving the domain alone.
 
     Needed wherever a domain is shared. Three of the cleanup mailboxes sit on
@@ -170,6 +181,10 @@ def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox"):
     client's senders for deletion along with ours. Zapmail's scheduled-removal
     endpoint takes mailboxIds as well as domainIds, so the right unit is
     available; nothing in this repo was using it.
+
+    Pass `snapshot` (the result of S.zm_list_domains()) when scheduling more
+    than one mailbox: without it every call re-walks ~900 domains to resolve a
+    single address, which made a 13-mailbox run take ten minutes.
 
     Resolves every address to a live Zapmail mailbox id first and refuses the
     whole call if any of them is missing: a partially-resolved list would
@@ -180,13 +195,19 @@ def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox"):
         return {"error": "no mailboxes given"}
 
     want = set(emails)
-    found, by_domain = {}, {}
+    found, by_domain, admin_of = {}, {}, {}
     try:
-        for d in (S.zm_list_domains() or []):
+        for d in (snapshot if snapshot is not None else (S.zm_list_domains() or [])):
             dom = (d.get("domain") or "").lower()
-            for m in (d.get("mailboxes") or []):
-                if not isinstance(m, dict):
-                    continue
+            mbs = [m for m in (d.get("mailboxes") or []) if isinstance(m, dict)]
+            if mbs:
+                # Zapmail's ADMIN mailbox is the first one created on the domain,
+                # and it cannot be removed while any sibling remains. It is
+                # always `s.reynolds@` for our provisioning order, but the
+                # creation timestamp is the actual rule, so use that.
+                first = min(mbs, key=lambda m: str(m.get("createdAt") or "z"))
+                admin_of[dom] = f"{first.get('username', '')}@{dom}".lower()
+            for m in mbs:
                 em = f"{m.get('username', '')}@{dom}".lower()
                 if em in want:
                     found[em] = m.get("id")
@@ -195,7 +216,26 @@ def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox"):
         return {"error": f"could not read Zapmail mailboxes: {str(e)[:140]}"}
 
     missing = sorted(want - set(found))
-    plan = {"resolved": found, "missing": missing, "count": len(found)}
+
+    # Zapmail refuses an admin mailbox with a 400 while siblings are still on
+    # the domain, and that refusal kills the WHOLE call. Report it up front as
+    # its own outcome rather than letting one blocked address take the batch
+    # down — and say what unblocks it, because "remove all mailboxes associated
+    # with this domain" is only actionable if you know which one is the admin.
+    blocked = sorted(e for e in found
+                     if admin_of.get(by_domain.get(e, "")) == e
+                     and len([x for x in found if by_domain.get(x) == by_domain.get(e)])
+                     < _domain_mailbox_count(snapshot, by_domain.get(e), S))
+    for e in blocked:
+        found.pop(e, None)
+
+    plan = {"resolved": found, "missing": missing, "count": len(found),
+            "blocked_admin": blocked}
+    if blocked and not found:
+        return {"error": "every mailbox given is its domain's admin — Zapmail "
+                         "will not remove one while siblings remain. Schedule "
+                         "the siblings first, or cancel the whole domain.",
+                **plan}
     if missing:
         # Deliberately fatal. Scheduling "most of" a list and calling it done is
         # how a cancellation silently half-happens.
@@ -220,8 +260,12 @@ def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox"):
                            "date_notified": False}
                 added += 1
         _save_registry(reg)
+    # `blocked_admin` rides on the SUCCESS path too. Without it a caller gets
+    # ok:true and never learns that some addresses were skipped — silent partial
+    # success, which is the same failure this module exists to prevent.
     return {"ok": ok, "status_code": r.status_code, "response": r.text[:200],
             "scheduled": sorted(found), "registered": added,
+            "blocked_admin": blocked,
             **({} if ok else {"error": "zapmail rejected the request"})}
 
 

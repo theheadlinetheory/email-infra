@@ -17,13 +17,19 @@ class FakeSetup:
         return self._d
 
 
+# createdAt matters: Zapmail's ADMIN mailbox is the first one created on a
+# domain and cannot be removed while siblings remain. Here `client1` is the
+# admin, so `ours` is an ordinary sibling and freely schedulable.
 DOMAINS = [
     {"domain": "shared.info", "mailboxes": [
-        {"id": "m1", "username": "ours"},
-        {"id": "m2", "username": "client1"},
-        {"id": "m3", "username": "client2"},
+        {"id": "m2", "username": "client1", "createdAt": "2026-01-01T00:00:00Z"},
+        {"id": "m1", "username": "ours", "createdAt": "2026-01-02T00:00:00Z"},
+        {"id": "m3", "username": "client2", "createdAt": "2026-01-03T00:00:00Z"},
     ]},
-    {"domain": "solo.info", "mailboxes": [{"id": "m4", "username": "a"}]},
+    {"domain": "solo.info", "mailboxes": [
+        {"id": "m4", "username": "admin", "createdAt": "2026-01-01T00:00:00Z"},
+        {"id": "m5", "username": "second", "createdAt": "2026-01-02T00:00:00Z"},
+    ]},
 ]
 
 
@@ -78,3 +84,68 @@ def test_an_empty_list_is_rejected():
 def test_addresses_are_matched_case_insensitively():
     r = zr.cancel_mailboxes(["Ours@Shared.INFO"], dry_run=True)
     assert r["count"] == 1
+
+
+def test_an_admin_mailbox_is_reported_not_sent(monkeypatch):
+    """Zapmail 400s on an admin mailbox while siblings remain, and that refusal
+    kills the whole call. Catching it here keeps one blocked address from
+    taking a batch of good ones down with it."""
+    called = {"n": 0}
+    monkeypatch.setattr(zr.requests, "put", lambda *a, **k: called.__setitem__("n", 1))
+    r = zr.cancel_mailboxes(["admin@solo.info"], dry_run=False)
+    assert r["blocked_admin"] == ["admin@solo.info"]
+    assert "siblings remain" in r["error"]
+    assert called["n"] == 0
+
+
+def test_a_batch_schedules_what_it_can_and_reports_the_blocked_admin(monkeypatch):
+    """One blocked address must not take the good ones down with it — that is
+    exactly what Zapmail's 400 did to a 13-mailbox batch."""
+    sent = {}
+
+    class R:
+        status_code = 200
+        text = "ok"
+
+    monkeypatch.setattr(zr.requests, "put",
+                        lambda url, headers=None, json=None, timeout=None:
+                        (sent.update(json), R())[1])
+    monkeypatch.setattr(zr, "_registry", lambda: {})
+    monkeypatch.setattr(zr, "_save_registry", lambda e: None)
+    # admin@solo.info is blocked (its sibling stays); ours@shared.info is fine.
+    r = zr.cancel_mailboxes(["admin@solo.info", "ours@shared.info"], dry_run=False)
+    assert r["ok"] is True
+    assert sent["mailboxIds"] == ["m1"]           # the schedulable one only
+    assert r["blocked_admin"] == ["admin@solo.info"]
+
+
+def test_taking_every_mailbox_on_a_domain_includes_the_admin(monkeypatch):
+    """Naming all of them is how an admin legitimately goes: nothing is left
+    behind it."""
+    r = zr.cancel_mailboxes(["client1@shared.info", "ours@shared.info",
+                             "client2@shared.info"], dry_run=True)
+    assert r["blocked_admin"] == []
+    assert r["count"] == 3
+
+
+def test_a_snapshot_avoids_re_walking_zapmail(monkeypatch):
+    """Without it, each call re-walks ~900 domains to resolve one address —
+    a 13-mailbox run took ten minutes."""
+    monkeypatch.setattr(zr, "S", FakeSetup([]))     # walking would find nothing
+    r = zr.cancel_mailboxes(["ours@shared.info"], dry_run=True, snapshot=DOMAINS)
+    assert r["count"] == 1
+
+
+def test_the_success_path_still_names_what_it_skipped(monkeypatch):
+    """ok:true with no mention of the skipped admin is silent partial success."""
+    class R:
+        status_code = 200
+        text = "ok"
+
+    monkeypatch.setattr(zr.requests, "put", lambda *a, **k: R())
+    monkeypatch.setattr(zr, "_registry", lambda: {})
+    monkeypatch.setattr(zr, "_save_registry", lambda e: None)
+    r = zr.cancel_mailboxes(["admin@solo.info", "ours@shared.info"], dry_run=False)
+    assert r["ok"] is True
+    assert r["scheduled"] == ["ours@shared.info"]
+    assert r["blocked_admin"] == ["admin@solo.info"]
