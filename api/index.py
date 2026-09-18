@@ -27,6 +27,11 @@ ACQUISITION_BRAND = "The Headline Theory"
 ACQUISITION_POOL_RE = re.compile(r"^\s*[\(]?\s*(acquisition|burnt\s+acquisition)\b", re.I)
 
 
+def _today_iso():
+    import datetime as _dt
+    return _dt.date.today().isoformat()
+
+
 def _check_auth():
     if not DASHBOARD_PASSWORD:
         return True
@@ -2175,9 +2180,27 @@ def assign_generic_to_client():
 
         import requests as _req
         import time
-        tagged = 0
+
+        # RESUMABLE. This loop re-tags up to 57 accounts one at a time, each with
+        # its own retries, and it is the irreversible middle of a multi-step
+        # conversion: a timeout at account 30 leaves a group half-converted,
+        # visible to nobody, and re-running used to start from the top and
+        # re-tag the 30 that already succeeded. The journal records each id as
+        # it lands, so a second run does the remainder and nothing else.
+        #
+        # Keyed on the group AND the destination client, so converting the same
+        # group to a different client is a different job, not a resume.
+        _jkey = "assign_journal:" + re.sub(
+            r"[^a-z0-9]+", "-", f"{group_name}|{client_name}|{ab}".lower()).strip("-")[:120]
+        _journal = store.get_state(_jkey) or {}
+        _done = set(_journal.get("tagged") or [])
+        _resumed = len(_done)
+
+        tagged = len(_done)
         tag_errors = []
         for acc_id in account_ids:
+            if acc_id in _done:
+                continue
             existing = acct_tags.get(acc_id, [])
             date_tag_id = None
             for t in existing:
@@ -2196,8 +2219,17 @@ def assign_generic_to_client():
                 time.sleep(5 * (attempt + 1))
             if r.status_code == 200:
                 tagged += 1
+                _done.add(acc_id)
+                # Written every 10, and again at the end. Losing at most nine
+                # re-tags to a crash is cheap; re-tagging is idempotent anyway,
+                # while writing on every account would triple the request count.
+                if len(_done) % 10 == 0:
+                    store.set_state(_jkey, {"tagged": sorted(_done),
+                                            "client": client_name, "group": group_name})
             else:
                 tag_errors.append({"id": acc_id, "status": r.status_code, "body": r.text[:100]})
+        store.set_state(_jkey, {"tagged": sorted(_done), "client": client_name,
+                                "group": group_name})
 
         time.sleep(2)
         verify_resp = _gql(
@@ -2262,6 +2294,15 @@ def assign_generic_to_client():
             except Exception as e:
                 fwd = {"ok": False, "domains": 0, "note": str(e)[:120]}
 
+        # A fully verified conversion is finished; leaving the journal behind
+        # would make a later, deliberate re-run of the same group+client skip
+        # every account and report success having done nothing.
+        if verified == len(account_ids):
+            try:
+                store.set_state(_jkey, {"tagged": [], "completed": _today_iso()})
+            except Exception:
+                pass
+
         return _cors(jsonify({
             "ok": verified == len(account_ids),
             "tagged": tagged,
@@ -2272,6 +2313,9 @@ def assign_generic_to_client():
             "errors": tag_errors[:5] if tag_errors else [],
             "forwarding": fwd,
             "forwarding_set": (fwd or {}).get("domains", 0),
+            # How much of this was already done before the call. Non-zero means
+            # a previous attempt died part way and this one picked it up.
+            "resumed_from": _resumed,
         }))
     except Exception as e:
         import traceback
