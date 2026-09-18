@@ -471,11 +471,41 @@ def inboxes_route():
         reserve = sum(n for k, n in pools.items()
                       if "generic" in k.lower() or "reserve" in k.lower())
         replacement = sum(n for k, n in pools.items() if "replacement" in k.lower())
+
+        # Burn RATE, not just the burned count. 25 burned is fine if it has
+        # been 25 for a month and an emergency if it was 4 last week, and the
+        # figure is only actionable next to what replaces them.
+        #
+        # RECORDED, not reconstructed. Replaying inbox_health_daily through the
+        # BURNED rule fires on 139 inboxes for 2026-09-16 while
+        # inbox_health_status carries 25, overlapping on only 7 — the two
+        # disagree in both directions, which fits the known history problems
+        # with that table. So a daily snapshot of the trustworthy table is taken
+        # here and the rate is the movement between snapshots. See fleet_burn.py.
+        burn = {"measured": False, "recording": False,
+                "reason": "burn rate unavailable", "weeks": [], "summary": {}}
+        try:
+            import datetime as _dt
+            import db as _store
+            import fleet_burn as fbn
+            stat = _store.get_health_status_all()
+            today_s = _dt.date.today().isoformat()
+            hist = (_store.get_state(fbn.STATE_KEY) or {}).get("snapshots") or []
+            burn = fbn.build(hist, stat or None, replacement, today_s)
+            # Write today's snapshot AFTER building, so the rate is always
+            # computed against yesterday rather than against itself.
+            if stat:
+                _store.set_state(fbn.STATE_KEY,
+                                 {"snapshots": fbn.record(hist, stat, today_s)})
+        except Exception as e:
+            burn["reason"] = f"burn rate unavailable: {str(e)[:120]}"
+
         need = Counter(b["vertical"] for b in act)
         return _cors(jsonify({
             "counts": fleet.get("counts") or {},
             "alerts": fleet.get("alert_summary") or {},
             "burned": burned,
+            "burn_rate": burn,
             "summary": {
                 "inboxes": len(fleet.get("inboxes") or []),
                 "burned": len(burned),
@@ -830,7 +860,12 @@ def buy_suggest():
         if not brand and (body.get("owner") or "").lower() == "acquisition":
             brand = ACQUISITION_BRAND
         if brand:
-            return _cors(jsonify(bi.suggest_client_domains(brand=brand, count=count, tld=tld)))
+            # Acquisition domains must carry the WHOLE brand. A two-word brand
+            # was yielding "headlineconnect" and "theorytoday" — names that do
+            # not read as us at all.
+            whole = (body.get("owner") or "").lower() == "acquisition"
+            return _cors(jsonify(bi.suggest_client_domains(
+                brand=brand, count=count, tld=tld, whole_brand_only=whole)))
         return _cors(jsonify(bi.suggest_generic(count=count, tld=tld, theme=body.get("theme"))))
     except Exception as e:
         import traceback

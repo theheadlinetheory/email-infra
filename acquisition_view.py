@@ -147,8 +147,10 @@ def build(acq: dict, registrar: dict | None, today: str,
         notes.append(f"{meas['phantom_inboxes']} inbox(es) look idle from campaign state "
                      f"but are still sending — excluded from free.")
     if s.get("followup_only_inboxes"):
-        notes.append(f"{s['followup_only_inboxes']} inbox(es) are sending follow-ups only "
-                     "(new-lead queue empty). In use, not free — moving one cuts a live sequence.")
+        notes.append(f"{s['followup_only_inboxes']} inbox(es) are working through follow-ups with "
+                     "no new leads queued. That is a live sequence doing its job — it is in use, "
+                     "and the low daily volume is the sequence spacing its touches, not waste. "
+                     "What it does say is that these campaigns need more leads.")
     if s.get("warming_excluded"):
         notes.append(f"{s['warming_excluded']} inbox(es) still in warm-up, excluded entirely.")
     if burned and replacement_pool == 0:
@@ -158,8 +160,33 @@ def build(acq: dict, registrar: dict | None, today: str,
         notes.append(f"{len(unknown_registrar)} domain(s) are not in the registrar list, so their "
                      "expiry is unknown — not assumed safe.")
 
+    # ── what "in use" means ───────────────────────────────────────────────
+    # Tim's rule, stated three times: an inbox is IN USE if it is sending to new
+    # leads, OR sending follow-ups, OR sitting between sequences. All three are
+    # working states. They are not spare capacity and must never be presented as
+    # waste.
+    #
+    # The old headline divided SENDS PER DAY by CAPACITY PER DAY and called the
+    # difference "capacity we pay for and do not use". That is the wrong ratio.
+    # A mailbox working through follow-ups sends a trickle by design — the
+    # sequence spaces the touches out — and one between sequence steps sends
+    # nothing at all today. Both are doing exactly what they are supposed to,
+    # and the old number counted both as waste. 27% "used" described a fleet
+    # that is in fact 99% deployed.
+    #
+    # So utilisation here is ALLOCATION: inboxes doing a job / inboxes that
+    # could. Volume still appears, as volume, with no claim attached to it.
+    in_use = [i for i in inboxes if i.get("state") == "sending"]
+    usable = [i for i in inboxes if i.get("state") != "blocked"]
+    in_use_pct = round(100 * len(in_use) / len(usable)) if usable else None
+
     summary = {
         "inboxes": s.get("inboxes", len(inboxes)),
+        # The headline. Inboxes on a live campaign — new leads, follow-ups or
+        # between sequences — over inboxes that could be on one.
+        "in_use": len(in_use),
+        "usable": len(usable),
+        "in_use_pct": in_use_pct,
         "burned": len(burned),
         "burned_capacity": sum(i.get("per_day") or 0 for i in burned),
         # The replacement pool is shared with the client fleet, so it is context
