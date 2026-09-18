@@ -525,6 +525,10 @@ def build(live: bool = False, live_accounts: bool | None = None,
             i["esp"] = (f.get("esp") or "").upper() or None
             i["smtp_ok"] = f["smtp_ok"]
             i["created_at"] = f.get("created_at")
+            # Exposed so a caller can tell "still warming" from "ready but
+            # unallocated" without recomputing it. It was only ever a local
+            # variable, which is why every inbox reported age_days: None.
+            i["age_days"] = _age_days(f.get("created_at"))
 
     # Drop the still-warming batch before any roll-up so it never inflates either
     # the capacity we own or the "free" pool. created_at only exists when accounts
@@ -535,7 +539,13 @@ def build(live: bool = False, live_accounts: bool | None = None,
         kept = []
         for i in inboxes:
             age = _age_days(i.get("created_at"))
-            if age is not None and age <= exclude_warming_days:
+            # STRICTLY less than. Warm-up is exactly 14 days, so an inbox
+            # created 14 days ago has FINISHED it and is available to send.
+            # `<=` called that inbox "still warming" and hid it: on 2026-09-18
+            # all 74 unallocated acquisition inboxes were exactly 14 days old,
+            # so the 7am email reported 0 free capacity and 100% allocated
+            # while 1,110 sends/day sat ready to deploy.
+            if age is not None and age < exclude_warming_days:
                 warming_excluded += 1
             else:
                 kept.append(i)
