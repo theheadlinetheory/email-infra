@@ -410,6 +410,15 @@ def invariants_page():
     return send_from_directory(_PUBLIC_DIR, "invariants.html")
 
 
+@app.route("/dashboard")
+@app.route("/dashboard.html")
+def dashboard_page():
+    # In production Vercel serves public/ statically and rewrites /dashboard ->
+    # /dashboard.html; only /api/(.*) reaches this function at all. These exist
+    # so the page renders when the app is run locally.
+    return send_from_directory(_PUBLIC_DIR, "dashboard.html")
+
+
 @app.route("/api/health-snapshot", methods=["GET", "POST", "OPTIONS"])
 def health_snapshot():
     """Run today's snapshot: score the fleet from the cache, persist. Daily cron (GET)."""
@@ -860,7 +869,10 @@ def acq_capacity_route():
     try:
         import acq_capacity as ac
         live = request.args.get("live") in ("1", "true", "yes")
-        res = ac.build(live=live)
+        # ?live=1 is an explicit ask for a fresh campaign pull, so it bypasses
+        # the cache rather than being served a stale answer to a live question.
+        res = (ac.build(live=True) if live
+               else _slow_cache("cache:acq_capacity", ac.build))
         return _cors(jsonify(res)), (400 if res.get("error") else 200)
     except Exception as e:
         import traceback
