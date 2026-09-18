@@ -211,3 +211,65 @@ fails open across the whole fleet and reports everything as safe to delete.
 > **Assert `live_campaigns > 0` and `scan_failures == 0` before believing any
 > answer derived from campaign membership.** An empty scan is not evidence of
 > absence.
+
+---
+
+## Rule 11 — a short read is not a small fleet
+
+This is not a trap alongside the others. It is the single most common bug in
+this codebase, it has appeared **six times**, and every occurrence pointed the
+same way: towards deleting something we should have kept.
+
+| What broke | What it claimed | The truth |
+|---|---|---|
+| `_live_account_facts` page walk | 214 acquisition inboxes | 307 |
+| `inbox-sync` prune | table of 1000 rows | 1,122 |
+| forwarding rule read `forwardTo` | 0 mis-forwarded domains | 38 |
+| empty-domain rule read a missing key | 916 empty domains | 303 |
+| `fetch_live_domains` page walk | 286 empty domains, $6,797/yr wasted | 0 |
+| `health_offboard` domain walk | a domain is "not this client's" | it is |
+
+The shape is always the same three lines:
+
+```python
+while True:
+    page = fetch(...)
+    if not page:      # <- a FAILED page is indistinguishable from the last page
+        break
+```
+
+Rate limits make this routine rather than rare: Smartlead's limit is
+account-wide and shared by every job in this repo, so any long walk competes
+with the others and loses a page often.
+
+### The rule
+
+> **A read that can come back short must say so.** Distinguish "empty" from
+> "could not read": return `None`, or raise, for the second. Never return a
+> partial collection to a caller that will treat it as complete.
+
+### What that means in practice
+
+- **Retry the page, then fail the walk.** Not the loop — the whole walk. A
+  partial roster is worse than no roster, because no roster is obviously
+  unusable and a partial one is quietly wrong.
+- **Sanity-check the size.** The fleet has been 1,700–1,900 Smartlead accounts
+  all year; anything under 1,000 is a truncated walk, not a smaller fleet.
+  `domain_expiry_alert.MIN_PLAUSIBLE_ACCOUNTS` is this check.
+- **`None` and `{}` are different values.** `None` means "we did not look".
+  Callers must render it as *unknown*, never as *fine* — see
+  `acquisition_view.build`, where an unreadable registrar leaves every domain's
+  expiry unknown rather than implying it is safe.
+- **A check that cannot see its input SKIPs.** It never passes. `check_invariants`
+  has three states for this reason.
+- **Say which way the error points.** Every one of the six above was wrong in
+  the direction of deletion. When a read fails, ask what the failure makes the
+  system want to do, and make sure that is the cautious thing.
+
+### Where the guards are
+
+`acq_capacity._live_account_facts`, `domain_expiry_alert.fetch_live_domains`,
+`health_offboard._zm_page`, `buy_provision.LiveIO.smartlead_accounts_for`,
+`db.get_health_daily_bulk` (pages by rows returned, not rows requested).
+`db._request` raises on a bad status, so loops built on it are safe by
+construction.

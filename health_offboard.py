@@ -117,6 +117,35 @@ def domains_for_accounts(account_ids) -> set:
     return out
 
 
+def _zm_page(headers: dict, page: int, tries: int = 4):
+    """One page of Zapmail's domain list, or None if it could not be read.
+
+    None and an empty page mean different things, and every caller here has to
+    keep them apart: an unread page is not the end of the account. Both walks
+    below used to `break` on a failure, which silently shortened the map they
+    return — and both maps feed an OFFBOARD decision, where a missing domain
+    reads as "not this client's" and quietly widens what gets cancelled.
+    """
+    for attempt in range(tries):
+        try:
+            r = requests.get(
+                f"https://api.zapmail.ai/api/v2/domains?page={page}&limit=100",
+                headers=headers, timeout=30)
+        except requests.RequestException:
+            time.sleep(3 * (attempt + 1))
+            continue
+        if r.status_code == 200:
+            try:
+                return r.json().get("data", {}) or {}
+            except ValueError:
+                return None
+        if r.status_code == 429:
+            time.sleep(5 * (attempt + 1))
+            continue
+        time.sleep(2 * (attempt + 1))
+    return None
+
+
 def zapmail_domain_ids(domains: set) -> dict:
     """domain name -> Zapmail domain id (paginated over the whole account)."""
     key = (os.environ.get("ZAPMAIL_API_KEY", "") or "").strip()
@@ -127,14 +156,15 @@ def zapmail_domain_ids(domains: set) -> dict:
     want = {d.lower() for d in domains}
     out, page = {}, 1
     while True:
-        try:
-            r = requests.get(f"https://api.zapmail.ai/api/v2/domains?page={page}&limit=100",
-                             headers=headers, timeout=30)
-        except requests.RequestException:
-            break
-        if r.status_code != 200:
-            break
-        data = r.json().get("data", {})
+        data = _zm_page(headers, page)
+        if data is None:
+            # A page that failed is not the end of the account. Breaking here
+            # returned a SHORT map, and this map is what an offboard decides
+            # from — a domain missing because of one 429 reads as "not ours",
+            # which is the fail-safe-looking answer that is actually wrong.
+            raise RuntimeError(
+                "Zapmail domain walk failed part way through — refusing to "
+                "return a partial domain map to an offboard decision")
         for dom in data.get("domains", []):
             nm = (dom.get("domain") or "").lower()
             if nm in want and dom.get("id"):
@@ -155,14 +185,11 @@ def domain_forwarding(domains: set) -> dict:
     want = {d.lower() for d in domains}
     out, page = {}, 1
     while True:
-        try:
-            r = requests.get(f"https://api.zapmail.ai/api/v2/domains?page={page}&limit=100",
-                             headers=headers, timeout=30)
-        except requests.RequestException:
-            break
-        if r.status_code != 200:
-            break
-        data = r.json().get("data", {})
+        data = _zm_page(headers, page)
+        if data is None:
+            raise RuntimeError(
+                "Zapmail domain walk failed part way through — refusing to "
+                "report forwarding from a partial read")
         for dom in data.get("domains", []):
             nm = (dom.get("domain") or "").lower()
             if nm in want:
