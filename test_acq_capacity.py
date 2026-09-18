@@ -61,3 +61,72 @@ class WarmupBoundary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveAccountFactsIsAllOrNothing(unittest.TestCase):
+    """A truncated account walk must return {}, never a partial roster.
+
+    On 2026-09-18 this returned 200 accounts of ~1,900 after one rate-limited
+    page, and the caller used it to decide which inboxes were still
+    acquisition-tagged. 93 real inboxes vanished from the denominator purely
+    because a truncated response did not mention them — 214 reported where 302
+    was the truth. A partial answer is worse than none: none falls back to the
+    cached roster, which is merely stale.
+    """
+
+    def setUp(self):
+        import requests
+        self._real = requests.get
+        self._real_key = ac._sl_key
+        ac._sl_key = lambda: "test-key"      # else it bails before any request
+        self._real_sleep = ac.time.sleep
+        ac.time.sleep = lambda *_a, **_k: None   # do not wait out the backoff
+        self.calls = []
+
+    def tearDown(self):
+        import requests
+        requests.get = self._real
+        ac._sl_key = self._real_key
+        ac.time.sleep = self._real_sleep
+
+    def _serve(self, pages):
+        """pages: list of (status, body) served in order."""
+        import requests
+
+        class R:
+            def __init__(s, status, body):
+                s.status_code, s._b = status, body
+                s.text = "x" if body is not None else ""
+
+            def json(s):
+                return s._b
+
+        seq = list(pages)
+
+        def fake(url, **kw):
+            self.calls.append(kw.get("params", {}).get("offset"))
+            return R(*(seq.pop(0) if seq else (200, [])))
+
+        requests.get = fake
+
+    def _accounts(self, lo, hi):
+        return [{"from_email": f"a{i}@d.info", "id": i, "is_smtp_success": True,
+                 "message_per_day": 15, "tags": []} for i in range(lo, hi)]
+
+    def test_a_complete_walk_returns_every_account(self):
+        # A short final page ends the walk; the two pages must not overlap or
+        # the dict dedupes them and the count lies.
+        self._serve([(200, self._accounts(0, 100)), (200, self._accounts(100, 120))])
+        out = ac._live_account_facts()
+        self.assertEqual(len(out), 120)
+
+    def test_a_rate_limited_page_abandons_the_whole_result(self):
+        # First page fine, second 429s on every retry.
+        self._serve([(200, self._accounts(0, 100))] + [(429, None)] * 6)
+        out = ac._live_account_facts()
+        self.assertEqual(out, {}, "a partial roster must never be returned")
+
+    def test_it_retries_before_giving_up(self):
+        self._serve([(429, None), (429, None), (200, self._accounts(0, 1))])
+        out = ac._live_account_facts()
+        self.assertEqual(len(out), 1, "a transient 429 should not lose the page")
