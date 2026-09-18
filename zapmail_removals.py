@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 import requests
 
 import db as store
+import setup as S
 
 ZK = (os.environ.get("ZAPMAIL_API_KEY") or "").strip()
 ZBASE = "https://api.zapmail.ai/api/v2"
@@ -158,6 +159,70 @@ def resolve_domain_ids(domains):
                     miss.discard(dn.lower())
             page += 1
     return {"found": found, "missing": [d for d in domains if d not in found]}
+
+
+def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox"):
+    """Schedule removal for INDIVIDUAL mailboxes, leaving the domain alone.
+
+    Needed wherever a domain is shared. Three of the cleanup mailboxes sit on
+    domains that also carry live client inboxes — one on McFarlane's, two on
+    Northstar's — and `cancel_domains` on any of them would schedule the
+    client's senders for deletion along with ours. Zapmail's scheduled-removal
+    endpoint takes mailboxIds as well as domainIds, so the right unit is
+    available; nothing in this repo was using it.
+
+    Resolves every address to a live Zapmail mailbox id first and refuses the
+    whole call if any of them is missing: a partially-resolved list would
+    silently cancel some of what you asked for and report success.
+    """
+    emails = [e.strip().lower() for e in (emails or []) if e and e.strip()]
+    if not emails:
+        return {"error": "no mailboxes given"}
+
+    want = set(emails)
+    found, by_domain = {}, {}
+    try:
+        for d in (S.zm_list_domains() or []):
+            dom = (d.get("domain") or "").lower()
+            for m in (d.get("mailboxes") or []):
+                if not isinstance(m, dict):
+                    continue
+                em = f"{m.get('username', '')}@{dom}".lower()
+                if em in want:
+                    found[em] = m.get("id")
+                    by_domain[em] = dom
+    except Exception as e:                            # noqa: BLE001
+        return {"error": f"could not read Zapmail mailboxes: {str(e)[:140]}"}
+
+    missing = sorted(want - set(found))
+    plan = {"resolved": found, "missing": missing, "count": len(found)}
+    if missing:
+        # Deliberately fatal. Scheduling "most of" a list and calling it done is
+        # how a cancellation silently half-happens.
+        return {"error": f"{len(missing)} mailbox(es) not found in Zapmail — "
+                         "refusing to schedule a partial list", **plan}
+    if dry_run:
+        return {"dry_run": True, **plan,
+                "domains_touched": sorted(set(by_domain.values()))}
+
+    r = requests.put(f"{ZBASE}/mailboxes/scheduled-removal", headers=ZH,
+                     json={"mailboxIds": list(found.values()), "remove": True},
+                     timeout=90)
+    ok = r.status_code in (200, 201)
+    added = 0
+    if ok:
+        reg = _registry()
+        for em in found:
+            if em not in reg:
+                reg[em] = {"domain": by_domain[em], "source": source,
+                           "first_seen": _today(), "removed_date": None,
+                           "notified": False, "expected_date": None,
+                           "date_notified": False}
+                added += 1
+        _save_registry(reg)
+    return {"ok": ok, "status_code": r.status_code, "response": r.text[:200],
+            "scheduled": sorted(found), "registered": added,
+            **({} if ok else {"error": "zapmail rejected the request"})}
 
 
 def cancel_domains(domains, dry_run=True, source="dashboard-cancel"):
