@@ -124,3 +124,25 @@ def test_a_bad_expiry_date_is_unknown_not_a_crash():
     r = av.build(_acq([_ib("a@x.co", "sending")]), reg, TODAY)
     assert r["domains"][0]["days_to_expiry"] is None
     assert r["summary"]["lapsing_domains"] == 0
+
+
+def test_burned_acquisition_inboxes_are_surfaced():
+    rows = [_ib("ok@x.co", "sending"),
+            _ib("bad@x.co", "blocked", health="burned", bounce_3d=9, why=["burned — replace"])]
+    r = av.build(_acq(rows), {}, TODAY, replacement_pool=45)
+    assert r["summary"]["burned"] == 1
+    assert r["burned"][0]["email"] == "bad@x.co"
+    assert r["summary"]["replacement_pool"] == 45
+
+
+def test_burned_with_an_empty_replacement_pool_is_called_out():
+    rows = [_ib("bad@x.co", "blocked", health="burned")]
+    r = av.build(_acq(rows), {}, TODAY, replacement_pool=0)
+    assert any("nothing to swap" in n for n in r["notes"])
+
+
+def test_an_unreadable_replacement_pool_is_not_an_empty_one():
+    rows = [_ib("bad@x.co", "blocked", health="burned")]
+    r = av.build(_acq(rows), {}, TODAY, replacement_pool=None)
+    assert r["summary"]["replacement_pool"] is None
+    assert not any("nothing to swap" in n for n in r["notes"])

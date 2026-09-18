@@ -192,6 +192,7 @@ function renderClients(){
       : '<span class="dim">—</span>';
     const basis = c.term_is_a_guess
       ? `<span class="warn">${esc(c.term_basis)}</span>` : `<span class="dim">${esc(c.term_basis || '')}</span>`;
+    // A free account shows no dates at all: there is no contract to run out.
     return `<tr>
       <td>${esc(c.name)}${c.seasonal ? ' <span class="tag">seasonal</span>' : ''}</td>
       <td class="n">${c.inboxes}</td><td class="n">${tgt}</td><td class="n">${dl}</td>
@@ -272,15 +273,29 @@ function renderAcquisition(){
   const freeKnown = s.free_inboxes != null;
   const freeVal = freeKnown ? `${s.free_inboxes} <span class="dim" style="font-size:13px">/ ${s.free_capacity}\u2009a day</span>` : '?';
 
+  // Capacity used is the headline number, not a subscript. It is the one figure
+  // that says whether the money we spend on acquisition is doing anything.
+  const util = s.utilisation_pct;
   let html = '<div class="cards">'
+    + card('Capacity used', util != null ? util + '%' : '\u2013',
+           util == null ? '' : util >= 70 ? 'ok' : util >= 40 ? 'warn' : 'bad')
+    + card('Sending / day', `${(s.actual_per_day ?? 0).toLocaleString()}`
+           + ` <span class="dim" style="font-size:13px">of ${(s.capacity ?? 0).toLocaleString()}</span>`)
     + card('Inboxes', s.inboxes ?? '\u2013')
     + card('Domains', s.domains ?? '\u2013')
-    + card('Capacity / day', (s.capacity ?? 0).toLocaleString())
-    + card('Actually sending', (s.actual_per_day ?? 0).toLocaleString()
-           + (s.utilisation_pct != null ? ` <span class="dim" style="font-size:13px">${s.utilisation_pct}%</span>` : ''))
     + card('Free to reallocate', freeVal, freeKnown ? (s.free_inboxes ? 'ok' : 'warn') : 'warn')
+    + card('Burned', s.burned ?? '\u2013', s.burned ? 'bad' : 'ok')
+    + card('Replacement pool', s.replacement_pool != null ? s.replacement_pool : '?',
+           s.replacement_pool === 0 ? 'bad' : '')
     + card('Over 3 / domain', s.over_cap_domains ?? '\u2013', s.over_cap_domains ? 'bad' : 'ok')
     + '</div>';
+
+  // What the percentage actually means, because 27% invites the wrong fix.
+  if (util != null && util < 70)
+    html += `<div class="banner">Capacity used is ${util}% \u2014 ${(s.capacity - (s.actual_per_day || 0)).toLocaleString()}
+      sends a day we pay for and do not use. Before buying more, check the reason:
+      ${s.followup_only_inboxes || 0} inbox(es) are on campaigns whose NEW-lead queue is empty,
+      which is a list problem, not an inbox problem.</div>`;
 
   (d.notes || []).forEach(n => html += `<div class="banner">${esc(n)}</div>`);
   if (s.registrar_read === false)
@@ -311,6 +326,19 @@ function renderAcquisition(){
       (${s.window_sending_days ?? '?'} sending days): campaign state said idle AND the mailbox sent nothing.
       An inbox in the gap between sequence steps sends nothing today but did this week, so it is not here.</div>`;
   }
+
+  if ((d.burned || []).length)
+    html += `<h2 class="bad">Burned \u2014 ${d.burned.length}</h2>
+      <div class="wrap"><table>
+        <tr><th>Inbox</th><th>Group</th><th>Bounce 3d</th><th>Reply 3d</th><th>Per day</th></tr>
+        ${d.burned.map(b => `<tr><td>${esc(b.email)}</td><td class="dim">${esc(b.group || '')}</td>
+          <td class="n bad">${b.bounce_3d ?? ''}</td><td class="n dim">${b.reply_3d ?? ''}</td>
+          <td class="n dim">${b.per_day ?? ''}</td></tr>`).join('')}
+      </table></div>
+      <div class="meta" style="margin-top:10px">Swap each from the Replacement Group
+        ${s.replacement_pool != null ? `(${s.replacement_pool} available)` : '(size unknown)'}.
+        Check for positive replies first \u2014 a replied-to thread stays welded to the inbox
+        that sent it.</div>`;
 
   if ((d.lapsing || []).length)
     html += `<h2 class="bad">Lapsing with live senders \u2014 ${d.lapsing.length}</h2>
@@ -366,12 +394,13 @@ function buyChrome(){
         <option value="client">A client</option>
       </select>
       <input id="b-client" class="act" placeholder="client name" style="display:none">
-      <select id="b-theme" class="act">
+      <select id="b-theme" class="act" style="display:none">
         <option value="">Generic service</option>
         <option value="hvac">HVAC</option>
         <option value="plumbing">Plumbing</option>
         <option value="landscaping">Landscaping</option>
       </select>
+      <span class="dim" id="b-brandnote">names built from <b>The Headline Theory</b></span>
       <select id="b-tld" class="act"><option>info</option><option>co</option><option>com</option></select>
       <input id="b-count" class="act" type="number" value="12" min="1" max="40" style="width:70px">
       <button class="act" id="b-suggest">Suggest</button>
@@ -463,17 +492,28 @@ function renderOrders(){
 }
 
 function wireBuy(){
-  document.getElementById('b-owner').onchange = e => {
-    document.getElementById('b-client').style.display = e.target.value === 'client' ? '' : 'none';
+  // Acquisition buys OUR brand, so the vertical picker is meaningless there —
+  // it was offering generic service names for a THT prospecting batch.
+  const ownerChanged = () => {
+    const client = document.getElementById('b-owner').value === 'client';
+    document.getElementById('b-client').style.display = client ? '' : 'none';
+    document.getElementById('b-theme').style.display = client ? '' : 'none';
+    document.getElementById('b-brandnote').style.display = client ? 'none' : '';
   };
+  document.getElementById('b-owner').onchange = ownerChanged;
+  ownerChanged();
   document.getElementById('b-suggest').onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = 'checking…';
-    const body = {count: +document.getElementById('b-count').value || 12,
-                  tld: document.getElementById('b-tld').value,
-                  theme: document.getElementById('b-theme').value || undefined};
     const owner = document.getElementById('b-owner').value;
+    const body = {count: +document.getElementById('b-count').value || 12,
+                  tld: document.getElementById('b-tld').value, owner};
     const cn = (document.getElementById('b-client').value || '').trim();
-    if (owner === 'client' && cn) body.brand = cn;
+    if (owner === 'client') {
+      body.theme = document.getElementById('b-theme').value || undefined;
+      if (cn) body.brand = cn;
+    }
+    // owner === 'acquisition' sends no brand: the API fills in ours, so a
+    // hand-made request gets the same answer as the page.
     const r = await post('/api/buy-suggest', body);
     e.target.disabled = false; e.target.textContent = 'Suggest';
     BUY.suggest = r.suggestions || [];
@@ -557,8 +597,10 @@ function renderPools(){
   el.innerHTML = `<h2>Pools — inboxes with no client attached</h2>
     <div class="wrap"><table>
       <tr><th>Pool</th><th>Inboxes</th><th>$/mo</th></tr>${rows}</table></div>
-    <div class="meta" style="margin-top:10px">Reserve is Generic Landscaping 1 + 2 (84 = two clients' worth).
-      Replacement Group is separate, for swapping burned inboxes. Acquisition is our own prospecting.</div>`;
+    <div class="meta" style="margin-top:10px">Stock that can still be given to a client.
+      Reserve is Generic Landscaping 1 + 2 (84 = two clients' worth); Replacement Group is separate,
+      for swapping burned inboxes. Acquisition is not listed here \u2014 it is our own prospecting
+      fleet, already deployed, and it has its own tab.</div>`;
 }
 
 function banners(){

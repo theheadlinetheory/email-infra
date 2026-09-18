@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+import re
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,6 +16,15 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _PUBLIC_DIR = os.path.join(_PROJECT_ROOT, "public")
 
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+
+
+# Groups that belong to the acquisition fleet rather than to the client pools.
+# Deliberately narrower than check_invariants.OPERATIONAL_RE: "Premium Inboxes"
+# and "Reserve" are stock we can still give a client, so they stay pools.
+# Our own brand. Acquisition domains are variants of it — see /api/buy-suggest.
+ACQUISITION_BRAND = "The Headline Theory"
+
+ACQUISITION_POOL_RE = re.compile(r"^\s*[\(]?\s*(acquisition|burnt\s+acquisition)\b", re.I)
 
 
 def _check_auth():
@@ -305,8 +315,14 @@ def clients_route():
         for r in (board.get("rows") or []):
             name = r.get("client")
             if civ.OPERATIONAL_RE.match(str(name or "")):
-                pools.append({"name": name, "inboxes": r.get("mailboxes"),
-                              "monthly_cost": r.get("monthly_cost")})
+                # Acquisition groups are NOT pools. A pool is stock waiting to be
+                # given to a client; acquisition is our own prospecting fleet,
+                # already deployed and reported in full on its own tab. Listing
+                # it here double-counted it and made the reserve look bigger than
+                # anything we could actually hand a client (Tim, 2026-09-18).
+                if not ACQUISITION_POOL_RE.match(str(name or "")):
+                    pools.append({"name": name, "inboxes": r.get("mailboxes"),
+                                  "monthly_cost": r.get("monthly_cost")})
                 continue
             if (r.get("status") or "") != "active":
                 continue
@@ -328,11 +344,17 @@ def clients_route():
                 "monthly_cost": r.get("monthly_cost"),
                 "launch_date": r.get("launch_date"),
                 # The three dates the whole countdown exists to produce.
-                "term_ends": r.get("effective_end"),
-                "term_basis": r.get("end_basis"),
-                "decide_by": r.get("decision_by"),
-                "days_to_decision": r.get("days_to_decision"),
-                "hard_stop": r.get("hard_stop"),
+                #
+                # A free account gets NONE of them. There is no contract to run
+                # out, nothing to renew and no money to stop, so the engine's
+                # fallback three-month guess invents a deadline that does not
+                # exist — Landy Rose Media was showing one (Tim, 2026-09-18).
+                # Blank is the honest answer; the row still says "free".
+                "term_ends": None if exempt else r.get("effective_end"),
+                "term_basis": "free account — no term" if exempt else r.get("end_basis"),
+                "decide_by": None if exempt else r.get("decision_by"),
+                "days_to_decision": None if exempt else r.get("days_to_decision"),
+                "hard_stop": None if exempt else r.get("hard_stop"),
                 "outcome": r.get("outcome"),
                 "phase": r.get("phase"),
                 # An "assumed" term is a deadline nobody agreed to. Flag it
@@ -799,6 +821,14 @@ def buy_suggest():
         count = int(body.get("count") or 12)
         tld = body.get("tld") or "info"
         brand = (body.get("brand") or "").strip()
+        # Acquisition is THT prospecting for itself, so its domains are brand
+        # variants (theheadlinetheoryhq.info, headlinetheory360.info, ...), not
+        # generic service names. Offering "quicktaskpros.info" for an
+        # acquisition batch was simply the wrong product (Tim, 2026-09-18), and
+        # the default lives here rather than in the page so a hand-made request
+        # gets it too.
+        if not brand and (body.get("owner") or "").lower() == "acquisition":
+            brand = ACQUISITION_BRAND
         if brand:
             return _cors(jsonify(bi.suggest_client_domains(brand=brand, count=count, tld=tld)))
         return _cors(jsonify(bi.suggest_generic(count=count, tld=tld, theme=body.get("theme"))))
@@ -1053,7 +1083,21 @@ def acquisition_route():
         except Exception:
             reg = None
 
-        res = av.build(acq, reg, date.today().isoformat())
+        # The replacement pool is shared with the client fleet, so it is read
+        # from the same lifecycle board the Pools tab uses. None (not 0) when
+        # that read fails — "we could not look" must not render as "none left".
+        replacement = None
+        try:
+            import check_invariants as civ
+            board = _slow_cache("cache:infra_lifecycle", __import__("infra_lifecycle").build)
+            for row in (board.get("rows") or []):
+                if str(row.get("client") or "").strip().lower().startswith("replacement"):
+                    replacement = row.get("mailboxes")
+                    break
+        except Exception:
+            replacement = None
+
+        res = av.build(acq, reg, date.today().isoformat(), replacement_pool=replacement)
         for k in ("_cached", "_generated_at", "_age_seconds", "_stale"):
             if isinstance(acq, dict) and k in acq:
                 res[k] = acq[k]

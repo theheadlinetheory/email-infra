@@ -58,7 +58,8 @@ def _days_until(expires: str | None, today: str) -> int | None:
     return (e - t).days
 
 
-def build(acq: dict, registrar: dict | None, today: str) -> dict:
+def build(acq: dict, registrar: dict | None, today: str,
+          replacement_pool: int | None = None) -> dict:
     """The tab payload.
 
     `acq`       the result of acq_capacity.build()
@@ -81,6 +82,18 @@ def build(acq: dict, registrar: dict | None, today: str) -> dict:
     free = [i for i in inboxes
             if i.get("state") in idle_states and (i.get("sent_measured") or 0) == 0] \
         if measured else []
+
+    # Burned, and what there is to replace them FROM. Tim, 2026-09-18: the
+    # Inboxes tab has had this since it shipped and the acquisition fleet needs
+    # it more — an acquisition inbox has no client watching it, so a burned one
+    # sits there sending into spam folders until someone looks at this number.
+    burned = [i for i in inboxes
+              if i.get("health") == "burned" or "burned" in " ".join(i.get("why") or [])]
+    burned_rows = sorted(
+        ({"email": i["email"], "domain": i.get("domain"), "group": i.get("group"),
+          "bounce_3d": i.get("bounce_3d"), "reply_3d": i.get("reply_3d"),
+          "per_day": i.get("per_day")} for i in burned),
+        key=lambda r: (-(r["bounce_3d"] or 0), r["email"]))
 
     by_state = []
     for st in STATE_ORDER:
@@ -138,12 +151,21 @@ def build(acq: dict, registrar: dict | None, today: str) -> dict:
                      "(new-lead queue empty). In use, not free — moving one cuts a live sequence.")
     if s.get("warming_excluded"):
         notes.append(f"{s['warming_excluded']} inbox(es) still in warm-up, excluded entirely.")
+    if burned and replacement_pool == 0:
+        notes.append(f"{len(burned)} burned acquisition inbox(es) and an empty replacement "
+                     "pool — there is nothing to swap them for.")
     if unknown_registrar:
         notes.append(f"{len(unknown_registrar)} domain(s) are not in the registrar list, so their "
                      "expiry is unknown — not assumed safe.")
 
     summary = {
         "inboxes": s.get("inboxes", len(inboxes)),
+        "burned": len(burned),
+        "burned_capacity": sum(i.get("per_day") or 0 for i in burned),
+        # The replacement pool is shared with the client fleet, so it is context
+        # here, not an acquisition number. Passed in by the route; None means we
+        # could not read it, which must not render as "none left".
+        "replacement_pool": replacement_pool,
         "domains": len(domains),
         "capacity": s.get("total_capacity"),
         "actual_per_day": s.get("actual_per_day"),
@@ -168,6 +190,7 @@ def build(acq: dict, registrar: dict | None, today: str) -> dict:
         "synced_at": acq.get("synced_at"),
         "summary": summary,
         "by_state": by_state,
+        "burned": burned_rows,
         "free": [{"email": i["email"], "domain": i.get("domain"), "group": i.get("group"),
                   "per_day": i.get("per_day"), "state": i.get("state"),
                   "age_days": i.get("age_days"), "health": i.get("health"),
