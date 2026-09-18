@@ -12,6 +12,10 @@
   ],
   "rewrites": [
     {
+      "source": "/dashboard",
+      "destination": "/dashboard.html"
+    },
+    {
       "source": "/health",
       "destination": "/health.html"
     },

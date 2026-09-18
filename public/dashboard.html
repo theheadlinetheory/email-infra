@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sending infrastructure</title>
+<style>
+  :root{
+    --bg:#0e1116; --card:#161b22; --line:#232a33; --line2:#2f3945;
+    --ink:#e6edf3; --dim:#8b949e; --dim2:#6e7781;
+    --ok:#3fb950; --bad:#f85149; --warn:#d29922; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+       padding:0 0 60px}
+  .top{border-bottom:1px solid var(--line);padding:16px 22px 0;position:sticky;top:0;
+       background:var(--bg);z-index:5}
+  .ttl{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin-bottom:12px}
+  h1{font-size:16px;margin:0;letter-spacing:-.01em}
+  .meta{color:var(--dim);font-size:11.5px}
+  nav{display:flex;gap:2px}
+  nav button{background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);
+             font:inherit;font-size:12.5px;padding:7px 14px;cursor:pointer}
+  nav button:hover{color:var(--ink)}
+  nav button.on{color:var(--ink);border-bottom-color:var(--accent)}
+  main{padding:20px 22px;max-width:1180px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px}
+  .c{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .c .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .c .v{font-size:22px;margin-top:5px;font-variant-numeric:tabular-nums}
+  .c.bad .v{color:var(--bad)} .c.ok .v{color:var(--ok)} .c.warn .v{color:var(--warn)}
+  h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;
+     margin:22px 0 9px;font-weight:600}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th{text-align:left;color:var(--dim);font-weight:500;padding:6px 10px;
+     border-bottom:1px solid var(--line2);white-space:nowrap}
+  td{padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  tr:hover td{background:#1a212b}
+  .tag{font-size:10.5px;padding:1px 6px;border-radius:10px;border:1px solid var(--line2);color:var(--dim)}
+  .good{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .dim{color:var(--dim)}
+  .rule{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
+  .rule .st{min-width:42px;font-weight:700}
+  .rule .nm{flex:1}
+  .rule .dt{color:var(--dim);font-size:11.5px}
+  .viol{margin:4px 0 8px 52px;color:#f0a9a4;font-size:11.5px}
+  .viol div{padding:1px 0}
+  .banner{background:#2b2209;border:1px solid #6b5412;color:#f0d68a;border-radius:7px;
+          padding:9px 13px;margin-bottom:14px;font-size:12px}
+  .empty{color:var(--dim);padding:24px 0}
+  button.act{background:var(--card);color:var(--ink);border:1px solid var(--line2);
+             border-radius:6px;padding:5px 12px;font:inherit;font-size:12px;cursor:pointer}
+  button.act:hover{border-color:var(--accent)}
+  .wrap{overflow-x:auto}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="ttl">
+    <h1>Sending infrastructure</h1>
+    <span class="meta" id="meta">loading…</span>
+    <span style="flex:1"></span>
+    <button class="act" id="reload">Reload</button>
+  </div>
+  <nav>
+    <button data-t="overview" class="on">Overview</button>
+    <button data-t="clients">Clients</button>
+    <button data-t="pools">Pools</button>
+  </nav>
+</div>
+<main>
+  <div id="banners"></div>
+  <div id="overview"></div>
+  <div id="clients" hidden></div>
+  <div id="pools" hidden></div>
+</main>
+<script>
+const pw = new URLSearchParams(location.search).get('pw') || '';
+const q = p => p + (p.includes('?') ? '&' : '?') + (pw ? 'pw=' + encodeURIComponent(pw) : '');
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const money = n => '$' + Number(n || 0).toLocaleString();
+
+function ago(s){
+  if (s == null) return 'age unknown';
+  if (s < 90) return s + 's ago';
+  if (s < 5400) return Math.round(s/60) + 'm ago';
+  if (s < 172800) return (s/3600).toFixed(1) + 'h ago';
+  return Math.round(s/86400) + 'd ago';
+}
+
+let DATA = {};
+
+async function get(p){
+  const r = await fetch(q(p));
+  const j = await r.json().catch(() => ({error: 'bad JSON'}));
+  return r.ok ? j : {error: j.error || ('HTTP ' + r.status)};
+}
+
+function card(k, v, cls){ return `<div class="c ${cls||''}"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
+
+function renderOverview(){
+  const inv = DATA.invariants || {}, cl = DATA.clients || {};
+  const s = cl.summary || {}, c = inv.counts || {};
+  const el = document.getElementById('overview');
+  if (inv.error && cl.error) { el.innerHTML = `<div class="empty">Both feeds failed: ${esc(inv.error)}</div>`; return; }
+
+  let html = '<div class="cards">'
+    + card('Rules failing', c.FAIL ?? '–', c.FAIL ? 'bad' : 'ok')
+    + card('Active clients', s.active_clients ?? '–')
+    + card('Client inboxes', s.inboxes ?? '–')
+    + card('Monthly cost', s.monthly_cost != null ? money(s.monthly_cost) : '–')
+    + card('Off target', s.off_target ?? '–', s.off_target ? 'warn' : 'ok')
+    + card('Decisions ≤30d', s.decisions_due_30d ?? '–', s.decisions_due_30d ? 'warn' : '')
+    + '</div>';
+
+  html += '<h2>The ten rules</h2>';
+  if (inv.error) {
+    html += `<div class="empty">${esc(inv.error)}</div>`;
+  } else {
+    html += (inv.results || []).map(r => `
+      <div class="rule">
+        <span class="st ${r.status === 'PASS' ? 'good' : r.status === 'FAIL' ? 'bad' : 'warn'}">${r.status}</span>
+        <span class="nm">${esc(r.name)}</span>
+        <span class="dt">${esc(r.detail || '')}</span>
+      </div>
+      ${(r.violations || []).length ? '<div class="viol">'
+        + r.violations.slice(0, 6).map(v => `<div>${esc(v)}</div>`).join('')
+        + (r.violation_count > 6 ? `<div class="dim">…and ${r.violation_count - 6} more</div>` : '')
+        + '</div>' : ''}`).join('');
+  }
+  el.innerHTML = html;
+}
+
+function renderClients(){
+  const d = DATA.clients || {};
+  const el = document.getElementById('clients');
+  if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+  const rows = (d.clients || []).map(c => {
+    const tgt = c.exempt ? '<span class="tag">free</span>' : c.target;
+    const dl = c.exempt ? '' :
+      (c.delta === 0 ? '<span class="good">0</span>'
+        : `<span class="bad">${c.delta > 0 ? '+' : ''}${c.delta}</span>`);
+    const days = c.days_to_decision;
+    const when = c.decide_by
+      ? `${c.decide_by}${days != null ? ` <span class="dim">(${days}d)</span>` : ''}`
+      : '<span class="dim">—</span>';
+    const basis = c.term_is_a_guess
+      ? `<span class="warn">${esc(c.term_basis)}</span>` : `<span class="dim">${esc(c.term_basis || '')}</span>`;
+    return `<tr>
+      <td>${esc(c.name)}${c.seasonal ? ' <span class="tag">seasonal</span>' : ''}</td>
+      <td class="n">${c.inboxes}</td><td class="n">${tgt}</td><td class="n">${dl}</td>
+      <td class="n dim">${c.monthly_cost != null ? money(c.monthly_cost) : ''}</td>
+      <td>${esc(c.term_ends || '—')}</td><td>${when}</td><td>${esc(c.hard_stop || '—')}</td>
+      <td>${basis}</td></tr>`;
+  }).join('');
+  el.innerHTML = `<h2>Active clients — ${(d.clients || []).length}</h2>
+    <div class="wrap"><table>
+      <tr><th>Client</th><th>Inboxes</th><th>Target</th><th>Δ</th><th>$/mo</th>
+          <th>Term ends</th><th>Decide by</th><th>Hard stop</th><th>Term basis</th></tr>
+      ${rows}</table></div>
+    <div class="meta" style="margin-top:10px">Renewal dates come from the contracted term in the CRM.
+      A highlighted basis means the term was assumed, not recorded — that deadline is a guess.</div>`;
+}
+
+function renderPools(){
+  const d = DATA.clients || {};
+  const el = document.getElementById('pools');
+  if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+  const rows = (d.pools || []).map(p => `<tr><td>${esc(p.name)}</td>
+    <td class="n">${p.inboxes}</td><td class="n dim">${money(p.monthly_cost)}</td></tr>`).join('');
+  el.innerHTML = `<h2>Pools — inboxes with no client attached</h2>
+    <div class="wrap"><table>
+      <tr><th>Pool</th><th>Inboxes</th><th>$/mo</th></tr>${rows}</table></div>
+    <div class="meta" style="margin-top:10px">Reserve is Generic Landscaping 1 + 2 (84 = two clients' worth).
+      Replacement Group is separate, for swapping burned inboxes. Acquisition is our own prospecting.</div>`;
+}
+
+function banners(){
+  const inv = DATA.invariants || {}, cl = DATA.clients || {};
+  let h = '';
+  if (inv.stale) h += `<div class="banner">Rule results are ${ago(inv.age_seconds)} — the daily cron may not have run.</div>`;
+  if (cl._stale) h += `<div class="banner">Client data is ${ago(cl._age_seconds)} and was rebuilt on request.</div>`;
+  if (inv.active_campaigns === 0) h += `<div class="banner">0 ACTIVE campaigns. Anything keyed on campaign membership was skipped, not passed.</div>`;
+  (inv.sources_unavailable || []).forEach(s => h += `<div class="banner">Source unavailable: ${esc(s)} — rules needing it were skipped.</div>`);
+  document.getElementById('banners').innerHTML = h;
+}
+
+async function load(){
+  document.getElementById('meta').textContent = 'loading…';
+  const [inv, cl] = await Promise.all([get('/api/invariants'), get('/api/clients')]);
+  DATA = {invariants: inv, clients: cl};
+  const bits = [];
+  if (!cl.error) bits.push('clients ' + ago(cl._age_seconds));
+  if (!inv.error) bits.push('rules ' + ago(inv.age_seconds));
+  document.getElementById('meta').textContent = bits.join(' · ') || 'no data';
+  banners(); renderOverview(); renderClients(); renderPools();
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  ['overview','clients','pools'].forEach(t =>
+    document.getElementById(t).hidden = (t !== b.dataset.t));
+});
+document.getElementById('reload').onclick = load;
+load();
+</script>
+</body>
+</html>
