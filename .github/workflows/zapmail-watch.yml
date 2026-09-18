@@ -81,6 +81,19 @@ jobs:
             "https://email-infra.vercel.app/api/acquisition?refresh=1&pw=${PW}" \
             | jq -r '.summary | "inboxes=\(.inboxes) in_use=\(.in_use)/\(.usable) free=\(.free_inboxes) burned=\(.burned)"'
 
+      # Warm the client-card detail so the first person to open a card is not
+      # the one who pays for the ~45s build behind it.
+      - name: Warm the client detail cache
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/client-detail?refresh=1&pw=${PW}" \
+            | jq -r '"client details cached for \(.clients | length) clients"'
+
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         continue-on-error: true

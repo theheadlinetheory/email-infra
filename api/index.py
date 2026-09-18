@@ -1159,98 +1159,78 @@ def acq_capacity_route():
 
 @app.route("/api/client-detail")
 def client_detail_route():
-    """Everything about ONE client, fetched when its card is opened.
+    """Detail for ONE client, sliced out of a single cached build for all of them.
 
-    Deliberately not part of /api/clients. Shipping every client's inbox and
-    domain list up front is what made /api/overview 1.64 MB; the list stays a
-    summary and the detail is paid for only by the card you actually open.
+    The first version answered one client per request and re-fetched the world
+    each time: ~29s for the Smartlead tag walk, ~9s for Zapmail (called twice),
+    ~4s for health, ~1s for the CRM. Fifty seconds to open a card, and the same
+    fifty again for the next one, because nothing was shared. None of those
+    reads is per-client — they all return the whole fleet and get filtered — so
+    the build is done once for everybody and cached, and opening a card is a
+    dict lookup.
+
+    `?refresh=1` rebuilds. The nightly workflow warms it so the first person to
+    open a card is not the one who pays for the build.
     """
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     name = (request.args.get("name") or "").strip()
-    if not name:
-        return _cors(jsonify({"error": "name required"})), 400
     try:
         import check_invariants as civ
+        import client_details as cd
         import infra_lifecycle as ilc
 
-        board = _slow_cache("cache:infra_lifecycle", ilc.build)
-        row = next((r for r in (board.get("rows") or [])
-                    if civ._norm(r.get("crm_name") or r.get("client")) == civ._norm(name)
-                    or civ._norm(r.get("client")) == civ._norm(name)), None)
-        if not row:
-            return _cors(jsonify({"error": f"no infrastructure row for {name!r}"})), 404
-
-        # The inbox list comes from Zapmail (what exists) joined to the Smartlead
-        # tag (who owns it) — the source-of-truth order used everywhere else.
-        # A failed read returns None, so the card says "could not load" rather
-        # than rendering an empty inbox list for a client that has 57.
-        inboxes = None
-        try:
-            inv = _slow_cache("cache:zm_inventory", lambda: {
-                "domains": (lambda i: i.get("domains") or None)(ilc.fetch_zapmail_inventory()),
-                "mailboxes": (lambda i: i.get("mailboxes") or None)(ilc.fetch_zapmail_inventory()),
-            })
-            tags = ilc.fetch_smartlead_tags() or {}
-            mbx = inv.get("mailboxes")
-            if mbx and tags:
-                buckets = {b for b in (row.get("infra_buckets") or [])}
-                inboxes = []
-                for email, mb in mbx.items():
-                    owner = tags.get(email)
-                    if owner and owner in buckets:
-                        inboxes.append({"email": email, "domain": mb.get("domain"),
-                                        "created": str(mb.get("created_at") or "")[:10],
-                                        "tag": owner})
-                inboxes.sort(key=lambda i: (i["domain"] or "", i["email"]))
-        except Exception:
-            inboxes = None
-
-        # Health, so a card can show what is burning without a second call.
-        health = {}
-        try:
+        def _build():
             import db as store
-            for h in store.get_health_status_all():
-                health[h["email"]] = h.get("status")
-        except Exception:
-            health = {}
-        if inboxes:
-            for i in inboxes:
-                i["health"] = health.get(i["email"])
+            board = _slow_cache("cache:infra_lifecycle", ilc.build)
+            # One Zapmail walk, not two. The previous code called
+            # fetch_zapmail_inventory() once for domains and once for mailboxes.
+            try:
+                inv = ilc.fetch_zapmail_inventory()
+            except Exception:
+                inv = {}
+            try:
+                tags = ilc.fetch_smartlead_tags() or None
+            except Exception:
+                tags = None
+            try:
+                health = {h["email"]: h.get("status")
+                          for h in store.get_health_status_all()}
+            except Exception:
+                health = {}
+            try:
+                crm_rows = ilc.fetch_crm_clients() or []
+            except Exception:
+                crm_rows = []
+            return {"clients": cd.build(board, (inv or {}).get("mailboxes") or None,
+                                        tags, health, crm_rows,
+                                        civ._norm, civ.is_free_account)}
 
-        crm_row = None
-        try:
-            for c in (ilc.fetch_crm_clients() or []):
-                if civ._norm(c.get("name")) == civ._norm(row.get("crm_name") or name):
-                    crm_row = c
-                    break
-        except Exception:
-            crm_row = None
-        exempt = bool(crm_row and civ.is_free_account(crm_row))
-
-        return _cors(jsonify({
-            "client": row.get("crm_name") or row.get("client"),
-            "inboxes": inboxes,
-            "inbox_count": row.get("mailboxes"),
-            "inboxes_unreadable": inboxes is None,
-            "domains": row.get("domains") or {},
-            "domain_count": row.get("domain_count"),
-            "monthly_cost": row.get("monthly_cost"),
-            "yearly_cost": round((row.get("monthly_cost") or 0) * 12, 2),
-            "term_ends": None if exempt else row.get("effective_end"),
-            "term_basis": "free account — no term" if exempt else row.get("end_basis"),
-            "decide_by": None if exempt else row.get("decision_by"),
-            "days_to_decision": None if exempt else row.get("days_to_decision"),
-            "hard_stop": None if exempt else row.get("hard_stop"),
-            "launch_date": row.get("launch_date"),
-            "billing_model": row.get("billing_model"),
-            "agreement_type": row.get("agreement_type"),
-            "seasonal": row.get("seasonal"),
-            "vertical": row.get("vertical_label") or row.get("vertical"),
-            "exempt": exempt,
-            "cohorts": row.get("cohorts") or [],
-            "website": (crm_row or {}).get("website"),
-        }))
+        blob = _slow_cache("cache:client_details", _build, ttl_seconds=12 * 3600)
+        details = blob.get("clients") or {}
+        if request.args.get("all") in ("1", "true", "yes"):
+            # The whole map in one response. The page pulls this in the
+            # background once the cards have painted, so opening a card needs no
+            # network at all — which is the point, since the alternative was a
+            # visible wait on every single click.
+            out = {"clients": details}
+            for k in ("_cached", "_generated_at", "_age_seconds", "_stale"):
+                if k in blob:
+                    out[k] = blob[k]
+            return _cors(jsonify(out))
+        if not name:
+            # No name: just say what is loaded, so the cron can warm it.
+            return _cors(jsonify({"clients": sorted(d["client"] for d in details.values()),
+                                  "_cached": blob.get("_cached"),
+                                  "_age_seconds": blob.get("_age_seconds")}))
+        det = details.get(civ._norm(name))
+        if not det:
+            return _cors(jsonify({"error": f"no infrastructure row for {name!r}"})), 404
+        det = dict(det)
+        for k in ("_cached", "_generated_at", "_age_seconds", "_stale"):
+            if k in blob:
+                det[k] = blob[k]
+        return _cors(jsonify(det))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
