@@ -1980,7 +1980,11 @@ function _wizPurchaseNext(idx) {
     fetch('/api/domains/purchase-one' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ domain: pp[idx].domain, registrar: _wizardState.registrar })
+        // confirm:true — this wizard step IS the purchase decision; the user
+        // already approved the shortlist on the previous screen. The API now
+        // dry-runs without it, so an unconfirmed call would silently buy
+        // nothing and the wizard would report every domain as failed.
+        body: JSON.stringify({ domain: pp[idx].domain, registrar: _wizardState.registrar, confirm: true })
     }).then(function(r) { return r.json(); }).then(function(d) {
         pp[idx].purchased = !!d.purchased;
         pp[idx].ns_set = !!d.ns_set;

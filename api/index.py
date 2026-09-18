@@ -2839,6 +2839,21 @@ def purchase_domains():
         if not domain_names:
             return _cors(jsonify({"error": "No domains provided"})), 400
 
+        # This route REGISTERS DOMAINS — it spends money, irreversibly, and had
+        # no gate at all: one POST bought whatever was in the body. Every other
+        # spending path in this repo requires an explicit confirm, and a caller
+        # that has not said so gets a priced dry run instead.
+        if not body.get("confirm"):
+            wanted = [d.strip().lower() for d in domain_names[:20] if d and d.strip()]
+            import buy_inboxes as _bi
+            est = sum(_bi._domain_price(d) for d in wanted)
+            return _cors(jsonify({
+                "dry_run": True, "would_purchase": wanted, "registrar": registrar,
+                "estimated_cost": est,
+                "note": "Nothing was bought. Re-send with confirm:true to register "
+                        "these domains.",
+            }))
+
         ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
         sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
         pk = os.environ.get("PORKBUN_API_KEY", "").strip()
@@ -2946,6 +2961,14 @@ def purchase_one_domain():
         registrar = body.get("registrar", "spaceship")
         if not dn:
             return _cors(jsonify({"error": "No domain provided"})), 400
+        # Spends money, irreversibly. Same gate as the batch route.
+        if not body.get("confirm"):
+            import buy_inboxes as _bi
+            return _cors(jsonify({
+                "dry_run": True, "would_purchase": dn, "registrar": registrar,
+                "estimated_cost": _bi._domain_price(dn),
+                "note": "Nothing was bought. Re-send with confirm:true.",
+            }))
 
         ak = os.environ.get("SPACESHIP_API_KEY", "").strip()
         sk = os.environ.get("SPACESHIP_SECRET_KEY", "").strip()
