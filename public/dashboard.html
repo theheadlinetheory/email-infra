@@ -67,6 +67,7 @@
     <button data-t="overview" class="on">Overview</button>
     <button data-t="clients">Clients</button>
     <button data-t="inboxes">Inboxes</button>
+    <button data-t="acquisition">Acquisition</button>
     <button data-t="pools">Pools</button>
   </nav>
 </div>
@@ -75,6 +76,7 @@
   <div id="overview"></div>
   <div id="clients" hidden></div>
   <div id="inboxes" hidden></div>
+  <div id="acquisition" hidden></div>
   <div id="pools" hidden></div>
 </main>
 <script>
@@ -141,6 +143,10 @@ function renderOverview(){
     + card('Decisions ≤30d', s.decisions_due_30d ?? '–', s.decisions_due_30d ? 'warn' : '')
     + card('Needs replacing', (DATA.inboxes || {}).summary?.actionable_burned ?? '–',
            (DATA.inboxes || {}).summary?.actionable_burned ? 'bad' : 'ok')
+    + card('Acq. free', (() => {
+        const a = (DATA.acquisition || {}).summary || {};
+        return a.free_inboxes != null ? a.free_inboxes : '?';
+      })(), 'warn')
     + '</div>';
 
   html += '<h2>The ten rules</h2>';
@@ -244,6 +250,95 @@ function renderInboxes(){
   el.innerHTML = html;
 }
 
+function renderAcquisition(){
+  const d = DATA.acquisition || {};
+  const el = document.getElementById('acquisition');
+  if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+  const s = d.summary || {};
+
+  // free_inboxes is deliberately nullable: null means the send rows were
+  // unreadable, and printing 0 there would read as "nothing spare" — a
+  // confident answer we do not have.
+  const freeKnown = s.free_inboxes != null;
+  const freeVal = freeKnown ? `${s.free_inboxes} <span class="dim" style="font-size:13px">/ ${s.free_capacity}\u2009a day</span>` : '?';
+
+  let html = '<div class="cards">'
+    + card('Inboxes', s.inboxes ?? '\u2013')
+    + card('Domains', s.domains ?? '\u2013')
+    + card('Capacity / day', (s.capacity ?? 0).toLocaleString())
+    + card('Actually sending', (s.actual_per_day ?? 0).toLocaleString()
+           + (s.utilisation_pct != null ? ` <span class="dim" style="font-size:13px">${s.utilisation_pct}%</span>` : ''))
+    + card('Free to reallocate', freeVal, freeKnown ? (s.free_inboxes ? 'ok' : 'warn') : 'warn')
+    + card('Over 3 / domain', s.over_cap_domains ?? '\u2013', s.over_cap_domains ? 'bad' : 'ok')
+    + '</div>';
+
+  (d.notes || []).forEach(n => html += `<div class="banner">${esc(n)}</div>`);
+  if (s.registrar_read === false)
+    html += `<div class="banner">The registrar could not be read, so no domain here has a
+      verified expiry. Nothing below is an all-clear.</div>`;
+
+  html += '<h2>What the fleet is doing</h2><div class="wrap"><table>'
+    + '<tr><th>State</th><th>Inboxes</th><th>Capacity / day</th></tr>'
+    + (d.by_state || []).map(r => `<tr><td>${esc(r.state)}</td>
+        <td class="n">${r.inboxes}</td><td class="n dim">${r.capacity}</td></tr>`).join('')
+    + '</table></div>';
+
+  html += `<h2>Free to point somewhere new \u2014 ${freeKnown ? (d.free || []).length : 'unknown'}</h2>`;
+  if (!freeKnown) {
+    html += '<div class="empty">No daily send rows, so this cannot be answered. '
+          + 'Run the health sync.</div>';
+  } else if (!(d.free || []).length) {
+    html += '<div class="empty">Nothing is free. Every acquisition inbox is either sending, '
+          + 'still working through follow-ups, or blocked.</div>';
+  } else {
+    html += `<div class="wrap"><table>
+      <tr><th>Inbox</th><th>Group</th><th>Per day</th><th>Age</th><th>Why it is idle</th></tr>
+      ${(d.free || []).map(i => `<tr><td>${esc(i.email)}</td><td class="dim">${esc(i.group || '')}</td>
+        <td class="n">${i.per_day}</td><td class="n dim">${i.age_days != null ? i.age_days + 'd' : ''}</td>
+        <td class="dim">${esc(i.why || i.state)}</td></tr>`).join('')}
+    </table></div>
+    <div class="meta" style="margin-top:10px">Measured over ${esc(s.window_from || '')}\u2013${esc(s.window_to || '')}
+      (${s.window_sending_days ?? '?'} sending days): campaign state said idle AND the mailbox sent nothing.
+      An inbox in the gap between sequence steps sends nothing today but did this week, so it is not here.</div>`;
+  }
+
+  if ((d.lapsing || []).length)
+    html += `<h2 class="bad">Lapsing with live senders \u2014 ${d.lapsing.length}</h2>
+      <div class="wrap"><table>
+        <tr><th>Domain</th><th>Expires</th><th>Days</th><th>Sending</th><th>Registrar</th></tr>
+        ${d.lapsing.map(r => `<tr><td>${esc(r.domain)}</td><td>${esc(r.expires)}</td>
+          <td class="n bad">${r.days_to_expiry}</td><td class="n">${r.sending}</td>
+          <td class="dim">${esc(r.registrar || '')}</td></tr>`).join('')}
+      </table></div>`;
+
+  if ((d.over_cap || []).length)
+    html += `<h2 class="bad">More than ${d.max_per_domain} inboxes on one domain \u2014 ${d.over_cap.length}</h2>
+      <div class="wrap"><table>
+        <tr><th>Domain</th><th>Inboxes</th><th>Sending</th></tr>
+        ${d.over_cap.map(r => `<tr><td>${esc(r.domain)}</td><td class="n bad">${r.inboxes}</td>
+          <td class="n">${r.sending}</td></tr>`).join('')}
+      </table></div>
+      <div class="meta" style="margin-top:10px">One bounce pattern takes out every mailbox on the domain,
+        and the oldest one is an admin that cannot be removed while the others remain.</div>`;
+
+  html += `<h2>Domains \u2014 ${(d.domains || []).length}</h2><div class="wrap"><table>
+    <tr><th>Domain</th><th>Inboxes</th><th>Sending</th><th>Free</th><th>Expires</th><th>Auto-renew</th><th>Registrar</th></tr>
+    ${(d.domains || []).map(r => {
+      const ar = r.auto_renew == null ? '<span class="dim">unknown</span>'
+               : r.auto_renew ? '<span class="good">on</span>' : '<span class="bad">off</span>';
+      const exp = r.expires
+        ? `${esc(r.expires)}${r.days_to_expiry != null ? ` <span class="dim">(${r.days_to_expiry}d)</span>` : ''}`
+        : '<span class="dim">unknown</span>';
+      return `<tr><td>${esc(r.domain)}${r.over_cap ? ' <span class="tag bad">over cap</span>' : ''}</td>
+        <td class="n">${r.inboxes}</td><td class="n dim">${r.sending}</td>
+        <td class="n">${r.free || ''}</td><td>${exp}</td><td>${ar}</td>
+        <td class="dim">${esc(r.registrar || '')}</td></tr>`;
+    }).join('')}
+  </table></div>`;
+
+  el.innerHTML = html;
+}
+
 function renderPools(){
   const d = DATA.clients || {};
   const el = document.getElementById('pools');
@@ -269,19 +364,19 @@ function banners(){
 
 async function load(){
   document.getElementById('meta').textContent = 'loading…';
-  const [inv, cl, ib] = await Promise.all([
-    get('/api/invariants'), get('/api/clients'), get('/api/inboxes')]);
-  DATA = {invariants: inv, clients: cl, inboxes: ib};
+  const [inv, cl, ib, aq] = await Promise.all([
+    get('/api/invariants'), get('/api/clients'), get('/api/inboxes'), get('/api/acquisition')]);
+  DATA = {invariants: inv, clients: cl, inboxes: ib, acquisition: aq};
   const bits = [];
   if (!cl.error) bits.push('clients ' + ago(cl._age_seconds));
   if (!inv.error) bits.push('rules ' + ago(inv.age_seconds));
   document.getElementById('meta').textContent = bits.join(' · ') || 'no data';
-  banners(); renderOverview(); renderClients(); renderInboxes(); renderPools();
+  banners(); renderOverview(); renderClients(); renderInboxes(); renderAcquisition(); renderPools();
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  ['overview','clients','inboxes','pools'].forEach(t =>
+  ['overview','clients','inboxes','acquisition','pools'].forEach(t =>
     document.getElementById(t).hidden = (t !== b.dataset.t));
 });
 document.getElementById('reload').onclick = load;
