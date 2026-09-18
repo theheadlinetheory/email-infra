@@ -66,6 +66,7 @@
   <nav>
     <button data-t="overview" class="on">Overview</button>
     <button data-t="clients">Clients</button>
+    <button data-t="onboarding">Onboarding</button>
     <button data-t="inboxes">Inboxes</button>
     <button data-t="acquisition">Acquisition</button>
     <button data-t="buy">Buy</button>
@@ -76,6 +77,7 @@
   <div id="banners"></div>
   <div id="overview"></div>
   <div id="clients" hidden></div>
+  <div id="onboarding" hidden></div>
   <div id="inboxes" hidden></div>
   <div id="acquisition" hidden></div>
   <div id="buy" hidden></div>
@@ -153,6 +155,10 @@ function renderOverview(){
     + card('Decisions ≤30d', s.decisions_due_30d ?? '–', s.decisions_due_30d ? 'warn' : '')
     + card('Needs replacing', (DATA.inboxes || {}).summary?.actionable_burned ?? '–',
            (DATA.inboxes || {}).summary?.actionable_burned ? 'bad' : 'ok')
+    + card('Onboarding owed', (() => {
+        const o = (DATA.onboarding || {}).summary || {};
+        return o.needs_work != null ? o.needs_work : '–';
+      })(), ((DATA.onboarding || {}).summary || {}).needs_work ? 'warn' : 'ok')
     + card('Acq. free', (() => {
         const a = (DATA.acquisition || {}).summary || {};
         return a.free_inboxes != null ? a.free_inboxes : '?';
@@ -207,6 +213,72 @@ function renderClients(){
       ${rows}</table></div>
     <div class="meta" style="margin-top:10px">Renewal dates come from the contracted term in the CRM.
       A highlighted basis means the term was assumed, not recorded — that deadline is a guess.</div>`;
+}
+
+// ── Onboarding ─────────────────────────────────────────────────────────
+// The CRM decides who is a client; this says what infrastructure still owes
+// them. It reports and never acts: buying inboxes and setting forwarding both
+// cost money or move live sending, so the buttons stay on the tabs that own
+// them. A screen that silently fixed things is a screen you cannot trust to
+// tell you what is wrong.
+const STEP_TAB = {infra: 'buy', target: 'buy', forwarding: 'clients', launch: null};
+
+function renderOnboarding(){
+  const d = DATA.onboarding || {};
+  const el = document.getElementById('onboarding');
+  if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+  const s = d.summary || {};
+
+  let html = '<div class="cards">'
+    + card('Fully onboarded', `${s.complete ?? 0} <span class="dim" style="font-size:13px">of ${s.active_clients ?? 0}</span>`,
+           s.needs_work ? '' : 'ok')
+    + card('Needs work', s.needs_work ?? '\u2013', s.needs_work ? 'warn' : 'ok')
+    + card('No infra at all', s.no_infra ?? '\u2013', s.no_infra ? 'bad' : 'ok')
+    + card('Below target', s.below_target ?? '\u2013', s.below_target ? 'warn' : 'ok')
+    + card('Forwarding wrong', s.bad_forwarding ?? '\u2013', s.bad_forwarding ? 'bad' : 'ok')
+    + card('Inboxes to buy', s.inboxes_to_buy ?? '\u2013', s.inboxes_to_buy ? 'warn' : 'ok')
+    + '</div>';
+
+  if (s.forwarding_checked === false)
+    html += `<div class="banner">Zapmail could not be read, so forwarding was not checked on
+      anyone. Nothing below is a clean bill of health.</div>`;
+
+  html += `<h2>Owed to a live client \u2014 ${(d.queue || []).length}</h2>`;
+  if (!(d.queue || []).length) {
+    html += '<div class="empty">Every active client in the CRM has its infrastructure, '
+          + 'at target, forwarding to its own website.</div>';
+  } else {
+    html += `<div class="wrap"><table>
+      <tr><th>Client</th><th>Blocked on</th><th>Inboxes</th><th>Short</th><th>What is missing</th><th></th></tr>
+      ${d.queue.map(e => {
+        const lbl = (d.step_labels || {})[e.blocking] || e.blocking || '';
+        const tab = STEP_TAB[e.blocking];
+        const go = tab ? `<button class="act" data-goto="${tab}">Go to ${tab}</button>` : '';
+        return `<tr>
+          <td>${esc(e.client)}</td>
+          <td class="${e.blocking === 'infra' || e.blocking === 'forwarding' ? 'bad' : 'warn'}">${esc(lbl)}</td>
+          <td class="n">${e.inboxes}<span class="dim">/${e.target}</span></td>
+          <td class="n">${e.short || ''}</td>
+          <td class="dim">${(e.notes || []).map(esc).join('<br>')}</td>
+          <td>${go}</td></tr>`;
+      }).join('')}
+    </table></div>
+    <div class="meta" style="margin-top:10px">Order matters: a client with no inboxes is not also
+      reported for forwarding. Nothing on this tab changes anything \u2014 it is the list, not the fix.</div>`;
+  }
+
+  if ((d.complete || []).length)
+    html += `<h2>Fully onboarded \u2014 ${d.complete.length}</h2>
+      <div class="meta">${d.complete.map(esc).join(' \u00b7 ')}</div>`;
+
+  el.innerHTML = html;
+  el.querySelectorAll('button[data-goto]').forEach(b => b.onclick = () => {
+    const t = b.dataset.goto;
+    document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.t === t));
+    ['overview','clients','onboarding','inboxes','acquisition','buy','pools'].forEach(n =>
+      document.getElementById(n).hidden = (n !== t));
+    if (t === 'buy') loadOrders().then(renderBuy);
+  });
 }
 
 function renderInboxes(){
@@ -615,14 +687,15 @@ function banners(){
 
 async function load(){
   document.getElementById('meta').textContent = 'loading…';
-  const [inv, cl, ib, aq] = await Promise.all([
-    get('/api/invariants'), get('/api/clients'), get('/api/inboxes'), get('/api/acquisition')]);
-  DATA = {invariants: inv, clients: cl, inboxes: ib, acquisition: aq};
+  const [inv, cl, ib, aq, ob] = await Promise.all([
+    get('/api/invariants'), get('/api/clients'), get('/api/inboxes'),
+    get('/api/acquisition'), get('/api/onboarding')]);
+  DATA = {invariants: inv, clients: cl, inboxes: ib, acquisition: aq, onboarding: ob};
   const bits = [];
   if (!cl.error) bits.push('clients ' + ago(cl._age_seconds));
   if (!inv.error) bits.push('rules ' + ago(inv.age_seconds));
   document.getElementById('meta').textContent = bits.join(' · ') || 'no data';
-  banners(); renderOverview(); renderClients(); renderInboxes(); renderAcquisition(); renderPools();
+  banners(); renderOverview(); renderClients(); renderOnboarding(); renderInboxes(); renderAcquisition(); renderPools();
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
@@ -630,7 +703,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   // The Buy tab is the only one that is not loaded up front: its orders list
   // is a live read, and nobody opening the Overview needs it.
   if (b.dataset.t === 'buy') loadOrders().then(renderBuy);
-  ['overview','clients','inboxes','acquisition','buy','pools'].forEach(t =>
+  ['overview','clients','onboarding','inboxes','acquisition','buy','pools'].forEach(t =>
     document.getElementById(t).hidden = (t !== b.dataset.t));
 });
 document.getElementById('reload').onclick = load;
