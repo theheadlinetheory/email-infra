@@ -161,6 +161,31 @@ def resolve_domain_ids(domains):
     return {"found": found, "missing": [d for d in domains if d not in found]}
 
 
+# Our provisioning creates these three, in this order, and Zapmail treats the
+# FIRST as the domain's admin.
+_PROVISION_ORDER = ("s.reynolds", "sean.r", "sean.reynolds")
+
+
+def _admin_username(mailboxes: list[dict]) -> str:
+    """Which mailbox on this domain is the one Zapmail will not let us remove.
+
+    Creation time is the rule, but it is not enough on its own: a domain's
+    mailboxes are provisioned in a single batch and Zapmail stamps them with the
+    SAME createdAt to the millisecond. `min()` then breaks the tie by list
+    order, which is arbitrary — on lawnworkspecialists.info it picked
+    `sean.reynolds` when the admin is `s.reynolds`, so an admin address sailed
+    past the guard and came back as a 400 that killed the whole batch.
+
+    So: earliest createdAt, and where that ties, the known provisioning order.
+    """
+    def rank(m):
+        u = (m.get("username") or "").lower()
+        return (str(m.get("createdAt") or "z"),
+                _PROVISION_ORDER.index(u) if u in _PROVISION_ORDER else len(_PROVISION_ORDER),
+                u)
+    return (min(mailboxes, key=rank).get("username") or "").lower()
+
+
 def _domain_mailbox_count(snapshot, domain, S_mod) -> int:
     """How many mailboxes the domain has in total (admin included)."""
     if not domain:
@@ -201,12 +226,7 @@ def cancel_mailboxes(emails, dry_run=True, source="dashboard-cancel-mailbox",
             dom = (d.get("domain") or "").lower()
             mbs = [m for m in (d.get("mailboxes") or []) if isinstance(m, dict)]
             if mbs:
-                # Zapmail's ADMIN mailbox is the first one created on the domain,
-                # and it cannot be removed while any sibling remains. It is
-                # always `s.reynolds@` for our provisioning order, but the
-                # creation timestamp is the actual rule, so use that.
-                first = min(mbs, key=lambda m: str(m.get("createdAt") or "z"))
-                admin_of[dom] = f"{first.get('username', '')}@{dom}".lower()
+                admin_of[dom] = f"{_admin_username(mbs)}@{dom}".lower()
             for m in mbs:
                 em = f"{m.get('username', '')}@{dom}".lower()
                 if em in want:
