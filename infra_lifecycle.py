@@ -184,9 +184,10 @@ def _tokens(name: str) -> set:
 def match_client(infra_name: str, crm_names: list[str]) -> str | None:
     """Best CRM name for a SmartLead client-group name, or None.
 
-    Exact normalised match first, then containment, then a token-overlap score.
-    Requires two shared significant tokens (or one exact-normalised hit) so that
-    "Lightning Lawn Care" can never land on "Lightning Group" by accident.
+    Exact normalised match first, then the same match ignoring word breaks,
+    then containment, then a token-overlap score. Requires two shared
+    significant tokens (or one exact-normalised hit) so that "Lightning Lawn
+    Care" can never land on "Lightning Group" by accident.
     """
     n = norm_name(infra_name)
     if not n:
@@ -194,6 +195,19 @@ def match_client(infra_name: str, crm_names: list[str]) -> str | None:
     by_norm = {norm_name(c): c for c in crm_names}
     if n in by_norm:
         return by_norm[n]
+
+    # Word breaks drift between the two systems. The SmartLead tag is
+    # "LightDMV" and the CRM row is "Light Dmv"; normalised they are "lightdmv"
+    # and "light dmv", which is neither an exact hit nor a containment hit (one
+    # is not a prefix of the other) and only shares one significant token, so
+    # every earlier tier missed it — and 57 tagged inboxes were reported as a
+    # client with no infrastructure at all while the CRM row sat right there.
+    # Collapsing spaces requires the WHOLE string to agree, so it cannot pull
+    # two different clients together the way a looser rule would.
+    squashed = {cn.replace(" ", ""): orig for cn, orig in by_norm.items()}
+    if n.replace(" ", "") in squashed:
+        return squashed[n.replace(" ", "")]
+
     for cn, orig in by_norm.items():
         if cn and (cn.startswith(n) or n.startswith(cn)):
             return orig
@@ -331,7 +345,12 @@ def fetch_crm_clients() -> list[dict]:
               # this list it read None for every client, which made
               # is_free_account() true for anyone without a retainer amount —
               # i.e. every per-lead client.
-              "monthly_update_enabled")
+              "monthly_update_enabled,"
+              # The forwarding target for every domain this client owns. Same
+              # trap as the field above: absent from this list it reads None for
+              # everyone, and the onboarding queue then reports all 21 clients
+              # as "no website in the CRM" while the column is populated.
+              "website")
     r = requests.get(f"{url}/rest/v1/clients?select={fields}",
                      headers={"apikey": key, "Authorization": f"Bearer {key}"},
                      timeout=20)

@@ -1047,6 +1047,80 @@ def acq_capacity_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/onboarding")
+def onboarding_route():
+    """The CRM -> infrastructure handoff: what each won client is still owed.
+
+    The CRM decides who is a client; this reports what infrastructure has not
+    yet delivered for them. Nothing here changes anything — buying inboxes and
+    setting forwarding both cost money or move live sending, so the operator
+    presses those buttons on the tabs that own them.
+
+    A failed Zapmail read passes None for the forwarding map, which makes the
+    forwarding step read UNKNOWN rather than done. A client whose forwarding we
+    could not check must never be reported as fully onboarded.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        from datetime import date
+        import check_invariants as civ
+        import infra_lifecycle as ilc
+        import onboarding_view as ov
+
+        board = _slow_cache("cache:infra_lifecycle", ilc.build)
+        if board.get("error"):
+            return _cors(jsonify({"error": board["error"]})), 400
+        crm_rows = ilc.fetch_crm_clients() or []
+        if not crm_rows:
+            # An empty CRM roster is never a real answer — it would report every
+            # client as fully onboarded by saying there are none.
+            return _cors(jsonify({"error": "CRM returned no clients — refusing to "
+                                           "report an empty onboarding queue"})), 400
+
+        # domain -> forwardTo, and which client each domain belongs to. None
+        # (not {}) when Zapmail cannot be read.
+        def _fwd_map():
+            inv = ilc.fetch_zapmail_inventory()
+            return {"domains": inv.get("domains") or None,
+                    "mailboxes": inv.get("mailboxes") or None}
+        try:
+            inv = _slow_cache("cache:zm_inventory", _fwd_map)
+            zm_domains = inv.get("domains")
+            zm_mailboxes = inv.get("mailboxes")
+        except Exception:
+            zm_domains = zm_mailboxes = None
+
+        by_client = None
+        if zm_domains and zm_mailboxes:
+            tags = ilc.fetch_smartlead_tags() or {}
+            crm_names = [c["name"] for c in crm_rows if c.get("name")]
+            by_client = {}
+            for email, mb in zm_mailboxes.items():
+                owner = tags.get(email)
+                if not owner:
+                    continue
+                name = ilc.match_client(owner, crm_names) or owner
+                dom = mb.get("domain")
+                if not dom:
+                    continue
+                rec = zm_domains.get(dom) or {}
+                seen = by_client.setdefault(name, {})
+                seen[dom] = {"domain": dom,
+                             "forward_to": rec.get("forward_to") or rec.get("forwardTo")}
+            by_client = {k: list(v.values()) for k, v in by_client.items()}
+
+        res = ov.build(crm_rows, board, by_client, civ.target_for,
+                       date.today().isoformat(), match=ilc.match_client)
+        for k in ("_cached", "_generated_at", "_age_seconds", "_stale"):
+            if k in board:
+                res[k] = board[k]
+        return _cors(jsonify(res))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/acquisition")
 def acquisition_route():
     """The Acquisition tab: our own prospecting inboxes, and the domains under them.

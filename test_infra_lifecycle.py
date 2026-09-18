@@ -499,3 +499,25 @@ class ContractedTermTests(unittest.TestCase):
     def test_missing_unit_defaults_to_months(self):
         self.assertEqual(il.contracted_term({}, {"initial_term_length": 2}),
                          (2, 0, "contract term (2 months)"))
+
+
+def test_match_client_bridges_word_break_drift():
+    """The SmartLead tag is "LightDMV"; the CRM row is "Light Dmv". Neither an
+    exact nor a containment match, and only one shared token — so before this
+    tier existed, 57 tagged inboxes read as a client with no infrastructure."""
+    names = ["Light Dmv", "Lightning Lawn Care", "Airlast"]
+    assert il.match_client("LightDMV", names) == "Light Dmv"
+    assert il.match_client("Light Dmv", names) == "Light Dmv"
+
+
+def test_squashing_spaces_cannot_merge_two_different_clients():
+    """The new tier requires the WHOLE string to agree once spaces are gone, so
+    it is exactly as strict as the exact-match tier it sits beside — it can
+    only ever re-unite one client spelled two ways."""
+    names = ["Lightning Lawn Care", "Lightning Group"]
+    assert il.match_client("LightningLawnCare", names) == "Lightning Lawn Care"
+    assert il.match_client("LightningGroup", names) == "Lightning Group"
+    # A partial name is still resolved by the older containment tier, not by
+    # this one; asserting None here would be asserting pre-existing behaviour
+    # that has never held.
+    assert il.match_client("SomethingElseEntirely", names) is None

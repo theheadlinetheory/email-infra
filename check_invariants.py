@@ -73,7 +73,11 @@ SEASONAL_CLIENTS = {
     "gm landscaping design",              # snow removal
     "kinsley landscape ltd",              # snow removal
     "peak services colorado inc",         # snow removal
-    "lightdmv",                           # holiday lighting
+    # Same client, two spellings again: "LightDMV" is the Smartlead tag and
+    # "Light Dmv" is the CRM name. With only the tag listed, any caller that
+    # reached target_for with the CRM spelling got 42 for a 57-inbox client.
+    "lightdmv",                           # holiday lighting (tag)
+    "light dmv",                          # holiday lighting (CRM)
     # The same client, spelled two ways: the Smartlead tag and the CRM name.
     # Whichever one reaches target_for has to match, so both are listed.
     "mary brite christmas lites medford",            # holiday lighting (tag)
