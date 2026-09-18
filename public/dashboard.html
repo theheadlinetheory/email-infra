@@ -66,6 +66,7 @@
   <nav>
     <button data-t="overview" class="on">Overview</button>
     <button data-t="clients">Clients</button>
+    <button data-t="inboxes">Inboxes</button>
     <button data-t="pools">Pools</button>
   </nav>
 </div>
@@ -73,6 +74,7 @@
   <div id="banners"></div>
   <div id="overview"></div>
   <div id="clients" hidden></div>
+  <div id="inboxes" hidden></div>
   <div id="pools" hidden></div>
 </main>
 <script>
@@ -137,6 +139,8 @@ function renderOverview(){
     + card('Monthly cost', s.monthly_cost != null ? money(s.monthly_cost) : '–')
     + card('Off target', s.off_target ?? '–', s.off_target ? 'warn' : 'ok')
     + card('Decisions ≤30d', s.decisions_due_30d ?? '–', s.decisions_due_30d ? 'warn' : '')
+    + card('Needs replacing', (DATA.inboxes || {}).summary?.actionable_burned ?? '–',
+           (DATA.inboxes || {}).summary?.actionable_burned ? 'bad' : 'ok')
     + '</div>';
 
   html += '<h2>The ten rules</h2>';
@@ -188,6 +192,58 @@ function renderClients(){
       A highlighted basis means the term was assumed, not recorded — that deadline is a guess.</div>`;
 }
 
+function renderInboxes(){
+  const d = DATA.inboxes || {};
+  const el = document.getElementById('inboxes');
+  if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+  if (d.loading) { el.innerHTML = '<div class="empty">Health cache is empty — run the sync.</div>'; return; }
+  const s = d.summary || {}, c = d.counts || {};
+  const need = s.needed_by_vertical || {};
+  const shortService = (need.service || 0) > 0 && !(s.service_reserve > 0);
+
+  let html = '<div class="cards">'
+    + card('Needs replacing', s.actionable_burned ?? '–', s.actionable_burned ? 'bad' : 'ok')
+    + card('Burned total', s.burned ?? '–')
+    + card('Reserve', s.reserve ?? '–')
+    + card('Replacement', s.replacement ?? '–')
+    + card('Service reserve', s.service_reserve ?? 0, shortService ? 'bad' : '')
+    + card('Fleet', s.inboxes ?? '–')
+    + '</div>';
+
+  if (shortService)
+    html += `<div class="banner">${need.service} burned service inbox(es) and no service reserve to
+      replace them from. Every reserve domain is landscaping — leave them in place rather than
+      moving a service client onto a lawn-care domain.</div>`;
+
+  html += '<h2>Health</h2><div class="wrap"><table><tr>'
+    + ['healthy','watch','at_risk','burned','warming','idle','insufficient']
+        .map(k => `<th>${k.replace('_',' ')}</th>`).join('')
+    + '</tr><tr>'
+    + ['healthy','watch','at_risk','burned','warming','idle','insufficient']
+        .map(k => `<td class="n">${c[k] ?? 0}</td>`).join('')
+    + '</tr></table></div>';
+
+  const act = (d.burned || []).filter(b => b.actionable);
+  const dead = (d.burned || []).filter(b => !b.actionable);
+  html += `<h2>Burned on a live client — ${act.length}</h2>`;
+  html += act.length ? `<div class="wrap"><table>
+      <tr><th>Inbox</th><th>Client</th><th>Domain type</th><th>Bounce 3d</th><th>Reply 3d</th><th>Why</th></tr>
+      ${act.map(b => `<tr><td>${esc(b.email)}</td><td>${esc(b.client)}</td>
+        <td><span class="tag">${esc(b.vertical)}</span></td>
+        <td class="n bad">${b.bounce_3d ?? ''}</td><td class="n dim">${b.reply_3d ?? ''}</td>
+        <td class="dim">${esc(b.reason || '')}</td></tr>`).join('')}
+    </table></div>
+    <div class="meta" style="margin-top:10px">Check each for positive replies before swapping — a replied-to
+      thread stays welded to the inbox that sent it. After re-tagging, hit <b>Reallocate Mailboxes</b> on the
+      campaign; there is no API for that step.</div>`
+    : '<div class="empty">Nothing burned on a live client.</div>';
+
+  if (dead.length)
+    html += `<h2>Burned but already cancelled — ${dead.length}</h2>
+      <div class="meta">No action: these sit in a cleanup bucket and disappear on their billing date.</div>`;
+  el.innerHTML = html;
+}
+
 function renderPools(){
   const d = DATA.clients || {};
   const el = document.getElementById('pools');
@@ -213,18 +269,19 @@ function banners(){
 
 async function load(){
   document.getElementById('meta').textContent = 'loading…';
-  const [inv, cl] = await Promise.all([get('/api/invariants'), get('/api/clients')]);
-  DATA = {invariants: inv, clients: cl};
+  const [inv, cl, ib] = await Promise.all([
+    get('/api/invariants'), get('/api/clients'), get('/api/inboxes')]);
+  DATA = {invariants: inv, clients: cl, inboxes: ib};
   const bits = [];
   if (!cl.error) bits.push('clients ' + ago(cl._age_seconds));
   if (!inv.error) bits.push('rules ' + ago(inv.age_seconds));
   document.getElementById('meta').textContent = bits.join(' · ') || 'no data';
-  banners(); renderOverview(); renderClients(); renderPools();
+  banners(); renderOverview(); renderClients(); renderInboxes(); renderPools();
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  ['overview','clients','pools'].forEach(t =>
+  ['overview','clients','inboxes','pools'].forEach(t =>
     document.getElementById(t).hidden = (t !== b.dataset.t));
 });
 document.getElementById('reload').onclick = load;

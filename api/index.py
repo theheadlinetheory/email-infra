@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -359,6 +360,114 @@ def clients_route():
             "_generated_at": board.get("_generated_at"),
             "_age_seconds": board.get("_age_seconds"),
             "_stale": board.get("_stale"),
+        }))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()[-800:]})), 500
+
+
+# Domain words that place an inbox in a vertical. Replacement has to match:
+# a burned HVAC inbox swapped onto lawnmaintenancecrew.info sends heating
+# offers from a lawn-care domain, which is the mismatch that took a day to
+# unpick across 38 domains in September.
+_SERVICE_WORDS = ("hvac", "heating", "cooling", "furnace", "boiler", "plumb",
+                  "drain", "electric", "aircon", "refrig", "mechanical",
+                  "dispatch", "callback", "callout", "repair", "technician",
+                  "contractor", "appliance", "roofing", "restoration")
+_LAND_WORDS = ("lawn", "turf", "yard", "grounds", "landscap", "outdoor",
+               "garden", "mow", "tree", "irrigation", "sod", "hedge",
+               "exterior", "propertycare", "greenwork")
+
+
+def _vertical_of(domain: str) -> str:
+    d = (domain or "").lower()
+    if any(w in d for w in _SERVICE_WORDS):
+        return "service"
+    if any(w in d for w in _LAND_WORDS):
+        return "landscaping"
+    return "other"
+
+
+@app.route("/api/inboxes")
+def inboxes_route():
+    """What needs doing to the fleet, rather than every inbox in it.
+
+    /api/health-fleet ships 1,902 inboxes at 1.03 MB. Of those, 25 are burned
+    and only the ones belonging to a live client are actionable — a burned
+    inbox already tagged into a Cleanup bucket is cancelled and needs nothing.
+    This returns the counts, that actionable list, and what is available to
+    replace them with.
+
+    Replacement stock is reported BY VERTICAL because it has to match. There is
+    currently no service reserve at all: all 129 reserve inboxes across 43
+    domains are landscaping, verified 2026-09-18, so a burned service inbox has
+    nothing to swap to and is left in place rather than moved onto a lawn-care
+    domain.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import check_invariants as civ
+        fleet, ts = _get_cache("health_fleet")
+        if not fleet:
+            return _cors(jsonify({"loading": True, "counts": {}, "burned": []}))
+
+        # Live clients come from the lifecycle board, so "actionable" means the
+        # same thing here as it does on the Clients tab.
+        import infra_lifecycle as ilc
+        board = _slow_cache("cache:infra_lifecycle", ilc.build)
+        active = {civ._norm(r.get("client")) for r in (board.get("rows") or [])
+                  if (r.get("status") or "") == "active"}
+        pools = {}
+        for r in (board.get("rows") or []):
+            nm = str(r.get("client") or "")
+            if civ.OPERATIONAL_RE.match(nm):
+                pools[nm] = r.get("mailboxes") or 0
+
+        burned = []
+        for i in (fleet.get("inboxes") or []):
+            if i.get("status") != "burned":
+                continue
+            owner = i.get("client") or ""
+            is_client = (civ._norm(owner) in active
+                         and not civ.OPERATIONAL_RE.match(owner))
+            burned.append({
+                "email": i.get("email"),
+                "client": owner,
+                "domain": i.get("domain"),
+                "vertical": _vertical_of(i.get("domain")),
+                "bounce_3d": i.get("bounce_3d"),
+                "reply_3d": i.get("reply_3d"),
+                "reason": (i.get("reasons") or [None])[0],
+                # Only a live client's burned inbox needs replacing. One sitting
+                # in a Cleanup bucket is already cancelled.
+                "actionable": is_client,
+            })
+        burned.sort(key=lambda b: (not b["actionable"], b["client"] or "", b["email"] or ""))
+        act = [b for b in burned if b["actionable"]]
+
+        reserve = sum(n for k, n in pools.items()
+                      if "generic" in k.lower() or "reserve" in k.lower())
+        replacement = sum(n for k, n in pools.items() if "replacement" in k.lower())
+        need = Counter(b["vertical"] for b in act)
+        return _cors(jsonify({
+            "counts": fleet.get("counts") or {},
+            "alerts": fleet.get("alert_summary") or {},
+            "burned": burned,
+            "summary": {
+                "inboxes": len(fleet.get("inboxes") or []),
+                "burned": len(burned),
+                "actionable_burned": len(act),
+                "needed_by_vertical": dict(need),
+                "reserve": reserve,
+                "replacement": replacement,
+                # Named explicitly rather than implied by a zero: the absence of
+                # a service pool is a standing decision, not a temporary dip.
+                "service_reserve": 0,
+            },
+            "pools": pools,
+            "_generated_at": ts,
+            "_synced_at": ts,
         }))
     except Exception as e:
         import traceback
