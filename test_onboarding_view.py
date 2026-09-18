@@ -157,3 +157,29 @@ def test_a_tag_spelled_differently_from_the_crm_name_still_matches():
 def test_without_a_matcher_it_falls_back_to_the_label():
     r = ov.build([crm()], board(("Acme Co", 42)), doms("Acme Co", 3), TARGET, TODAY)
     assert r["summary"]["needs_work"] == 0
+
+
+def FREE(crm_row):
+    return crm_row.get("name") == "Landy Rose Media"
+
+
+def test_a_free_account_is_held_at_the_size_it_runs_at():
+    """Landy Rose sits at 18 on purpose. Reporting it 24 short put a permanent
+    fixture in a queue of things to fix."""
+    r = ov.build([crm("Landy Rose Media")], board(("Landy Rose Media", 18)),
+                 doms("Landy Rose Media", 6), TARGET, TODAY, MATCH, is_exempt=FREE)
+    assert r["summary"]["needs_work"] == 0
+    assert r["complete"] == ["Landy Rose Media"]
+
+
+def test_an_exempt_client_with_no_infra_still_needs_some():
+    """Exempt means 'whatever it holds is right', not 'zero is right'."""
+    r = ov.build([crm("Landy Rose Media")], board(), {}, TARGET, TODAY, MATCH, is_exempt=FREE)
+    assert r["queue"][0]["blocking"] == "infra"
+
+
+def test_a_paying_client_is_still_held_to_its_target():
+    r = ov.build([crm("Acme Co")], board(("Acme Co", 18)), doms("Acme Co", 6),
+                 TARGET, TODAY, MATCH, is_exempt=FREE)
+    assert r["queue"][0]["blocking"] == "target"
+    assert r["queue"][0]["short"] == 24

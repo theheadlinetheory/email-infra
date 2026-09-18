@@ -349,23 +349,71 @@ function renderInboxes(){
 
   const act = (d.burned || []).filter(b => b.actionable);
   const dead = (d.burned || []).filter(b => !b.actionable);
+
+  // The replacement loop, same as the old health tab ran it and in the same
+  // order, because the order is the safety:
+  //   1 check positives — a reply lives in the mailbox that sent it and is
+  //     welded to it by message-id, so detaching freezes the conversation
+  //   2 flag for replacement — pulls a niche-matched reserve inbox
+  //   3 swap
+  //   4 schedule the Zapmail removal, so we stop paying on the billing date
+  // Nothing here skips step 1. That is the whole reason the old flow was safe.
   html += `<h2>Burned on a live client — ${act.length}</h2>`;
-  html += act.length ? `<div class="wrap"><table>
-      <tr><th>Inbox</th><th>Client</th><th>Domain type</th><th>Bounce 3d</th><th>Reply 3d</th><th>Why</th></tr>
-      ${act.map(b => `<tr><td>${esc(b.email)}</td><td>${esc(b.client)}</td>
+  if (!act.length) {
+    html += '<div class="empty">Nothing burned on a live client.</div>';
+  } else {
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+        <button class="act" id="rp-check">1 · Check positive replies</button>
+        <button class="act" id="rp-flag" disabled>2 · Flag for replacement</button>
+        <button class="act" id="rp-cancel" disabled>4 · Schedule Zapmail removal</button>
+        <span class="dim" id="rp-sel">0 selected</span>
+        <span style="flex:1"></span>
+        <button class="act" id="rp-all">Select all</button>
+      </div>
+      <div id="rp-out"></div>
+      <div class="wrap"><table>
+      <tr><th style="width:28px"></th><th>Inbox</th><th>Client</th><th>Domain type</th>
+          <th>Bounce 3d</th><th>Reply 3d</th><th>Positives</th><th>Why</th></tr>
+      ${act.map(b => `<tr><td><input type="checkbox" class="rp" data-e="${esc(b.email)}"></td>
+        <td>${esc(b.email)}</td><td>${esc(b.client)}</td>
         <td><span class="tag">${esc(b.vertical)}</span></td>
         <td class="n bad">${b.bounce_3d ?? ''}</td><td class="n dim">${b.reply_3d ?? ''}</td>
+        <td class="n" id="pos-${esc(b.email)}"><span class="dim">?</span></td>
         <td class="dim">${esc(b.reason || '')}</td></tr>`).join('')}
     </table></div>
-    <div class="meta" style="margin-top:10px">Check each for positive replies before swapping — a replied-to
-      thread stays welded to the inbox that sent it. After re-tagging, hit <b>Reallocate Mailboxes</b> on the
-      campaign; there is no API for that step.</div>`
-    : '<div class="empty">Nothing burned on a live client.</div>';
+    <div class="meta" style="margin-top:10px">Step 1 is read-only and answers what would be
+      held. A burned inbox that owns a positive reply is kept in its campaign on purpose —
+      the replacement still goes in, so the campaign gets its capacity back. After a swap,
+      hit <b>Reallocate Mailboxes</b> on the campaign in SmartLead; there is no API for that step.</div>`;
+  }
+
+  if ((d.holds || []).length)
+    html += `<h2>Held — owns a positive reply — ${d.holds.length}</h2>
+      <div class="wrap"><table>
+        <tr><th>Inbox</th><th>Campaign</th><th>Threads</th><th></th></tr>
+        ${d.holds.map(h => `<tr><td>${esc(h.email)}</td><td class="dim">${esc(h.campaign_name || '')}</td>
+          <td class="n">${h.positive_threads ?? (h.threads || []).length}</td>
+          <td><button class="act" data-keep="${esc(h.key)}">Worked it — keep</button>
+              <button class="act" data-rel="${esc(h.key)}">Worked it — detach</button></td></tr>`).join('')}
+      </table></div>
+      <div class="meta" style="margin-top:10px">Work the conversation first. Detaching freezes it:
+        SmartLead's Reallocate only moves the unsent queue and can never move an existing thread.</div>`;
+
+  if ((d.jobs || []).length)
+    html += `<h2>Replacements in flight — ${d.jobs.length}</h2>
+      <div class="wrap"><table>
+        <tr><th>Burned inbox</th><th>Replacement</th><th>Stage</th><th></th></tr>
+        ${d.jobs.map(j => `<tr><td>${esc(j.email)}</td>
+          <td class="dim">${esc(j.replacement || j.new_domain || '—')}</td>
+          <td>${esc(j.stage || j.status || '')}</td>
+          <td><button class="act" data-adv="${j.id}" data-act="swap">Swap in</button></td></tr>`).join('')}
+      </table></div>`;
 
   if (dead.length)
     html += `<h2>Burned but already cancelled — ${dead.length}</h2>
       <div class="meta">No action: these sit in a cleanup bucket and disappear on their billing date.</div>`;
   el.innerHTML = html;
+  wireReplace(act);
 }
 
 function renderAcquisition(){
@@ -378,7 +426,9 @@ function renderAcquisition(){
   // unreadable, and printing 0 there would read as "nothing spare" — a
   // confident answer we do not have.
   const freeKnown = s.free_inboxes != null;
-  const freeVal = freeKnown ? `${s.free_inboxes} <span class="dim" style="font-size:13px">/ ${s.free_capacity}\u2009a day</span>` : '?';
+  // "2 / 30" read as a denominator. 30 was 2 inboxes x 15 sends/day — a second
+  // unit crammed into one card, which is worse than not showing it.
+  const freeVal = freeKnown ? String(s.free_inboxes) : '?';
 
   // IN USE = on a live campaign: sending to new leads, sending follow-ups, or
   // between sequence steps. All three are working states. The old headline
@@ -697,6 +747,98 @@ async function loadOrders(){
   const r = await get('/api/buy-orders');
   BUY.orders = r.orders || [];
 }
+
+// ── the burned-inbox replacement loop ──────────────────────────────────
+// Every one of these endpoints already existed and already worked — this is
+// the old health tab's flow, wired to the new table. Nothing new is invented
+// and no step is skipped.
+function rpSelected(){
+  return [...document.querySelectorAll('input.rp:checked')].map(c => c.dataset.e);
+}
+function rpNote(html){ document.getElementById('rp-out').innerHTML = html; }
+
+function wireReplace(act){
+  const sel = document.getElementById('rp-sel');
+  const flag = document.getElementById('rp-flag');
+  const canc = document.getElementById('rp-cancel');
+  if (!sel) return;
+  const sync = () => {
+    const n = rpSelected().length;
+    sel.textContent = n + ' selected';
+    // Flagging stays locked until positives have been checked for THIS
+    // selection. The old flow's safety was the order, not the buttons.
+    flag.disabled = !(n && RP_CHECKED);
+    canc.disabled = !n;
+  };
+  document.querySelectorAll('input.rp').forEach(c => c.onchange = () => { RP_CHECKED = false; sync(); });
+  document.getElementById('rp-all').onclick = () => {
+    const on = rpSelected().length !== act.length;
+    document.querySelectorAll('input.rp').forEach(c => { c.checked = on; });
+    RP_CHECKED = false; sync();
+  };
+
+  document.getElementById('rp-check').onclick = async () => {
+    const emails = rpSelected();
+    if (!emails.length) return rpNote('<div class="banner">Select at least one inbox.</div>');
+    rpNote('<div class="meta">checking replies…</div>');
+    const r = await post('/api/health-positive-check', {emails});
+    if (r.error) return rpNote(`<div class="banner">${esc(r.error)}</div>`);
+    let held = 0;
+    (r.results || []).forEach(x => {
+      const cell = document.getElementById('pos-' + x.email);
+      const n = x.positive_total ?? 0;
+      if (n) held++;
+      if (cell) cell.innerHTML = n ? `<span class="bad">${n}</span>` : '<span class="good">0</span>';
+    });
+    RP_CHECKED = true; sync();
+    rpNote(`<div class="banner">${held ? held + ' of ' + emails.length +
+      ' own a positive reply and will be HELD in their campaign — the replacement still goes in, '
+      + 'so capacity comes back. The rest can be swapped out.'
+      : 'None own a positive reply. All ' + emails.length + ' can be swapped out.'}</div>`);
+  };
+
+  document.getElementById('rp-flag').onclick = async () => {
+    const emails = rpSelected();
+    if (!confirm(`Flag ${emails.length} inbox(es) for replacement?\n\n`
+               + `This pulls niche-matched inboxes out of the reserve.`)) return;
+    rpNote('<div class="meta">flagging…</div>');
+    const r = await post('/api/health-replace', {emails});
+    if (r.error) return rpNote(`<div class="banner">${esc(r.error)}</div>`);
+    rpNote(`<div class="banner">${(r.created ?? (r.jobs || []).length)} replacement job(s) open.
+      Reserve left: ${esc(JSON.stringify(r.reserve || {}))}</div>`);
+    showTab('inboxes', true);
+  };
+
+  document.getElementById('rp-cancel').onclick = async () => {
+    const emails = rpSelected();
+    const domains = [...new Set(emails.map(e => e.split('@')[1]))];
+    if (!confirm(`Schedule Zapmail removal for ${domains.length} domain(s)?\n\n`
+               + `${domains.join(', ')}\n\nRemoval happens on the next billing date, so no `
+               + `days are wasted — but every mailbox on these domains goes, not just the burned one.`)) return;
+    rpNote('<div class="meta">registering…</div>');
+    const r = await post('/api/zapmail-removals', {action: 'register', domains, source: 'dashboard'});
+    rpNote(r.error ? `<div class="banner">${esc(r.error)}</div>`
+                   : `<div class="banner">Registered ${domains.length} domain(s) with the
+                      #zapmail-billing watcher. It will confirm on the deletion date.</div>`);
+  };
+
+  document.querySelectorAll('button[data-keep]').forEach(b => b.onclick = async () => {
+    await post('/api/health-positive-release', {key: b.dataset.keep, action: 'keep'});
+    showTab('inboxes', true);
+  });
+  document.querySelectorAll('button[data-rel]').forEach(b => b.onclick = async () => {
+    if (!confirm('Detach this inbox from the campaign? Do this only after the reply has been worked.')) return;
+    await post('/api/health-positive-release', {key: b.dataset.rel, confirm: true});
+    showTab('inboxes', true);
+  });
+  document.querySelectorAll('button[data-adv]').forEach(b => b.onclick = async () => {
+    if (!confirm('Swap the replacement in?')) return;
+    await post('/api/health-replace/advance', {id: +b.dataset.adv, action: b.dataset.act, confirm: true});
+    showTab('inboxes', true);
+  });
+  sync();
+}
+let RP_CHECKED = false;
 
 function renderPools(){
   const d = DATA.clients || {};

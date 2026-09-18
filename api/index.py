@@ -500,12 +500,31 @@ def inboxes_route():
         except Exception as e:
             burn["reason"] = f"burn rate unavailable: {str(e)[:120]}"
 
+        # The replacement loop's live state, so the Inboxes tab can run the
+        # same flow the old health tab ran: held inboxes (own a positive reply,
+        # kept in their campaign on purpose) and jobs already in flight.
+        # Each read is optional — a failure hides that section rather than
+        # taking the whole tab down with it.
+        holds, jobs = [], []
+        try:
+            import health_positive as hp
+            holds = (hp.list_holds() or {}).get("holds") or []
+        except Exception:
+            holds = []
+        try:
+            import health_replace as hr
+            jobs = hr.list_jobs() or []
+        except Exception:
+            jobs = []
+
         need = Counter(b["vertical"] for b in act)
         return _cors(jsonify({
             "counts": fleet.get("counts") or {},
             "alerts": fleet.get("alert_summary") or {},
             "burned": burned,
             "burn_rate": burn,
+            "holds": holds,
+            "jobs": jobs,
             "summary": {
                 "inboxes": len(fleet.get("inboxes") or []),
                 "burned": len(burned),
@@ -1146,7 +1165,8 @@ def onboarding_route():
             by_client = {k: list(v.values()) for k, v in by_client.items()}
 
         res = ov.build(crm_rows, board, by_client, civ.target_for,
-                       date.today().isoformat(), match=ilc.match_client)
+                       date.today().isoformat(), match=ilc.match_client,
+                       is_exempt=civ.is_free_account)
         for k in ("_cached", "_generated_at", "_age_seconds", "_stale"):
             if k in board:
                 res[k] = board[k]
@@ -1175,9 +1195,19 @@ def acquisition_route():
         import acq_capacity as ac
         import acquisition_view as av
 
+        # Always built from a LIVE Smartlead walk, cached for a day.
+        #
+        # It used to serve `_slow_cache(ac.build)` — ac.build() with live=False,
+        # which takes its roster from the overview_v2 sync cache. That cache is
+        # only as fresh as the last sync, so the tab could report inboxes that
+        # had since been cancelled or re-tagged, and miss ones just bought. Tim,
+        # 2026-09-19: the numbers must come from Smartlead each day and say
+        # whether an inbox is actually there and allocatable.
         live = request.args.get("live") in ("1", "true", "yes")
         acq = (ac.build(live=True) if live
-               else _slow_cache("cache:acq_capacity", ac.build))
+               else _slow_cache("cache:acq_capacity_live",
+                                lambda: ac.build(live=True),
+                                ttl_seconds=24 * 3600))
 
         # Wrapped in a dict on purpose: _slow_cache stamps its own keys onto
         # whatever it stores, so handing it the bare {domain: ...} map would mix

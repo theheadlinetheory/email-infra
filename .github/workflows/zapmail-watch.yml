@@ -47,6 +47,40 @@ jobs:
                "removed=$(echo "$body" | jq -r '(.removed // []) | length')" \
                "due=$(echo "$body" | jq -r '(.due // []) | length')"
 
+      # The invariants result is SERVED FROM STORAGE — /api/invariants returns
+      # the last stored run. Nothing was refreshing it: vercel.json declares a
+      # cron, and this whole workflow exists because that cron has never fired.
+      # So a rule stayed FAILED on screen for a day after the thing it checks
+      # was fixed — forwarding was corrected on 2026-09-18 and rule 4 still read
+      # FAIL on the dashboard the next morning (Tim, 2026-09-19). A stale check
+      # is worse than no check: it sends someone to fix what is already fixed.
+      - name: Refresh the invariants (the full run, campaigns included)
+        if: github.event.schedule == '0 2 * * *'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/invariants?refresh=1&pw=${PW}")
+          echo "$body" | head -c 1200
+          fails=$(echo "$body" | jq -r '.counts.FAIL // "?"')
+          echo "rules failing: $fails"
+
+      # Acquisition numbers come from a live Smartlead walk cached for a day.
+      # Warming it here means the first person to open the tab is not the one
+      # who pays the 60-90s rebuild.
+      - name: Refresh acquisition capacity from Smartlead
+        if: github.event.schedule == '0 2 * * *'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/acquisition?refresh=1&pw=${PW}" \
+            | jq -r '.summary | "inboxes=\(.inboxes) in_use=\(.in_use)/\(.usable) free=\(.free_inboxes) burned=\(.burned)"'
+
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *'
         continue-on-error: true
