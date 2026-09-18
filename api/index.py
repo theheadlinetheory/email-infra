@@ -2654,6 +2654,45 @@ def domains_set_auto_renew():
         enabled = body.get("enabled", False)
         if not domains_list:
             return _cors(jsonify({"error": "No domains specified"})), 400
+
+        # TURNING AUTO-RENEW OFF IS THE REAL KILL SWITCH. Zapmail's own autoRenew
+        # field is inert — the registrar's is what actually decides whether a
+        # domain survives — so this route is the only thing standing between a
+        # live sender and a lapsed domain. It has been wrong once already: 34
+        # domains carrying live senders were set to lapse.
+        #
+        # So disabling it on a domain that still has a mailbox is refused unless
+        # the caller says `force`. Enabling is never gated: keeping a domain
+        # alive cannot lose anything.
+        blocked = []
+        if not enabled and not body.get("force"):
+            try:
+                import infra_lifecycle as ilc
+                inv = ilc.fetch_zapmail_inventory()
+                live = {}
+                for mb in (inv.get("mailboxes") or {}).values():
+                    dom = (mb.get("domain") or "").lower()
+                    live[dom] = live.get(dom, 0) + 1
+            except Exception as e:
+                # Could not check, so cannot clear it. Refusing is the cautious
+                # direction: a failed read must not become permission to lapse.
+                return _cors(jsonify({
+                    "error": "could not read Zapmail to check for live senders — "
+                             f"refusing to disable auto-renew ({str(e)[:100]})",
+                })), 503
+            for d in domains_list:
+                n = live.get(d.strip().lower(), 0)
+                if n:
+                    blocked.append({"domain": d.strip().lower(), "mailboxes": n})
+            if blocked:
+                return _cors(jsonify({
+                    "error": f"{len(blocked)} domain(s) still carry mailboxes — "
+                             "disabling auto-renew would let them lapse and take "
+                             "the senders with them. Cancel the mailboxes first, "
+                             "or re-send with force:true.",
+                    "blocked": blocked,
+                })), 409
+
         all_db_domains = {d["domain"]: d for d in store.get_all_domains()}
         results = []
         for domain_name in domains_list:
@@ -2674,7 +2713,8 @@ def domains_set_auto_renew():
                 store.update_domain(domain_name, auto_renew=enabled)
             results.append({"domain": domain_name, **res})
         succeeded = sum(1 for r in results if r.get("success"))
-        return _cors(jsonify({"results": results, "succeeded": succeeded, "total": len(results)}))
+        return _cors(jsonify({"results": results, "succeeded": succeeded,
+                              "total": len(results), "forced": bool(body.get("force"))}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500

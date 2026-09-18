@@ -4168,21 +4168,38 @@ function _renderDomainActions() {
     el.innerHTML = html;
 }
 
-function _bulkAutoRenew(enabled) {
+function _bulkAutoRenew(enabled, force) {
     var sel = _getSelectedDomains();
     if (!sel.length) return;
     var label = enabled ? 'enable' : 'disable';
-    if (!confirm('Are you sure you want to ' + label + ' auto-renew on ' + sel.length + ' domains?')) return;
+    if (!force && !confirm('Are you sure you want to ' + label + ' auto-renew on ' + sel.length + ' domains?')) return;
     _domainBulkBusy = true;
     _renderDomainActions();
     fetch('/api/domains/auto-renew' + _authQs(), {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, _authHeaders()),
-        body: JSON.stringify({ domains: sel, enabled: enabled })
+        body: JSON.stringify({ domains: sel, enabled: enabled, force: !!force })
     }).then(function(r) { return r.json(); }).then(function(data) {
         _domainBulkBusy = false;
+        // The API refuses to disable auto-renew on a domain that still carries
+        // mailboxes — letting it lapse takes the senders with it, and that has
+        // happened once already (34 live domains set to lapse). Show exactly
+        // which ones and what is on them, then let the operator override
+        // deliberately rather than by default.
+        if (data.blocked && data.blocked.length) {
+            var lines = data.blocked.slice(0, 12).map(function(b) {
+                return '   ' + b.domain + ' — ' + b.mailboxes + ' mailbox(es)';
+            }).join('\n');
+            var more = data.blocked.length > 12 ? '\n   …and ' + (data.blocked.length - 12) + ' more' : '';
+            if (confirm(data.error + '\n\n' + lines + more +
+                        '\n\nDisable anyway? These domains will lapse and their senders stop.')) {
+                _bulkAutoRenew(enabled, true);
+            }
+            return;
+        }
         if (data.error) { alert('Error: ' + data.error); return; }
-        alert(data.succeeded + '/' + data.total + ' domains updated');
+        alert(data.succeeded + '/' + data.total + ' domains updated'
+              + (data.forced ? ' (forced)' : ''));
         _domainSelected = {};
         _domainsData = null;
         renderDomainsTab();
