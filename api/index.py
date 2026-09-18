@@ -240,6 +240,41 @@ def overview():
                     data["crm_clients"] = crm_names
         except Exception:
             pass
+
+        # ?slim=1 drops the per-account rows. They are 1,469 KB of a 1.64 MB
+        # payload — 50 clients x up to 57 mailboxes x 17 fields — and a caller
+        # that only wants the roster, the counts or the campaign list pays for
+        # all of it. The default is unchanged on purpose: the existing dashboard
+        # renders those rows, and quietly removing them would break it.
+        if request.args.get("slim") in ("1", "true", "yes"):
+            trimmed = 0
+
+            def _strip(obj):
+                """Drop account_details wherever it appears, however deep.
+
+                A first cut only popped it at the top level of each client and
+                barely moved the payload: 1.64 MB to 795 KB. The bulk was
+                `clients[].group_a`, a NESTED group object carrying its own copy
+                of the same rows — 728 KB of the remainder. Stripping one level
+                and declaring victory would have shipped a "slim" mode that was
+                still most of the original.
+                """
+                nonlocal trimmed
+                if isinstance(obj, dict):
+                    out = {}
+                    for k, v in obj.items():
+                        if k == "account_details":
+                            trimmed += len(v or [])
+                            continue
+                        out[k] = _strip(v)
+                    return out
+                if isinstance(obj, list):
+                    return [_strip(x) for x in obj]
+                return obj
+
+            data = _strip(data)
+            data["_slim"] = True
+            data["_account_rows_omitted"] = trimmed
         return _cors(jsonify(data))
     return _cors(jsonify({"loading": True, "clients": [], "total_accounts": 0}))
 
