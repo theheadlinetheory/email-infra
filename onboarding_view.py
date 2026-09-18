@@ -69,7 +69,7 @@ def _host(url) -> str:
 
 def build(crm_clients: list[dict], board: dict,
           domains_by_client: dict | None, target_of, today: str,
-          match=None) -> dict:
+          match=None, is_exempt=None) -> dict:
     """The onboarding queue.
 
     `domains_by_client`  {client name: [{"domain":…, "forward_to":…}, …]}, or
@@ -105,7 +105,12 @@ def build(crm_clients: list[dict], board: dict,
             continue
         row = rows_by_name.get(_norm(name))
         held = (row or {}).get("mailboxes") or 0
-        target = target_of(name, c)
+        # A free account runs at whatever size was agreed, not at the standard
+        # target. Landy Rose Media sits at 18 deliberately, and reporting it as
+        # 24 short put a permanent fixture in a queue of things to fix
+        # (Tim, 2026-09-19). Its target IS what it holds.
+        exempt = bool(is_exempt and is_exempt(c))
+        target = held if (exempt and held) else target_of(name, c)
         site = _host(c.get("website"))
 
         steps, notes = [], []
@@ -146,6 +151,7 @@ def build(crm_clients: list[dict], board: dict,
             "client": name,
             "inboxes": held,
             "target": target,
+            "exempt": exempt,
             "short": max(0, target - held),
             "website": c.get("website"),
             "launch_date": c.get("launch_date"),
