@@ -277,7 +277,7 @@ function renderOnboarding(){
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.t === t));
     ['overview','clients','onboarding','inboxes','acquisition','buy','pools'].forEach(n =>
       document.getElementById(n).hidden = (n !== t));
-    if (t === 'buy') loadOrders().then(renderBuy);
+    showTab(t);
   });
 }
 
@@ -290,14 +290,49 @@ function renderInboxes(){
   const need = s.needed_by_vertical || {};
   const shortService = (need.service || 0) > 0 && !(s.service_reserve > 0);
 
+  const b = d.burn_rate || {}, bs = b.summary || {};
+  const rate = bs.per_week, runway = bs.runway_weeks;
+
   let html = '<div class="cards">'
     + card('Needs replacing', s.actionable_burned ?? '–', s.actionable_burned ? 'bad' : 'ok')
+    + card('Burn rate', b.measured ? `${rate}<span class="dim" style="font-size:13px">/wk</span>` : '?',
+           !b.measured ? 'warn' : rate >= 5 ? 'bad' : rate > 0 ? 'warn' : 'ok')
+    + card('Replacement pool', s.replacement ?? '–', (s.replacement ?? 0) ? '' : 'bad')
+    + card('Runway', runway != null ? `${runway}<span class="dim" style="font-size:13px"> wk</span>`
+                                    : (b.measured ? 'n/a' : '?'),
+           runway == null ? '' : runway < 4 ? 'bad' : runway < 12 ? 'warn' : 'ok')
+    + card('At risk', bs.at_risk ?? '–', (bs.at_risk ?? 0) > 200 ? 'warn' : '')
     + card('Burned total', s.burned ?? '–')
     + card('Reserve', s.reserve ?? '–')
-    + card('Replacement', s.replacement ?? '–')
-    + card('Service reserve', s.service_reserve ?? 0, shortService ? 'bad' : '')
     + card('Fleet', s.inboxes ?? '–')
     + '</div>';
+
+  if (!b.measured)
+    html += `<div class="banner">${esc(b.reason || 'Burn rate could not be computed')} —
+      the rate is withheld rather than shown low. A rate built from a short read always
+      looks healthy.</div>`;
+  else if (b.window_complete === false)
+    html += `<div class="banner">The window reaches back before ${esc(b.history_from)}, which is
+      the earliest date health history is true. Crossings before then are missing, so this
+      rate is a floor, not the real number.</div>`;
+
+  if (b.measured && (b.weeks || []).length) {
+    const mx = Math.max(1, ...b.weeks.map(w => w.new_burns));
+    html += '<h2>New burns by week</h2><div class="wrap"><table>'
+      + '<tr><th>Week</th><th>New burns</th><th style="width:55%"></th></tr>'
+      + b.weeks.map(w => `<tr><td class="dim">${esc(w.from)}</td>
+          <td class="n">${w.new_burns}</td>
+          <td><span style="display:inline-block;height:9px;border-radius:2px;
+            background:${w.new_burns >= 5 ? 'var(--bad)' : 'var(--warn)'};
+            width:${Math.round(100 * w.new_burns / mx)}%"></span></td></tr>`).join('')
+      + '</table></div>'
+      + `<div class="meta" style="margin-top:8px">New burns are inboxes that were not burned
+         at the previous snapshot — net change would let a cancelled inbox cancel out a
+         genuinely new one.
+         ${runway != null
+            ? `At ${rate}/week the ${bs.replacement_pool} in the Replacement Group cover ${runway} weeks.`
+            : 'Nothing is burning, so there is no runway to quote — that is not a reason to shrink the pool.'}</div>`;
+  }
 
   if (shortService)
     html += `<div class="banner">${need.service} burned service inbox(es) and no service reserve to
@@ -345,29 +380,32 @@ function renderAcquisition(){
   const freeKnown = s.free_inboxes != null;
   const freeVal = freeKnown ? `${s.free_inboxes} <span class="dim" style="font-size:13px">/ ${s.free_capacity}\u2009a day</span>` : '?';
 
-  // Capacity used is the headline number, not a subscript. It is the one figure
-  // that says whether the money we spend on acquisition is doing anything.
-  const util = s.utilisation_pct;
+  // IN USE = on a live campaign: sending to new leads, sending follow-ups, or
+  // between sequence steps. All three are working states. The old headline
+  // divided sends/day by capacity/day, which counted a follow-up sequence's
+  // deliberately spaced touches as waste and reported a 99%-deployed fleet as
+  // 27% used.
+  const used = s.in_use_pct;
   let html = '<div class="cards">'
-    + card('Capacity used', util != null ? util + '%' : '\u2013',
-           util == null ? '' : util >= 70 ? 'ok' : util >= 40 ? 'warn' : 'bad')
-    + card('Sending / day', `${(s.actual_per_day ?? 0).toLocaleString()}`
-           + ` <span class="dim" style="font-size:13px">of ${(s.capacity ?? 0).toLocaleString()}</span>`)
+    + card('In use', used != null ? used + '%' : '\u2013',
+           used == null ? '' : used >= 90 ? 'ok' : used >= 70 ? 'warn' : 'bad')
+    + card('Working', `${s.in_use ?? '\u2013'} <span class="dim" style="font-size:13px">of ${s.usable ?? '\u2013'}</span>`)
+    + card('Free to reallocate', freeVal, freeKnown ? (s.free_inboxes ? 'ok' : 'warn') : 'warn')
     + card('Inboxes', s.inboxes ?? '\u2013')
     + card('Domains', s.domains ?? '\u2013')
-    + card('Free to reallocate', freeVal, freeKnown ? (s.free_inboxes ? 'ok' : 'warn') : 'warn')
     + card('Burned', s.burned ?? '\u2013', s.burned ? 'bad' : 'ok')
     + card('Replacement pool', s.replacement_pool != null ? s.replacement_pool : '?',
            s.replacement_pool === 0 ? 'bad' : '')
     + card('Over 3 / domain', s.over_cap_domains ?? '\u2013', s.over_cap_domains ? 'bad' : 'ok')
     + '</div>';
 
-  // What the percentage actually means, because 27% invites the wrong fix.
-  if (util != null && util < 70)
-    html += `<div class="banner">Capacity used is ${util}% \u2014 ${(s.capacity - (s.actual_per_day || 0)).toLocaleString()}
-      sends a day we pay for and do not use. Before buying more, check the reason:
-      ${s.followup_only_inboxes || 0} inbox(es) are on campaigns whose NEW-lead queue is empty,
-      which is a list problem, not an inbox problem.</div>`;
+  // Volume, stated as volume, with no claim attached. A follow-up-heavy fleet
+  // sends less per inbox by design; that is the sequence spacing its touches.
+  html += `<div class="meta" style="margin:-8px 0 16px">Sending
+    ${(s.actual_per_day ?? 0).toLocaleString()} a day across ${s.in_use ?? '?'} working inboxes.
+    Daily volume is set by where each campaign is in its sequence, so it is not a
+    utilisation figure \u2014 an inbox between sequence steps sends nothing today and is
+    still working.</div>`;
 
   (d.notes || []).forEach(n => html += `<div class="banner">${esc(n)}</div>`);
   if (s.registrar_read === false)
@@ -685,28 +723,81 @@ function banners(){
   document.getElementById('banners').innerHTML = h;
 }
 
+// Every tab used to be fetched before anything rendered, so opening the
+// dashboard waited on the SLOWEST of five endpoints — several of which rebuild
+// a whole Zapmail or Smartlead walk on a cache miss. Nobody needs the
+// acquisition fleet to read the Overview.
+//
+// Now: Overview's two feeds load first and the page paints. Every other tab
+// fetches the first time it is opened and is remembered after that. Reload
+// re-fetches whatever is already on screen.
+const FEEDS = {
+  invariants:  '/api/invariants',
+  clients:     '/api/clients',
+  inboxes:     '/api/inboxes',
+  acquisition: '/api/acquisition',
+  onboarding:  '/api/onboarding',
+};
+const RENDER = {
+  overview: renderOverview, clients: renderClients, onboarding: renderOnboarding,
+  inboxes: renderInboxes, acquisition: renderAcquisition, pools: renderPools,
+};
+// Which feeds a tab needs before it can draw.
+const TAB_FEEDS = {
+  overview: ['invariants', 'clients'],
+  clients: ['clients'], onboarding: ['onboarding'], inboxes: ['inboxes'],
+  acquisition: ['acquisition'], pools: ['clients'], buy: [],
+};
+const LOADED = {};
+
+async function need(keys, force){
+  const want = keys.filter(k => force || !(k in LOADED));
+  if (want.length) {
+    const got = await Promise.all(want.map(k => get(FEEDS[k])));
+    want.forEach((k, i) => { DATA[k] = got[i]; LOADED[k] = true; });
+  }
+}
+
+function stamp(){
+  const bits = [];
+  const cl = DATA.clients, inv = DATA.invariants;
+  if (cl && !cl.error) bits.push('clients ' + ago(cl._age_seconds));
+  if (inv && !inv.error) bits.push('rules ' + ago(inv.age_seconds));
+  document.getElementById('meta').textContent = bits.join(' · ') || 'no data';
+}
+
+let CURRENT = 'overview';
+
+async function showTab(t, force){
+  CURRENT = t;
+  const el = document.getElementById(t);
+  const pending = (TAB_FEEDS[t] || []).some(k => force || !(k in LOADED));
+  if (pending && RENDER[t]) el.innerHTML = '<div class="empty">loading…</div>';
+  await need(TAB_FEEDS[t] || [], force);
+  stamp(); banners();
+  if (RENDER[t]) RENDER[t]();
+  if (t === 'buy') { await loadOrders(); renderBuy(); }
+}
+
 async function load(){
   document.getElementById('meta').textContent = 'loading…';
-  const [inv, cl, ib, aq, ob] = await Promise.all([
-    get('/api/invariants'), get('/api/clients'), get('/api/inboxes'),
-    get('/api/acquisition'), get('/api/onboarding')]);
-  DATA = {invariants: inv, clients: cl, inboxes: ib, acquisition: aq, onboarding: ob};
-  const bits = [];
-  if (!cl.error) bits.push('clients ' + ago(cl._age_seconds));
-  if (!inv.error) bits.push('rules ' + ago(inv.age_seconds));
-  document.getElementById('meta').textContent = bits.join(' · ') || 'no data';
-  banners(); renderOverview(); renderClients(); renderOnboarding(); renderInboxes(); renderAcquisition(); renderPools();
+  await showTab(CURRENT, true);
+  // Overview quotes one number off the other tabs. Fetch them after the page
+  // has painted, then repaint the cards — never before the first render.
+  if (CURRENT === 'overview') {
+    need(['inboxes', 'acquisition', 'onboarding']).then(() => {
+      if (CURRENT === 'overview') renderOverview();
+    });
+  }
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  // The Buy tab is the only one that is not loaded up front: its orders list
-  // is a live read, and nobody opening the Overview needs it.
-  if (b.dataset.t === 'buy') loadOrders().then(renderBuy);
   ['overview','clients','onboarding','inboxes','acquisition','buy','pools'].forEach(t =>
     document.getElementById(t).hidden = (t !== b.dataset.t));
+  showTab(b.dataset.t);
 });
-document.getElementById('reload').onclick = load;
+document.getElementById('reload').onclick = () => showTab(CURRENT, true);
 load();
 </script>
 </body>

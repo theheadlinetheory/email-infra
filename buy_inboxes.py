@@ -201,11 +201,28 @@ def _brand_roots(brand):
     return out or [re.sub(r"[^a-z0-9]+", "", b)]
 
 
-def suggest_client_domains(brand, count=12, tld="info", max_checks=None):
+def suggest_client_domains(brand, count=12, tld="info", max_checks=None,
+                           whole_brand_only=False):
     """Brand-derived custom domains for one client, seeded from their brand/real
     domain. Returns `count` that are actually available on Spaceship (with price).
-    Read-only — no spend. Mirrors suggest_generic but keeps the brand recognisable."""
+    Read-only — no spend. Mirrors suggest_generic but keeps the brand recognisable.
+
+    `whole_brand_only` keeps ONLY roots that carry every significant word of the
+    brand. _brand_roots deliberately also emits single words so a long name still
+    yields short-enough candidates, but for a two-word brand that produced
+    "headlineconnect", "theorytoday" and "gettheory" — names that are not the
+    brand at all (Tim, 2026-09-19). A domain we prospect from has to read as us.
+    """
     roots = _brand_roots(brand)
+    if whole_brand_only:
+        words = [w for w in re.split(r"[^a-z0-9]+", str(brand or "").lower())
+                 if w and w not in {"the", "and", "of", "a", "an", "for", "co", "inc", "llc"}]
+        if words:
+            whole = [r for r in roots if all(w in r for w in words)]
+            # Never fall back to the loose list: returning half-brand names is
+            # the exact thing this flag exists to prevent. Better to return the
+            # single full-brand root and fewer suggestions.
+            roots = whole or ["".join(words)]
     if not roots:
         return {"error": "client brand or domain required", "suggestions": []}
     tld = (tld or "info").lstrip(".").lower()

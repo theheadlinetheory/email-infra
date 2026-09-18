@@ -104,7 +104,7 @@ def test_auto_renewing_domain_is_not_lapsing():
 
 def test_followup_only_senders_are_called_out_as_in_use():
     r = av.build(_acq([_ib("a@x.co", "sending")], followup_only_inboxes=195), {}, TODAY)
-    assert any("follow-ups only" in n for n in r["notes"])
+    assert any("working through follow-ups" in n for n in r["notes"])
 
 
 def test_phantom_idle_is_reported_not_silently_dropped():
@@ -146,3 +146,29 @@ def test_an_unreadable_replacement_pool_is_not_an_empty_one():
     r = av.build(_acq(rows), {}, TODAY, replacement_pool=None)
     assert r["summary"]["replacement_pool"] is None
     assert not any("nothing to swap" in n for n in r["notes"])
+
+
+def test_in_use_counts_every_working_state_not_send_volume():
+    """Tim's rule: sending to new leads, sending follow-ups, or between
+    sequences all count as in use. The old ratio (sends/day over capacity/day)
+    called a follow-up sequence 'capacity we do not use'."""
+    rows = [_ib(f"s{n}@x.co", "sending") for n in range(97)]
+    rows += [_ib("free@x.co", "unassigned", sent=0)]
+    rows += [_ib("dead@x.co", "blocked")]
+    r = av.build(_acq(rows, followup_only_inboxes=90), {}, TODAY)
+    assert r["summary"]["in_use"] == 97
+    assert r["summary"]["usable"] == 98        # blocked is out of both sides
+    assert r["summary"]["in_use_pct"] == 99
+
+
+def test_a_blocked_inbox_is_not_counted_against_utilisation():
+    rows = [_ib("a@x.co", "sending"), _ib("b@x.co", "blocked", health="burned")]
+    r = av.build(_acq(rows), {}, TODAY)
+    assert r["summary"]["in_use_pct"] == 100
+
+
+def test_followup_only_is_described_as_working_not_as_waste():
+    r = av.build(_acq([_ib("a@x.co", "sending")], followup_only_inboxes=195), {}, TODAY)
+    note = " ".join(r["notes"])
+    assert "doing its job" in note and "need more leads" in note
+    assert "waste" not in note.replace("not waste", "")
