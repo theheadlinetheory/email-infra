@@ -52,8 +52,37 @@
   <div id="out" class="empty">loading…</div>
 </div>
 <script>
-const pw = new URLSearchParams(location.search).get('pw') || '';
-const q  = p => p + (pw ? (p.includes('?') ? '&' : '?') + 'pw=' + encodeURIComponent(pw) : '');
+// ── auth ────────────────────────────────────────────────────────────────
+// The password lives in a cookie, set once, exactly like the existing
+// dashboard. A ?pw= in the URL is accepted, immediately stored, and then
+// STRIPPED from the address bar — a password in a URL survives in browser
+// history, in screenshots, and in any link that gets forwarded.
+function cookie(name){
+  const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return m ? m[2] : '';
+}
+function setPw(v){
+  document.cookie = 'dashboard_pw=' + encodeURIComponent(v) + ';path=/;max-age=31536000;samesite=lax';
+}
+(function absorbUrlPw(){
+  const u = new URL(location.href);
+  const p = u.searchParams.get('pw');
+  if (p) {
+    setPw(p);
+    u.searchParams.delete('pw');
+    history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+  }
+})();
+async function api(path){
+  const r = await fetch(path, {credentials: 'same-origin'});
+  if (r.status === 401) {
+    const p = prompt('Dashboard password:');
+    if (p) { setPw(p); location.reload(); }
+    return {error: 'not signed in'};
+  }
+  const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
+  return r.ok ? j : {error: j.error || ('HTTP ' + r.status)};
+}
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
 function ago(s){
@@ -100,10 +129,9 @@ async function load(refresh){
   btn.disabled = true;
   if (refresh) btn.textContent = 'Running… ~80s';
   try {
-    const r = await fetch(q('/api/invariants' + (refresh ? '?refresh=1' : '')));
-    const d = await r.json();
-    if (!r.ok) {
-      document.getElementById('out').textContent = d.error || ('HTTP ' + r.status);
+    const d = await api('/api/invariants' + (refresh ? '?refresh=1' : ''));
+    if (d.error) {
+      document.getElementById('out').textContent = d.error;
       document.getElementById('out').className = 'empty';
     } else render(d);
   } catch (e) {
