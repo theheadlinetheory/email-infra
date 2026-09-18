@@ -254,11 +254,32 @@ function renderClients(){
   el.querySelectorAll('.cc').forEach(cardEl => {
     cardEl.onclick = () => openClient(cardEl, rows[+cardEl.dataset.i]);
   });
+  // Cards are on screen; now fetch the detail for all of them in the
+  // background so the first click does not wait.
+  prefetchClientDetail();
 }
 
-// Detail is fetched per card, not shipped with the list — sending every
-// client's inboxes and domains up front is what made /api/overview 1.64 MB.
+// Card detail.
+//
+// Every card used to fetch its own: the request re-walked Smartlead (29s),
+// Zapmail (9s, twice) and the health table (4s) — about fifty seconds per
+// click, and the same fifty again for the next card, because nothing was
+// shared. None of those reads is per-client, so the server now builds all of
+// them at once and caches it, and the page pulls that map ONCE in the
+// background after the cards paint. Clicking a card is then instant.
 const CDETAIL = {};
+let CDETAIL_ALL = null;
+
+function prefetchClientDetail(){
+  if (CDETAIL_ALL) return CDETAIL_ALL;
+  CDETAIL_ALL = get('/api/client-detail?all=1').then(r => {
+    if (!r.error && r.clients) Object.assign(CDETAIL, r.clients);
+    return r;
+  }).catch(() => null);
+  return CDETAIL_ALL;
+}
+
+const cnorm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function openClient(cardEl, row){
   const grid = document.getElementById('cgrid');
@@ -272,14 +293,21 @@ async function openClient(cardEl, row){
   const panel = document.createElement('div');
   panel.className = 'panel'; panel.id = 'cpanel'; panel.dataset.name = row.name;
   panel.innerHTML = '<div class="empty">loading…</div>';
+  panel.scrollIntoView({block: 'nearest', behavior: 'smooth'});
   // Insert after the last card in the same visual row so the panel opens
   // beneath the card you clicked rather than at the end of the grid.
   cardEl.insertAdjacentElement('afterend', panel);
 
-  let det = CDETAIL[row.name];
+  let det = CDETAIL[cnorm(row.name)] || CDETAIL[row.name];
+  if (!det) {
+    // The background pull has not landed yet — wait on it rather than firing a
+    // second request for the same data.
+    await prefetchClientDetail();
+    det = CDETAIL[cnorm(row.name)] || CDETAIL[row.name];
+  }
   if (!det) {
     det = await get('/api/client-detail?name=' + encodeURIComponent(row.name));
-    if (!det.error) CDETAIL[row.name] = det;
+    if (!det.error) CDETAIL[cnorm(row.name)] = det;
   }
   if (det.error) { panel.innerHTML = `<div class="empty">${esc(det.error)}</div>`; return; }
 
