@@ -49,7 +49,18 @@ DOMAIN_PRICE = {                    # est. first-year registration by TLD
     "xyz": 3, "online": 4, "site": 4, "us": 8,
 }
 DEFAULT_DOMAIN_PRICE = 15
-PROVIDERS = {"google": "GOOGLE", "outlook": "MICROSOFT"}
+# Google only. Outlook is not a configuration choice we have — the Microsoft
+# acquisition batch replied at roughly a quarter of the Google rate and was
+# retired on 2026-09-05, so the mapping no longer offers it and `plan` refuses
+# an order that asks for it rather than quietly substituting Google.
+PROVIDERS = {"google": "GOOGLE"}
+BANNED_PROVIDERS = {"outlook", "microsoft", "ms"}
+
+# Zapmail allows five mailboxes on a domain. Three is ours: one bounce pattern
+# takes out every mailbox on the domain, and the earliest-created one is an
+# admin that cannot be removed while its siblings remain, so a domain
+# overfilled today cannot be trimmed later.
+MAX_INBOXES_PER_DOMAIN = 3
 
 
 def _tld(d):
@@ -271,7 +282,15 @@ def plan(spec):
     owner = spec.get("owner", "acquisition")
     client_name = spec.get("client_name")
     provider = (spec.get("provider") or "google").lower()
-    per = max(1, int(spec.get("inboxes_per_domain") or 3))
+    if provider in BANNED_PROVIDERS:
+        return {"error": "Outlook inboxes are not provisioned — Google only.",
+                "ready_to_buy": False}
+    per = max(1, int(spec.get("inboxes_per_domain") or MAX_INBOXES_PER_DOMAIN))
+    if per > MAX_INBOXES_PER_DOMAIN:
+        return {"error": f"{per} mailboxes per domain; the cap is "
+                         f"{MAX_INBOXES_PER_DOMAIN}. The admin mailbox cannot be "
+                         "removed later while its siblings remain.",
+                "ready_to_buy": False}
     checked = check_domains(spec.get("domains") or [])["domains"]
     available = [c for c in checked if c["available"]]
     unavailable = [c for c in checked if c["available"] is False]
@@ -323,6 +342,8 @@ def buy_domains(spec, confirm=False):
     Zapmail, and open an order. Dry-run unless confirm=True. SPENDS on domains
     when confirm=True (the UI's Confirm click is the approval)."""
     p = plan(spec)
+    if p.get("error"):
+        return p
     available = [c["domain"] for c in p["domains_checked"] if c["available"]]
     if not available:
         return {"error": "no available domains to register", "plan": p}

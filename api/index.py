@@ -843,9 +843,18 @@ def buy_orders_route():
 
 @app.route("/api/buy-provision", methods=["POST", "OPTIONS"])
 def buy_provision_route():
-    """PHASE 2 — provision inboxes for an order once its domains' DNS has resolved.
-    Body {order_id, confirm}. For now returns the readiness/plan; real mailbox
-    creation is enabled after a single-domain test."""
+    """PHASE 2 — push an order as far towards live as it will go right now.
+
+    Body {order_id, confirm}. Without `confirm` it reports where the order
+    stands and what it would do next, and spends nothing.
+
+    This is deliberately RESUMABLE rather than long-running. DNS propagation,
+    Zapmail slot settlement and the SmartLead export are all unbounded waits,
+    and Vercel stops a function at 300s. So each call does what it can now,
+    journals it onto the order, and answers `resume: true` if it wants calling
+    again. `resume` is the normal answer for the first hour of an order's life;
+    it is not an error.
+    """
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
     if not _check_auth():
@@ -858,14 +867,34 @@ def buy_provision_route():
         return _cors(jsonify({"error": "order_id required"})), 400
     try:
         import buy_inboxes as bi
-        ready = bi.order_readiness(int(oid))
-        if ready.get("error"):
-            return _cors(jsonify(ready)), 400
-        # Execution wiring lands after the single-domain test; surface the plan now.
-        ready["note"] = ("Provisioning execution is being validated on a test domain "
-                         "before it spends — DNS readiness shown above.")
-        ready["provision_enabled"] = False
-        return _cors(jsonify(ready))
+        import buy_provision as bp
+
+        orders = bi._orders()
+        order = next((o for o in orders if o.get("id") == int(oid)), None)
+        if not order:
+            return _cors(jsonify({"error": "order not found"})), 400
+
+        # The rules are checked even on the dry run, so an order that can never
+        # be provisioned says so before anyone clicks the spending button.
+        try:
+            bp.check_order(order)
+        except bp.ProvisionRefused as e:
+            return _cors(jsonify({"error": str(e), "refused": True})), 400
+
+        if not body.get("confirm"):
+            ready = bi.order_readiness(int(oid))
+            ready["step"] = (order.get("journal") or {}).get("step", "dns")
+            ready["provision_enabled"] = True
+            ready["note"] = ("Dry run. Confirm to create mailboxes, hand them to "
+                             "SmartLead, tag them and start warm-up. Nothing has "
+                             "been spent.")
+            return _cors(jsonify(ready))
+
+        res = bp.advance(order, bp.LiveIO())
+        # Save before answering: a response the caller never receives must not
+        # cost us the record of what was already created.
+        bi._save_orders(orders)
+        return _cors(jsonify(res))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
