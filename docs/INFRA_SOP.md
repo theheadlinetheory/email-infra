@@ -193,3 +193,40 @@ why a 2-month engagement spans 3 billing cycles.
 | Sweep forwarding after any bulk re-tag | 38 live domains pointed at the wrong company |
 | Never let an "assumed" term reach a deadline | Wonderly's decision date was a month late |
 | Registrar is the kill switch, not Zapmail | Zapmail's `autoRenew` reads false on all 897 domains |
+
+
+---
+
+# Appendix — the multi-step routes, and what happens if one dies mid-run
+
+Three routes do several irreversible things in a row. A request that dies part
+way through any of them used to leave work half-done with nothing recording how
+far it got. Audited 2026-09-19; here is where each one actually stands.
+
+| Route | Resumable? | How |
+|---|---|---|
+| `finalize-generic-group` | **yes** | Persists `phase` plus `_processed_ids`, written after **every** account. A re-run skips what is done and logs `Resuming: N already done`. |
+| `assign-generic-to-client` | **yes** (added 2026-09-19) | Journals each tagged account id, keyed on group + client + A/B slot. Re-run does the remainder; the response reports `resumed_from`. Journal is cleared on a fully verified conversion. |
+| `group/setup-domain` | **idempotent, not resumable** | Re-reads the domain's live mailboxes and skips creation when three already exist, so a re-run cannot double-create. But it still `sleep`s in-request waiting for a Zapmail wallet top-off (up to 60s+) and for slot propagation, which can exceed Vercel's 300s limit on a bad day. |
+
+## Why `setup-domain` is left as it is
+
+It is the **old** create-group wizard's step. The new Buy flow does this work in
+`buy_provision.py`, which never sleeps for propagation — it does what it can
+now, journals it, and asks to be called again. That is the pattern to use for
+anything new.
+
+Rewriting `setup-domain` to match would mean reworking a wizard that currently
+works, for a failure mode its idempotency already makes safe (you re-run the
+domain and it picks up). The exposure is a wasted request, not wasted money or
+a corrupted group.
+
+> If you see `setup-domain` time out: just run it again for that domain. It will
+> find the mailboxes it already created and carry on.
+
+## The rule for anything new
+
+Never sleep in a request waiting for someone else's system. Do what is possible
+now, write down what you did, and answer "call me again". DNS propagation,
+Zapmail wallet settlement and Smartlead's export are all unbounded waits, and
+the function limit is not.
