@@ -53,6 +53,34 @@
              border-radius:6px;padding:5px 12px;font:inherit;font-size:12px;cursor:pointer}
   button.act:hover{border-color:var(--accent)}
   .wrap{overflow-x:auto}
+  /* Client cards. A roster you scan, not a spreadsheet you parse. */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+  .cc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 15px;
+      cursor:pointer;transition:border-color .12s,transform .12s}
+  .cc:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .cc.open{border-color:var(--accent)}
+  .cc .nm{font-size:13.5px;font-weight:600;margin-bottom:2px;white-space:nowrap;
+          overflow:hidden;text-overflow:ellipsis}
+  .cc .sub{color:var(--dim);font-size:11px;margin-bottom:10px}
+  .cc .big{font-size:26px;font-variant-numeric:tabular-nums;line-height:1}
+  .cc .big small{font-size:12px;color:var(--dim);font-weight:400}
+  .cc .foot{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:11px;color:var(--dim);
+            flex-wrap:wrap}
+  .bar{height:4px;border-radius:3px;background:var(--line2);overflow:hidden;margin-top:9px}
+  .bar i{display:block;height:100%;background:var(--ok)}
+  .bar i.short{background:var(--warn)} .bar i.over{background:var(--bad)}
+  .chip{font-size:10.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--line2)}
+  .chip.ok{color:var(--ok);border-color:#1d4429} .chip.warn{color:var(--warn);border-color:#5a4512}
+  .chip.bad{color:var(--bad);border-color:#5e2626}
+  .panel{grid-column:1/-1;background:#12171e;border:1px solid var(--line2);border-radius:10px;
+         padding:16px 18px;margin-top:-2px}
+  .panel h3{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;
+            margin:16px 0 8px;font-weight:600}
+  .panel h3:first-child{margin-top:0}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+  .fact .k{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em}
+  .fact .v{font-size:15px;margin-top:3px;font-variant-numeric:tabular-nums}
+  .mono{font:inherit;font-size:11.5px;color:var(--dim);line-height:1.7;word-break:break-all}
 </style>
 </head>
 <body>
@@ -187,41 +215,136 @@ function renderClients(){
   const d = DATA.clients || {};
   const el = document.getElementById('clients');
   if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
-  const rows = (d.clients || []).map(c => {
-    const tgt = c.exempt ? '<span class="tag">free</span>' : c.target;
-    const dl = c.exempt ? '' :
-      (c.delta === 0 ? '<span class="good">0</span>'
-        : `<span class="bad">${c.delta > 0 ? '+' : ''}${c.delta}</span>`);
+  const rows = d.clients || [];
+  const s = d.summary || {};
+
+  let html = '<div class="cards">'
+    + card('Active clients', s.active_clients ?? '\u2013')
+    + card('Client inboxes', s.inboxes ?? '\u2013')
+    + card('Monthly cost', s.monthly_cost != null ? money(s.monthly_cost) : '\u2013')
+    + card('Off target', s.off_target ?? '\u2013', s.off_target ? 'warn' : 'ok')
+    + card('Decisions \u226430d', s.decisions_due_30d ?? '\u2013', s.decisions_due_30d ? 'warn' : '')
+    + '</div>';
+
+  html += `<h2>Clients \u2014 ${rows.length}</h2><div class="grid" id="cgrid">`;
+  rows.forEach((c, i) => {
+    const held = c.inboxes || 0, tgt = c.target;
+    const pct = tgt ? Math.min(100, Math.round(100 * held / tgt)) : 100;
+    const cls = !tgt ? '' : held < tgt ? 'short' : held > tgt ? 'over' : '';
     const days = c.days_to_decision;
-    const when = c.decide_by
-      ? `${c.decide_by}${days != null ? ` <span class="dim">(${days}d)</span>` : ''}`
-      : '<span class="dim">—</span>';
-    const basis = c.term_is_a_guess
-      ? `<span class="warn">${esc(c.term_basis)}</span>` : `<span class="dim">${esc(c.term_basis || '')}</span>`;
-    // A free account shows no dates at all: there is no contract to run out.
-    return `<tr>
-      <td>${esc(c.name)}${c.seasonal ? ' <span class="tag">seasonal</span>' : ''}</td>
-      <td class="n">${c.inboxes}</td><td class="n">${tgt}</td><td class="n">${dl}</td>
-      <td class="n dim">${c.monthly_cost != null ? money(c.monthly_cost) : ''}</td>
-      <td>${esc(c.term_ends || '—')}</td><td>${when}</td><td>${esc(c.hard_stop || '—')}</td>
-      <td>${basis}</td></tr>`;
-  }).join('');
-  el.innerHTML = `<h2>Active clients — ${(d.clients || []).length}</h2>
-    <div class="wrap"><table>
-      <tr><th>Client</th><th>Inboxes</th><th>Target</th><th>Δ</th><th>$/mo</th>
-          <th>Term ends</th><th>Decide by</th><th>Hard stop</th><th>Term basis</th></tr>
-      ${rows}</table></div>
-    <div class="meta" style="margin-top:10px">Renewal dates come from the contracted term in the CRM.
-      A highlighted basis means the term was assumed, not recorded — that deadline is a guess.</div>`;
+    const when = c.exempt ? '<span class="chip">free</span>'
+      : c.decide_by
+        ? `<span class="chip ${days != null && days <= 30 ? 'warn' : ''}">decide ${esc(c.decide_by)}</span>`
+        : '<span class="chip">no date</span>';
+    html += `<div class="cc" data-i="${i}" data-name="${esc(c.name)}">
+        <div class="nm" title="${esc(c.name)}">${esc(c.name)}</div>
+        <div class="sub">${esc(c.billing_model || '')}${c.seasonal ? ' \u00b7 seasonal' : ''}</div>
+        <div class="big">${held}${tgt ? ` <small>/ ${tgt}</small>` : ''}</div>
+        <div class="bar"><i class="${cls}" style="width:${pct}%"></i></div>
+        <div class="foot">
+          <span>${c.monthly_cost != null ? money(c.monthly_cost) + '/mo' : ''}</span>
+          ${when}
+          ${c.term_is_a_guess ? '<span class="chip warn">term assumed</span>' : ''}
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+  el.innerHTML = html;
+
+  el.querySelectorAll('.cc').forEach(cardEl => {
+    cardEl.onclick = () => openClient(cardEl, rows[+cardEl.dataset.i]);
+  });
 }
 
-// ── Onboarding ─────────────────────────────────────────────────────────
-// The CRM decides who is a client; this says what infrastructure still owes
-// them. It reports and never acts: buying inboxes and setting forwarding both
-// cost money or move live sending, so the buttons stay on the tabs that own
-// them. A screen that silently fixed things is a screen you cannot trust to
-// tell you what is wrong.
-const STEP_TAB = {infra: 'buy', target: 'buy', forwarding: 'clients', launch: null};
+// Detail is fetched per card, not shipped with the list — sending every
+// client's inboxes and domains up front is what made /api/overview 1.64 MB.
+const CDETAIL = {};
+
+async function openClient(cardEl, row){
+  const grid = document.getElementById('cgrid');
+  const existing = document.getElementById('cpanel');
+  const same = existing && existing.dataset.name === row.name;
+  if (existing) existing.remove();
+  grid.querySelectorAll('.cc').forEach(x => x.classList.remove('open'));
+  if (same) return;                       // second click closes it
+
+  cardEl.classList.add('open');
+  const panel = document.createElement('div');
+  panel.className = 'panel'; panel.id = 'cpanel'; panel.dataset.name = row.name;
+  panel.innerHTML = '<div class="empty">loading…</div>';
+  // Insert after the last card in the same visual row so the panel opens
+  // beneath the card you clicked rather than at the end of the grid.
+  cardEl.insertAdjacentElement('afterend', panel);
+
+  let det = CDETAIL[row.name];
+  if (!det) {
+    det = await get('/api/client-detail?name=' + encodeURIComponent(row.name));
+    if (!det.error) CDETAIL[row.name] = det;
+  }
+  if (det.error) { panel.innerHTML = `<div class="empty">${esc(det.error)}</div>`; return; }
+
+  const doms = det.domains || {};
+  const ded = doms.dedicated || [], sh = doms.shared || [], pool = doms.pool || [];
+  const fact = (k, v) => `<div class="fact"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const dash = '<span class="dim">\u2014</span>';
+
+  let h = `<div class="facts">
+      ${fact('Inboxes', det.inbox_count ?? dash)}
+      ${fact('Domains', det.domain_count ?? dash)}
+      ${fact('Per month', det.monthly_cost != null ? money(det.monthly_cost) : dash)}
+      ${fact('Per year', det.yearly_cost != null ? money(det.yearly_cost) : dash)}
+      ${fact('Term ends', det.term_ends ? esc(det.term_ends) : dash)}
+      ${fact('Decide by', det.decide_by
+          ? `${esc(det.decide_by)}${det.days_to_decision != null
+              ? ` <span class="dim" style="font-size:12px">(${det.days_to_decision}d)</span>` : ''}`
+          : dash)}
+      ${fact('Hard stop', det.hard_stop ? esc(det.hard_stop) : dash)}
+      ${fact('Launched', det.launch_date ? esc(det.launch_date) : dash)}
+    </div>`;
+
+  if (det.term_basis)
+    h += `<div class="meta" style="margin-top:10px">Term basis: ${esc(det.term_basis)}${
+      det.website ? ' \u00b7 forwards to ' + esc(det.website) : ''}</div>`;
+
+  h += `<h3>Domains \u2014 ${det.domain_count ?? 0}</h3>`;
+  if (ded.length) h += `<div class="mono">${ded.map(esc).join(' \u00b7 ')}</div>`;
+  if (sh.length) h += `<h3>Shared with another client \u2014 ${sh.length}</h3>
+    <div class="mono">${sh.map(esc).join(' \u00b7 ')}</div>
+    <div class="meta">A shared domain forwards to one place only, so its senders
+      can point at the wrong company.</div>`;
+  if (pool.length) h += `<h3>From a pool \u2014 ${pool.length}</h3>
+    <div class="mono">${pool.map(esc).join(' \u00b7 ')}</div>`;
+
+  h += `<h3>Inboxes \u2014 ${det.inbox_count ?? 0}</h3>`;
+  if (det.inboxes_unreadable) {
+    h += `<div class="banner">The inbox list could not be read, so it is not shown.
+      That is not the same as this client having none \u2014 the count above says
+      ${det.inbox_count}.</div>`;
+  } else if (!(det.inboxes || []).length) {
+    h += '<div class="empty">No inboxes found for this client.</div>';
+  } else {
+    const bad = det.inboxes.filter(i => i.health === 'burned');
+    if (bad.length) h += `<div class="banner">${bad.length} burned \u2014 replace from the Inboxes tab.</div>`;
+    h += `<div class="wrap"><table>
+      <tr><th>Inbox</th><th>Domain</th><th>Created</th><th>Health</th></tr>
+      ${det.inboxes.map(i => `<tr><td>${esc(i.email)}</td><td class="dim">${esc(i.domain || '')}</td>
+        <td class="dim">${esc(i.created || '')}</td>
+        <td class="${i.health === 'burned' ? 'bad' : i.health === 'at_risk' ? 'warn' : 'dim'}">${esc(i.health || '')}</td>
+      </tr>`).join('')}</table></div>`;
+  }
+
+  if ((det.cohorts || []).length > 1)
+    h += `<h3>Billing cohorts \u2014 ${det.cohorts.length}</h3>
+      <div class="meta">Bought on different days, so they bill on different days.</div>
+      <div class="wrap"><table>
+        <tr><th>Created</th><th>Inboxes</th><th>$/mo</th><th>Next bill</th><th>Hard stop</th></tr>
+        ${det.cohorts.map(c => `<tr><td>${esc(c.created)}</td><td class="n">${c.mailboxes}</td>
+          <td class="n dim">${money(c.monthly_cost)}</td><td>${esc(c.next_bill || '')}</td>
+          <td>${esc(c.hard_stop || '')}</td></tr>`).join('')}
+      </table></div>`;
+
+  panel.innerHTML = h;
+}
 
 function renderOnboarding(){
   const d = DATA.onboarding || {};
@@ -402,12 +525,18 @@ function renderInboxes(){
   if ((d.jobs || []).length)
     html += `<h2>Replacements in flight — ${d.jobs.length}</h2>
       <div class="wrap"><table>
-        <tr><th>Burned inbox</th><th>Replacement</th><th>Stage</th><th></th></tr>
-        ${d.jobs.map(j => `<tr><td>${esc(j.email)}</td>
-          <td class="dim">${esc(j.replacement || j.new_domain || '—')}</td>
-          <td>${esc(j.stage || j.status || '')}</td>
-          <td><button class="act" data-adv="${j.id}" data-act="swap">Swap in</button></td></tr>`).join('')}
-      </table></div>`;
+        <tr><th>Burned inbox</th><th>Client</th><th>Replacement</th><th>Stage</th><th>Ready</th><th></th></tr>
+        ${d.jobs.map(j => `<tr><td>${esc(j.email || '')}</td>
+          <td class="dim">${esc(j.client || '')}</td>
+          <td class="dim">${esc(j.replacement || '—')}</td>
+          <td class="${j.stage === 'reserved' ? 'warn' : 'dim'}">${esc(j.stage || '')}</td>
+          <td class="n dim">${j.ready ? '<span class="good">yes</span>'
+                                       : (j.days_left != null ? j.days_left + 'd' : '—')}</td>
+          <td>${j.ready ? `<button class="act" data-adv="${j.id}" data-act="swap">Swap in</button>`
+                        : '<span class="dim">still warming</span>'}</td></tr>`).join('')}
+      </table></div>
+      <div class="meta" style="margin-top:8px">Only jobs still needing something are listed —
+        swapped and cancelled ones are history. A replacement warms for 14 days before it can go in.</div>`;
 
   if (dead.length)
     html += `<h2>Burned but already cancelled — ${dead.length}</h2>
