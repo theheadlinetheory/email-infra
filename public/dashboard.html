@@ -513,14 +513,23 @@ function renderInboxes(){
   if (!act.length) {
     html += '<div class="empty">Nothing burned on a live client.</div>';
   } else {
+    const rs = d.reserve_by_niche || {};
+    const avail = rs.available_by_niche || {};
     html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
-        <button class="act" id="rp-check">1 · Check positive replies</button>
-        <button class="act" id="rp-flag" disabled>2 · Flag for replacement</button>
-        <button class="act" id="rp-cancel" disabled>4 · Schedule Zapmail removal</button>
+        <button class="act" id="rp-check">1 · Check replies</button>
+        <button class="act" id="rp-realloc" disabled>2 · Reallocate now</button>
+        <button class="act" id="rp-flag" disabled>2b · Flag &amp; warm instead</button>
+        <button class="act" id="rp-cancel" disabled>3 · Schedule Zapmail removal</button>
         <span class="dim" id="rp-sel">0 selected</span>
         <span style="flex:1"></span>
         <button class="act" id="rp-all">Select all</button>
       </div>
+      <div class="meta" style="margin:-4px 0 10px">Reserve ready:
+        ${Object.entries(avail).map(([k, v]) =>
+          `<span class="chip ${v ? 'ok' : 'bad'}">${esc(k)} ${v}</span>`).join(' ')}
+        \u00b7 <b>Reallocate now</b> swaps a ready reserve inbox straight into the campaign.
+        <b>Flag &amp; warm</b> is for when no matching reserve exists \u2014 it claims one and
+        warms it for 14 days first.</div>
       <div id="rp-out"></div>
       <div class="wrap"><table>
       <tr><th style="width:28px"></th><th>Inbox</th><th>Client</th><th>Domain type</th>
@@ -537,6 +546,25 @@ function renderInboxes(){
       the replacement still goes in, so the campaign gets its capacity back. After a swap,
       hit <b>Reallocate Mailboxes</b> on the campaign in SmartLead; there is no API for that step.</div>`;
   }
+
+  // The step SmartLead gives no API for. A swap is not finished until someone
+  // clicks Reallocate on the campaign, and until then it is sending from a set
+  // of mailboxes that no longer matches what is tagged.
+  const rq = (d.reallocate_queue || {}).campaigns || [];
+  if (rq.length)
+    html += `<h2 class="warn">Waiting on a manual Reallocate in SmartLead \u2014 ${rq.length}</h2>
+      <div class="wrap"><table>
+        <tr><th>Campaign</th><th>Status</th><th></th></tr>
+        ${rq.map(c => `<tr>
+          <td>${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener"
+                 style="color:var(--accent)">${esc(c.name)}</a>` : esc(c.name)}</td>
+          <td class="${c.status === 'ACTIVE' ? 'good' : 'dim'}">${esc(c.status || '')}</td>
+          <td><button class="act" data-realdone="${esc(c.name)}">Done \u2014 tick off</button></td>
+        </tr>`).join('')}
+      </table></div>
+      <div class="meta" style="margin-top:8px">Open the campaign, hit <b>Reallocate mailboxes</b>,
+        then tick it off here. Only ACTIVE campaigns are listed \u2014 reallocating a paused one
+        does nothing.</div>`;
 
   if ((d.holds || []).length)
     html += `<h2>Held — owns a positive reply — ${d.holds.length}</h2>
@@ -918,6 +946,7 @@ function wireReplace(act){
   const sel = document.getElementById('rp-sel');
   const flag = document.getElementById('rp-flag');
   const canc = document.getElementById('rp-cancel');
+  const realloc = document.getElementById('rp-realloc');
   if (!sel) return;
   const sync = () => {
     const n = rpSelected().length;
@@ -925,6 +954,7 @@ function wireReplace(act){
     // Flagging stays locked until positives have been checked for THIS
     // selection. The old flow's safety was the order, not the buttons.
     flag.disabled = !(n && RP_CHECKED);
+    if (realloc) realloc.disabled = !(n && RP_CHECKED);
     canc.disabled = !n;
   };
   document.querySelectorAll('input.rp').forEach(c => c.onchange = () => { RP_CHECKED = false; sync(); });
@@ -952,6 +982,26 @@ function wireReplace(act){
       ' own a positive reply and will be HELD in their campaign — the replacement still goes in, '
       + 'so capacity comes back. The rest can be swapped out.'
       : 'None own a positive reply. All ' + emails.length + ' can be swapped out.'}</div>`);
+  };
+
+  document.getElementById('rp-realloc').onclick = async () => {
+    const emails = rpSelected();
+    rpNote('<div class="meta">checking reserve…</div>');
+    // Dry run first — it reports whether there is matching reserve for each
+    // niche before anything moves.
+    const dry = await post('/api/health-reallocate', {emails});
+    if (dry.error) return rpNote(`<div class="banner">${esc(dry.error)}</div>`);
+    const n = dry.reallocatable ?? emails.length;
+    if (!confirm(`Reallocate ${n} inbox(es)?\n\n`
+               + `Each is removed from its ACTIVE campaign and a niche-matched reserve `
+               + `inbox goes in. After this you must hit Reallocate mailboxes on the `
+               + `campaign in SmartLead — the checklist below will show which.`)) return;
+    rpNote('<div class="meta">reallocating…</div>');
+    const r = await post('/api/health-reallocate', {emails, confirm: true});
+    rpNote(r.error ? `<div class="banner">${esc(r.error)}</div>`
+                   : `<div class="banner">Reallocated ${r.reallocated ?? n}. Now hit
+                      <b>Reallocate mailboxes</b> on the campaigns listed below.</div>`);
+    showTab('inboxes', true);
   };
 
   document.getElementById('rp-flag').onclick = async () => {
@@ -986,6 +1036,10 @@ function wireReplace(act){
   document.querySelectorAll('button[data-rel]').forEach(b => b.onclick = async () => {
     if (!confirm('Detach this inbox from the campaign? Do this only after the reply has been worked.')) return;
     await post('/api/health-positive-release', {key: b.dataset.rel, confirm: true});
+    showTab('inboxes', true);
+  });
+  document.querySelectorAll('button[data-realdone]').forEach(b => b.onclick = async () => {
+    await post('/api/health-reallocate-campaigns', {done: b.dataset.realdone});
     showTab('inboxes', true);
   });
   document.querySelectorAll('button[data-adv]').forEach(b => b.onclick = async () => {
