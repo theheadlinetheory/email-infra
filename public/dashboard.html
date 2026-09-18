@@ -68,6 +68,7 @@
     <button data-t="clients">Clients</button>
     <button data-t="inboxes">Inboxes</button>
     <button data-t="acquisition">Acquisition</button>
+    <button data-t="buy">Buy</button>
     <button data-t="pools">Pools</button>
   </nav>
 </div>
@@ -77,6 +78,7 @@
   <div id="clients" hidden></div>
   <div id="inboxes" hidden></div>
   <div id="acquisition" hidden></div>
+  <div id="buy" hidden></div>
   <div id="pools" hidden></div>
 </main>
 <script>
@@ -110,6 +112,14 @@ async function api(path){
   }
   const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
   return r.ok ? j : {error: j.error || ('HTTP ' + r.status)};
+}
+async function post(path, body){
+  const r = await fetch(path, {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  if (r.status === 401) { const p = prompt('Dashboard password:'); if (p) { setPw(p); location.reload(); }
+    return {error: 'not signed in'}; }
+  const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
+  return r.ok ? j : {error: j.error || ('HTTP ' + r.status), refused: j.refused};
 }
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const money = n => '$' + Number(n || 0).toLocaleString();
@@ -339,6 +349,205 @@ function renderAcquisition(){
   el.innerHTML = html;
 }
 
+// ── Buy ────────────────────────────────────────────────────────────────
+// Three phases, and the money moves only in the middle one. Suggest and plan
+// spend nothing; "Register" spends on domains; "Provision" spends on mailbox
+// slots. Each spending button states the figure before it is pressed.
+//
+// Google only — there is no Outlook option here, and the API refuses one even
+// if a request is hand-made.
+const BUY = {suggest: [], chosen: new Set(), plan: null, orders: [], busy: false};
+
+function buyChrome(){
+  return `<h2>1 · Find domains</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <select id="b-owner" class="act">
+        <option value="acquisition">Acquisition (ours)</option>
+        <option value="client">A client</option>
+      </select>
+      <input id="b-client" class="act" placeholder="client name" style="display:none">
+      <select id="b-theme" class="act">
+        <option value="">Generic service</option>
+        <option value="hvac">HVAC</option>
+        <option value="plumbing">Plumbing</option>
+        <option value="landscaping">Landscaping</option>
+      </select>
+      <select id="b-tld" class="act"><option>info</option><option>co</option><option>com</option></select>
+      <input id="b-count" class="act" type="number" value="12" min="1" max="40" style="width:70px">
+      <button class="act" id="b-suggest">Suggest</button>
+      <span class="dim">or</span>
+      <input id="b-manual" class="act" placeholder="your-own-domain.info" style="min-width:220px">
+      <button class="act" id="b-add">Add</button>
+    </div>
+    <div id="b-suggestions"></div>
+    <div id="b-plan"></div>
+    <h2>Orders</h2><div id="b-orders"></div>
+    <div class="meta" style="margin-top:10px">Google mailboxes only, three per domain.
+      Provisioning resumes across calls — DNS can take an hour, and a request that
+      returns "resume" is waiting, not failing.</div>`;
+}
+
+function renderBuy(){
+  const el = document.getElementById('buy');
+  if (!el.dataset.built) { el.innerHTML = buyChrome(); el.dataset.built = '1'; wireBuy(); }
+  renderSuggestions(); renderPlan(); renderOrders();
+}
+
+function renderSuggestions(){
+  const d = document.getElementById('b-suggestions');
+  if (!d) return;
+  if (!BUY.suggest.length) { d.innerHTML = '<div class="empty">No candidates yet.</div>'; return; }
+  d.innerHTML = `<div class="wrap"><table>
+    <tr><th></th><th>Domain</th><th>First year</th></tr>
+    ${BUY.suggest.map(x => `<tr><td><input type="checkbox" data-d="${esc(x.domain)}"
+        ${BUY.chosen.has(x.domain) ? 'checked' : ''}></td>
+      <td>${esc(x.domain)}</td><td class="n dim">${money(x.price)}</td></tr>`).join('')}
+    </table></div>
+    <div style="margin-top:10px"><button class="act" id="b-plan-btn">Price it up</button>
+      <span class="dim" id="b-chosen">${BUY.chosen.size} selected</span></div>`;
+  d.querySelectorAll('input[type=checkbox]').forEach(cb => cb.onchange = () => {
+    cb.checked ? BUY.chosen.add(cb.dataset.d) : BUY.chosen.delete(cb.dataset.d);
+    document.getElementById('b-chosen').textContent = BUY.chosen.size + ' selected';
+  });
+  document.getElementById('b-plan-btn').onclick = doPlan;
+}
+
+function renderPlan(){
+  const d = document.getElementById('b-plan'); if (!d) return;
+  const p = BUY.plan;
+  if (!p) { d.innerHTML = ''; return; }
+  if (p.error) { d.innerHTML = `<div class="banner">${esc(p.error)}</div>`; return; }
+  const c = p.cost || {}, n = p.counts || {};
+  d.innerHTML = `<h2>2 · What it costs</h2>
+    <div class="cards">
+      ${card('Domains available', n.available ?? 0)}
+      ${card('Mailboxes', n.mailboxes ?? 0)}
+      ${card('Domains, once', money(c.domains_onetime))}
+      ${card('Mailboxes / mo', money(c.mailboxes_monthly))}
+      ${card('First month', money(c.first_month_total), 'warn')}
+    </div>
+    ${n.unavailable ? `<div class="banner">${n.unavailable} taken, ${n.unknown || 0} unknown — those are dropped.</div>` : ''}
+    <button class="act" id="b-buy" ${p.ready_to_buy ? '' : 'disabled'}>
+      Register ${n.available ?? 0} domain(s) — ${money(c.domains_onetime)} now</button>
+    <span class="dim"> Mailboxes are bought later, at provisioning.</span>`;
+  const b = document.getElementById('b-buy');
+  if (b) b.onclick = doBuy;
+}
+
+function renderOrders(){
+  const d = document.getElementById('b-orders'); if (!d) return;
+  if (!BUY.orders.length) { d.innerHTML = '<div class="empty">No orders yet.</div>'; return; }
+  d.innerHTML = BUY.orders.map(o => {
+    const j = o.journal || {};
+    const step = j.step || (o.status === 'live' ? 'done' : 'dns');
+    const r = o.readiness || {};
+    const ready = r.ready_count != null ? `${r.ready_count}/${(r.domains || []).length} DNS ready` : '';
+    return `<div class="c" style="margin-bottom:10px">
+      <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <b>Order ${o.id}</b>
+        <span class="tag">${esc(o.client_name || o.owner)}</span>
+        <span class="tag">${esc(o.provider || 'GOOGLE')}</span>
+        <span class="${step === 'done' ? 'good' : 'warn'}">${esc(step)}</span>
+        <span class="dim">${(o.domains || []).length} domains · ${ready}</span>
+        <span style="flex:1"></span>
+        ${step === 'done' ? '' :
+          `<button class="act" data-prov="${o.id}">Provision now</button>`}
+      </div>
+      <div class="dim" style="margin-top:6px;font-size:11.5px">${(o.domains || []).join(', ')}</div>
+      ${j.blocked_reason ? `<div class="viol" style="margin-left:0">${esc(j.blocked_reason)}</div>` : ''}
+      ${(j.log || []).length ? `<div class="dim" style="margin-top:6px;font-size:11px">${
+        (j.log || []).slice(-6).map(l => esc(l)).join('<br>')}</div>` : ''}
+    </div>`;
+  }).join('');
+  d.querySelectorAll('button[data-prov]').forEach(b => b.onclick = () => doProvision(b.dataset.prov, b));
+}
+
+function wireBuy(){
+  document.getElementById('b-owner').onchange = e => {
+    document.getElementById('b-client').style.display = e.target.value === 'client' ? '' : 'none';
+  };
+  document.getElementById('b-suggest').onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = 'checking…';
+    const body = {count: +document.getElementById('b-count').value || 12,
+                  tld: document.getElementById('b-tld').value,
+                  theme: document.getElementById('b-theme').value || undefined};
+    const owner = document.getElementById('b-owner').value;
+    const cn = (document.getElementById('b-client').value || '').trim();
+    if (owner === 'client' && cn) body.brand = cn;
+    const r = await post('/api/buy-suggest', body);
+    e.target.disabled = false; e.target.textContent = 'Suggest';
+    BUY.suggest = r.suggestions || [];
+    if (r.error) BUY.plan = {error: r.error};
+    renderSuggestions(); renderPlan();
+  };
+  document.getElementById('b-add').onclick = () => {
+    const v = (document.getElementById('b-manual').value || '').trim().toLowerCase();
+    if (!v) return;
+    if (!BUY.suggest.some(x => x.domain === v)) BUY.suggest.unshift({domain: v, price: 0});
+    BUY.chosen.add(v);
+    document.getElementById('b-manual').value = '';
+    renderSuggestions();
+  };
+}
+
+function buySpec(){
+  const owner = document.getElementById('b-owner').value;
+  return {owner, client_name: owner === 'client'
+            ? (document.getElementById('b-client').value || '').trim() : null,
+          provider: 'google', inboxes_per_domain: 3,
+          domains: [...BUY.chosen]};
+}
+
+async function doPlan(){
+  if (!BUY.chosen.size) return;
+  BUY.plan = {error: 'checking availability…'}; renderPlan();
+  BUY.plan = await post('/api/buy-plan', buySpec());
+  renderPlan();
+}
+
+async function doBuy(){
+  const p = BUY.plan || {}, c = p.cost || {}, n = p.counts || {};
+  if (!confirm(`Register ${n.available} domain(s) for ${money(c.domains_onetime)}?\n\n`
+             + `This spends money now. Mailboxes (${money(c.mailboxes_monthly)}/mo) are `
+             + `bought later, when you press Provision.`)) return;
+  const b = document.getElementById('b-buy');
+  b.disabled = true; b.textContent = 'registering…';
+  const r = await post('/api/buy-domains', {...buySpec(), confirm: true});
+  if (r.error) { alert(r.error); b.disabled = false; b.textContent = 'Register'; return; }
+  BUY.chosen.clear(); BUY.plan = null;
+  await loadOrders(); renderBuy();
+}
+
+// Provisioning answers `resume: true` while DNS propagates or an export
+// settles. That is the normal state for the first hour, so the button keeps
+// asking on a timer rather than making someone click twenty times — and stops
+// the moment the order is done or genuinely blocked.
+async function doProvision(id, btn){
+  if (BUY.busy) return;
+  BUY.busy = true;
+  const dry = await post('/api/buy-provision', {order_id: +id});
+  if (dry.error) { alert(dry.error); BUY.busy = false; return; }
+  if (!confirm(`Provision order ${id}?\n\n${dry.ready_count ?? 0} of `
+             + `${(dry.domains || []).length} domains have DNS ready. This buys mailbox `
+             + `slots ($3/mailbox/month) and starts 14 days of warm-up.`)) { BUY.busy = false; return; }
+  let tries = 0;
+  const tick = async () => {
+    btn.textContent = `working… (${++tries})`;
+    const r = await post('/api/buy-provision', {order_id: +id, confirm: true});
+    await loadOrders(); renderOrders();
+    if (r.error) { alert(r.error); BUY.busy = false; return; }
+    if (r.done) { BUY.busy = false; return; }
+    if (!r.resume) { BUY.busy = false; return; }   // blocked; the reason is on the order
+    setTimeout(tick, 30000);
+  };
+  tick();
+}
+
+async function loadOrders(){
+  const r = await get('/api/buy-orders');
+  BUY.orders = r.orders || [];
+}
+
 function renderPools(){
   const d = DATA.clients || {};
   const el = document.getElementById('pools');
@@ -376,7 +585,10 @@ async function load(){
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  ['overview','clients','inboxes','acquisition','pools'].forEach(t =>
+  // The Buy tab is the only one that is not loaded up front: its orders list
+  // is a live read, and nobody opening the Overview needs it.
+  if (b.dataset.t === 'buy') loadOrders().then(renderBuy);
+  ['overview','clients','inboxes','acquisition','buy','pools'].forEach(t =>
     document.getElementById(t).hidden = (t !== b.dataset.t));
 });
 document.getElementById('reload').onclick = load;
