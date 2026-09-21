@@ -702,6 +702,14 @@ def build(live: bool = False, live_accounts: bool | None = None,
         "measured": meas,
     }
 
+    # What the fleet is doing TODAY, split the way Tim asks for it: new leads,
+    # follow-ups, and the gap between sequence steps. Uses the last COMPLETE
+    # sending day — today's rows are still being written, and an inbox that has
+    # not sent yet this morning is not the same as one that sent nothing
+    # yesterday.
+    _day_sends, _last_day = _sends_on_last_complete_day()
+    work = work_breakdown(inboxes, facts, _day_sends, _last_day)
+
     campaigns = _campaign_rows(inboxes, facts)
     targets = _target_rows(facts, campaigns)
     summary["starved_senders"] = sum(c["wants_senders"] for c in campaigns)
@@ -731,6 +739,7 @@ def build(live: bool = False, live_accounts: bool | None = None,
         "summary": summary,
         "inboxes": sorted(inboxes, key=lambda x: (_state_order(x["state"]), x["email"])),
         "campaigns": campaigns,
+        "work": work,
         "targets": targets,
         "state_labels": STATE_LABEL,
     }
@@ -1136,3 +1145,134 @@ if __name__ == "__main__":
         print("  [%-9s] senders=%3d cap=%5d rem=%s runway=%s wants=%s  %s"
               % (c["status"], c["senders"], c["capacity"], c["remaining"],
                  c["runway_days"], c["wants_senders"], c["name"][:52]))
+
+
+# ── what the fleet is doing TODAY ─────────────────────────────────────────
+
+WORK_STATES = ("new_leads", "followups", "between_sequences",
+               "no_work", "unallocated", "blocked")
+
+WORK_LABEL = {
+    "new_leads": "Sending to new leads",
+    "followups": "Sending follow-ups",
+    "between_sequences": "Between sequence steps",
+    "no_work": "Campaign has nothing left",
+    "unallocated": "In no live campaign",
+    "blocked": "Cannot send",
+}
+
+
+def _sends_on_last_complete_day() -> tuple:
+    """({email: sends}, day) for the most recent COMPLETE sending day.
+
+    One day, not an average. The question this answers is "what is this inbox
+    doing today", and a five-day total would count an inbox that sent on Monday
+    and nothing since as though it were still sending — which is exactly the
+    gap between sequence steps we are trying to see.
+
+    Complete matters too: today's rows are still being written, so an inbox that
+    has not sent yet this morning would look dormant.
+    """
+    try:
+        import health_daily as hd
+        days = hd.complete_days(7)
+    except Exception:
+        return None, None
+    if not days:
+        return None, None
+    try:
+        rows = store.get_health_daily_sends(min(days))
+    except Exception:
+        return None, None
+    # complete_days() is CALENDRICAL — it lists dates that ought to be finished,
+    # not dates the table actually holds. Asking it for the latest day returned
+    # 2026-09-20 while the history stopped at 2026-09-17, so the caller believed
+    # it had a measurement of a day with no rows in it. Take the newest date
+    # that genuinely carries sends.
+    have = {str(r.get("date"))[:10] for r in rows if (r.get("sent") or 0) > 0}
+    day = max(have) if have else None
+    if not day:
+        return None, None
+    out = {}
+    for r in rows:
+        if str(r.get("date"))[:10] != day:
+            continue
+        n = r.get("sent") or 0
+        if n:
+            out[r["email"]] = out.get(r["email"], 0) + n
+    return out, day
+
+
+def work_breakdown(inboxes: list[dict], facts: dict, sends: dict | None,
+                   day: str | None) -> dict:
+    """Split the whole acquisition fleet by what each inbox is doing today.
+
+    Tim's three working states, which the single "in use" figure flattened:
+
+      new_leads          an ACTIVE campaign still has uncontacted leads, so this
+                         inbox has first touches to send
+      followups          no new leads left anywhere, but leads are mid-sequence
+                         AND the inbox actually sent on the last complete day
+      between_sequences  leads are mid-sequence and nothing was due today. This
+                         is the gap between steps — the inbox is working, it
+                         simply has nothing to send this morning. It is NOT
+                         spare capacity, and reallocating it cuts a live
+                         sequence.
+
+    and the three that are genuinely not working:
+
+      no_work            in an ACTIVE campaign whose queues are both empty
+      unallocated        in no ACTIVE campaign at all
+      blocked            SMTP down or burned — could not send if we asked
+
+    `day` is the last COMPLETE sending day, not the wall-clock date: today's
+    rows are still being written, and an inbox that has not sent yet at 9am is
+    not the same as one that sent nothing yesterday. When no send data is
+    available, `followups` and `between_sequences` cannot be told apart — they
+    are reported together as `followups` and `measured` says why.
+    """
+    measured = bool(sends) and bool(day)
+    out = {s: {"inboxes": 0, "capacity": 0} for s in WORK_STATES}
+    rows = []
+
+    for i in inboxes:
+        cap = i.get("per_day") or 0
+        if i.get("state") == BLOCKED:
+            state = "blocked"
+        else:
+            active = [c for c in (i.get("campaigns") or [])
+                      if facts.get(c, {}).get("status") == "ACTIVE"]
+            if not active:
+                state = "unallocated"
+            else:
+                # An unknown queue counts as "still has work": the safe
+                # direction, since the alternative frees a live sender.
+                has_new = any(facts.get(c, {}).get("remaining") is None
+                              or (facts.get(c, {}).get("remaining") or 0) > 0
+                              for c in active)
+                has_fu = any(facts.get(c, {}).get("in_progress") is None
+                             or (facts.get(c, {}).get("in_progress") or 0) > 0
+                             for c in active)
+                if has_new:
+                    state = "new_leads"
+                elif has_fu:
+                    state = ("followups"
+                             if (not measured or (sends or {}).get(i["email"], 0) > 0)
+                             else "between_sequences")
+                else:
+                    state = "no_work"
+        out[state]["inboxes"] += 1
+        out[state]["capacity"] += cap
+        rows.append({"email": i["email"], "work": state, "per_day": cap})
+
+    working = ("new_leads", "followups", "between_sequences")
+    total_cap = sum(v["capacity"] for v in out.values())
+    return {
+        "measured": measured,
+        "day": day,
+        "states": [{"state": s, "label": WORK_LABEL[s], **out[s]} for s in WORK_STATES],
+        "total_capacity": total_cap,
+        "working_capacity": sum(out[s]["capacity"] for s in working),
+        "working_inboxes": sum(out[s]["inboxes"] for s in working),
+        "by_email": rows,
+    }

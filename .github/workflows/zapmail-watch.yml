@@ -94,12 +94,32 @@ jobs:
             "https://email-infra.vercel.app/api/client-detail?refresh=1&pw=${PW}" \
             | jq -r '"client details cached for \(.clients | length) clients"'
 
+      # NOT continue-on-error. This step writes the health history that burn
+      # rate, capacity and every health score read from; a run that fails to
+      # write it must turn the workflow red, or the outage is invisible again.
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
-        continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
-          set -euo pipefail
-          curl -sS --max-time 290 \
-            "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}" | head -c 2000
+          set -uo pipefail
+          body=$(curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}")
+          echo "$body" | head -c 2000; echo
+          # This step used to pipe straight to head, so a 200 carrying
+          # {"error": "metrics fetch failed ... 401 unauthorized"} was a green
+          # tick. The health history stopped being written on 2026-09-17 and
+          # every run after it reported success — five days of silence while
+          # burn rate, capacity and every health score ran on stale data.
+          # A run that did not write history is a FAILURE now, and so is one
+          # that skipped a weekday.
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "::error::health snapshot failed: $(echo "$body" | jq -r '.error')"
+            exit 1
+          fi
+          gaps=$(echo "$body" | jq -r '(.weekday_gaps // []) | join(", ")')
+          if [ -n "$gaps" ]; then
+            echo "::error::no Smartlead data for weekday(s): $gaps — history has a hole"
+            exit 1
+          fi
+          echo "ok - daily rows written: $(echo "$body" | jq -r '.daily_rows_written // "?"')"

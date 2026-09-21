@@ -213,6 +213,7 @@ def build(acq: dict, registrar: dict | None, today: str,
     }
 
     return {
+        "work": acq.get("work") or {},
         "generated_at": acq.get("generated_at"),
         "synced_at": acq.get("synced_at"),
         "summary": summary,

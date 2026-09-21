@@ -134,6 +134,21 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     #    comparison). See health_daily for the full account.
     import health_daily as hd
     hist_info = hd.refresh_history(attrs_from_overview(overview))
+
+    # A WEEKDAY WITH NO DATA IS A FAULT, NOT A QUIET DAY. Smartlead returns
+    # nothing for a Saturday and also for a request that failed upstream, and
+    # the response cannot tell them apart. Weekends are expected here; a weekday
+    # in this list means the history has a hole, and the whole point of this
+    # module is that nobody finds that out five days later.
+    import datetime as _dt
+    weekday_gaps = []
+    for d in (hist_info.get("no_data_days") or []):
+        try:
+            if _dt.date.fromisoformat(d).weekday() < 5:      # Mon-Fri
+                weekday_gaps.append(d)
+        except ValueError:
+            weekday_gaps.append(d)
+    hist_info["weekday_gaps"] = weekday_gaps
     window_sig, window_dates = hd.window_signals(sent_by_date=hist_info["sent_by_date"])
 
     # 2) re-score each inbox off that window
@@ -232,7 +247,12 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     })
 
     return {"ok": True, "date": today, "inboxes": len(status_rows), "counts": counts,
-            "window_dates": window_dates, "daily_rows_written": hist_info["rows"]}
+            "window_dates": window_dates, "daily_rows_written": hist_info["rows"],
+            "no_data_days": hist_info.get("no_data_days") or [],
+            # Non-empty means the caller should treat this run as degraded, even
+            # though everything else succeeded.
+            "weekday_gaps": weekday_gaps,
+            "degraded": bool(weekday_gaps)}
 
 
 if __name__ == "__main__":
