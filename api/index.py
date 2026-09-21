@@ -1448,6 +1448,22 @@ class _RuleFixIO:
                 out[d] = out.get(d, 0) + 1
         return out
 
+    def sender_counts_by_domain(self):
+        """{domain: live Smartlead accounts on it}. None if the walk was short —
+        a partial roster would make a busy domain look empty."""
+        try:
+            import acq_capacity as ac
+            facts = ac._live_account_facts()
+        except Exception:
+            return None
+        if not facts:
+            return None
+        out = {}
+        for e in facts:
+            d = e.split("@")[-1].lower()
+            out[d] = out.get(d, 0) + 1
+        return out
+
     def renewal_price(self, domain):
         try:
             import domain_expiry_alert as dea
@@ -1511,6 +1527,12 @@ class _RuleFixIO:
         camps = _get("/campaigns")
         if camps is None:
             return {"error": "campaign list unreadable"}
+        # ONLY ACTIVE CAMPAIGNS. Scanning all 409 took longer than the request
+        # itself was allowed to live — the button timed out at 120s having done
+        # nothing. A paused or completed campaign cannot make a mailbox "in
+        # use", so the other ~370 were being read for no answer. There are ~41
+        # active ones; that is a few seconds.
+        camps = [c for c in camps if (c.get("status") or "").upper() == "ACTIVE"]
         hits, fails = {}, 0
         for c in camps:
             accs = _get(f"/campaigns/{c['id']}/email-accounts")
@@ -1525,8 +1547,8 @@ class _RuleFixIO:
             _t.sleep(0.06)
         if fails:
             return {"error": f"{fails} campaign(s) could not be read"}
-        active = sorted(e for e, cs in hits.items()
-                        if any(c["status"] == "ACTIVE" for c in cs))
+        # Everything left in `hits` is by definition on an ACTIVE campaign.
+        active = sorted(hits)
         positives = []
         for em, cs in hits.items():
             n = 0

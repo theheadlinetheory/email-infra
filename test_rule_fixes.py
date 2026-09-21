@@ -14,11 +14,13 @@ class IO:
         self.live = kw.get("live", set())
         self.accts = kw.get("accts", [])
         self.ext = kw.get("ext", set())
+        self.senders = kw.get("senders", {})
         self.guard = kw.get("guard", {"active": [], "positives": []})
         self.disabled, self.deleted = [], []
 
     def registrar_domains(self): return self.reg
     def mailbox_counts_by_domain(self): return self.counts
+    def sender_counts_by_domain(self): return self.senders
     def renewal_price(self, d): return 11.0
     def zapmail_mailboxes(self): return self.live
     def smartlead_accounts(self): return self.accts
@@ -128,3 +130,22 @@ def test_targets_are_parsed_from_the_violation_shape_not_guessed():
     assert rf.targets_for(7, ["empty.co: 0 mailboxes, auto-renew ON"]) == ["empty.co"]
     assert rf.targets_for(10, ["a@x.co (Acquisition P)"]) == ["a@x.co"]
     assert rf.targets_for(7, ["something unexpected"]) == []
+
+
+def test_rule_7_never_touches_a_domain_with_live_senders_outside_zapmail():
+    """The headlinetheory*.com domains were never in Zapmail and carry 33
+    actively sending Smartlead accounts. Checking only Zapmail put all eleven
+    on the disable list — letting them lapse takes the senders with them."""
+    io = IO(reg={"external.com": {"auto_renew": True}, "dead.info": {"auto_renew": True}},
+            counts={},                                   # neither is in Zapmail
+            senders={"external.com": 3})                 # but one is sending
+    r = rf.run(7, io, confirm=True)
+    assert r["targets"] == ["dead.info"]
+    assert io.disabled == ["dead.info"]
+    assert r["kept_external"] == [{"domain": "external.com", "smartlead_senders": 3}]
+
+
+def test_rule_7_refuses_when_the_smartlead_side_is_unreadable():
+    """Without it, 'empty' cannot be established — and the error is one-way."""
+    io = IO(reg={"a.co": {"auto_renew": True}}, counts={}, senders=None)
+    assert "refusing" in rf.run(7, io, confirm=True)["error"]

@@ -68,13 +68,36 @@ def fix_rule_7(io, confirm: bool) -> dict:
     """
     registrar = io.registrar_domains()
     mailbox_counts = io.mailbox_counts_by_domain()
-    if registrar is None or mailbox_counts is None:
-        return {"error": "could not read the registrar and Zapmail — refusing to "
-                         "disable auto-renew on an unverified list"}
-    targets = sorted(d for d, r in registrar.items()
-                     if r.get("auto_renew") and not mailbox_counts.get(d))
+    sender_counts = io.sender_counts_by_domain()
+    if registrar is None or mailbox_counts is None or sender_counts is None:
+        return {"error": "could not read the registrar, Zapmail and Smartlead in "
+                         "full — refusing to disable auto-renew on an unverified list"}
+
+    # EMPTY MEANS EMPTY EVERYWHERE. "No Zapmail mailbox" is not enough: the
+    # headlinetheory*.com domains were never in Zapmail and carry 33 actively
+    # sending Smartlead accounts between them. Checking only Zapmail put all
+    # eleven of them on the disable list — letting them lapse would have taken
+    # 33 live acquisition senders down with them.
+    #
+    # A domain is only safe to let go when NOTHING is on it: no mailbox in
+    # Zapmail and no sender in Smartlead.
+    targets, kept = [], []
+    for d, r in registrar.items():
+        if not r.get("auto_renew"):
+            continue
+        mbx, snd = mailbox_counts.get(d, 0), sender_counts.get(d, 0)
+        if mbx or snd:
+            if not mbx and snd:
+                # Worth naming: it looks empty from Zapmail and is not.
+                kept.append({"domain": d, "smartlead_senders": snd})
+            continue
+        targets.append(d)
+    targets = sorted(targets)
     plan = {"rule": 7, "targets": targets, "count": len(targets),
-            "saving_yr": round(sum(io.renewal_price(d) for d in targets), 2)}
+            "saving_yr": round(sum(io.renewal_price(d) for d in targets), 2),
+            # Domains that have no Zapmail mailbox but DO have live senders.
+            "kept_external": sorted(kept, key=lambda x: -x["smartlead_senders"]),
+            "held_reason": "has live Smartlead senders despite no Zapmail mailbox"}
     if not targets:
         return {**plan, "note": "nothing to do — no empty domain is auto-renewing"}
     if not confirm:
