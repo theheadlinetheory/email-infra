@@ -1221,9 +1221,11 @@ def client_detail_route():
                 crm_rows = ilc.fetch_crm_clients() or []
             except Exception:
                 crm_rows = []
+            import datetime as _dt
             return {"clients": cd.build(board, (inv or {}).get("mailboxes") or None,
                                         tags, health, crm_rows,
-                                        civ._norm, civ.is_free_account)}
+                                        civ._norm, civ.is_free_account,
+                                        today=_dt.date.today())}
 
         blob = _slow_cache("cache:client_details", _build, ttl_seconds=12 * 3600)
         details = blob.get("clients") or {}

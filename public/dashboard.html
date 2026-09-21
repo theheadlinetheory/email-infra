@@ -244,6 +244,7 @@ function renderClients(){
         <div class="foot">
           <span>${c.monthly_cost != null ? money(c.monthly_cost) + '/mo' : ''}</span>
           ${when}
+          <span class="chip" data-warm="${esc(c.name)}" hidden></span>
           ${c.term_is_a_guess ? '<span class="chip warn">term assumed</span>' : ''}
         </div>
       </div>`;
@@ -255,8 +256,20 @@ function renderClients(){
     cardEl.onclick = () => openClient(cardEl, rows[+cardEl.dataset.i]);
   });
   // Cards are on screen; now fetch the detail for all of them in the
-  // background so the first click does not wait.
-  prefetchClientDetail();
+  // background so the first click does not wait. Once it lands, any client
+  // with inboxes still warming gets a chip on its card face — that is the
+  // thing you want to see without opening anything.
+  prefetchClientDetail().then(() => {
+    el.querySelectorAll('[data-warm]').forEach(chip => {
+      const det = CDETAIL[cnorm(chip.dataset.warm)];
+      const w = det && det.warmup;
+      if (!w || !w.warming) return;
+      chip.textContent = `${w.warming} warming`;
+      chip.className = 'chip warn';
+      chip.title = w.all_ready_on ? 'all ready on ' + w.all_ready_on : '';
+      chip.hidden = false;
+    });
+  });
 }
 
 // Card detail.
@@ -343,6 +356,22 @@ async function openClient(cardEl, row){
   if (pool.length) h += `<h3>From a pool \u2014 ${pool.length}</h3>
     <div class="mono">${pool.map(esc).join(' \u00b7 ')}</div>`;
 
+  const w = det.warmup;
+  if (w) {
+    // Per inbox, from its own creation date. One number for a whole group is
+    // what hid McFarlane's 15 still-warming inboxes behind 27 finished ones.
+    h += `<h3>Warm-up</h3><div class="facts">
+      ${fact('Ready to send', `<span class="${w.ready ? 'good' : 'dim'}">${w.ready}</span>`)}
+      ${fact('Still warming', `<span class="${w.warming ? 'warn' : 'dim'}">${w.warming}</span>`)}
+      ${w.unknown ? fact('No date', `<span class="warn">${w.unknown}</span>`) : ''}
+      ${w.all_ready_on ? fact('All ready on', esc(w.all_ready_on)) : ''}
+    </div>`;
+    if (w.warming)
+      h += `<div class="meta" style="margin-top:8px">Only the ready ones can go into a campaign.
+        Warm-up is 14 days from each inbox's own creation date \u2014 a batch bought on two
+        different days finishes on two different days.</div>`;
+  }
+
   h += `<h3>Inboxes \u2014 ${det.inbox_count ?? 0}</h3>`;
   if (det.inboxes_unreadable) {
     h += `<div class="banner">The inbox list could not be read, so it is not shown.
@@ -354,11 +383,17 @@ async function openClient(cardEl, row){
     const bad = det.inboxes.filter(i => i.health === 'burned');
     if (bad.length) h += `<div class="banner">${bad.length} burned \u2014 replace from the Inboxes tab.</div>`;
     h += `<div class="wrap"><table>
-      <tr><th>Inbox</th><th>Domain</th><th>Created</th><th>Health</th></tr>
-      ${det.inboxes.map(i => `<tr><td>${esc(i.email)}</td><td class="dim">${esc(i.domain || '')}</td>
-        <td class="dim">${esc(i.created || '')}</td>
+      <tr><th>Inbox</th><th>Domain</th><th>Created</th><th>Warm-up</th><th>Health</th></tr>
+      ${det.inboxes.map(i => {
+        const wu = i.ready === true
+          ? '<span class="good">ready</span>'
+          : i.ready === false
+            ? `<span class="warn">day ${i.age_days}/14</span> <span class="dim">\u2192 ${esc(i.ready_on || '')}</span>`
+            : '<span class="dim">unknown</span>';
+        return `<tr><td>${esc(i.email)}</td><td class="dim">${esc(i.domain || '')}</td>
+        <td class="dim">${esc(i.created || '')}</td><td>${wu}</td>
         <td class="${i.health === 'burned' ? 'bad' : i.health === 'at_risk' ? 'warn' : 'dim'}">${esc(i.health || '')}</td>
-      </tr>`).join('')}</table></div>`;
+      </tr>`; }).join('')}</table></div>`;
   }
 
   if ((det.cohorts || []).length > 1)
