@@ -116,6 +116,37 @@ def complete_days(n: int, end_day: str | None = None) -> list[str]:
     return [(last - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n - 1, -1, -1)]
 
 
+def credential_state() -> dict:
+    """What this deployment has to authenticate with, and whether it works.
+
+    Named credentials, never values. "401 unauthorized" is not an actionable
+    error — it took a log dig to learn the production box had been falling back
+    to a stale static token for five days because the login pair was not set
+    there.
+    """
+    import os as _os
+    has_login = bool(_os.environ.get("SMARTLEAD_LOGIN_EMAIL")
+                     and _os.environ.get("SMARTLEAD_LOGIN_PASSWORD"))
+    has_static = bool((_os.environ.get("SMARTLEAD_JWT") or "").strip())
+    out = {"login_pair": has_login, "static_jwt": has_static, "minted": False}
+    if has_login:
+        try:
+            import health_smartlead as hsl
+            out["minted"] = bool(hsl.get_jwt(force=True))
+            out.update({k: v for k, v in (hsl.login_diag() or {}).items()
+                        if k in ("login_http", "token_found")})
+        except Exception as e:                       # noqa: BLE001
+            out["mint_error"] = str(e)[:140]
+    if not has_login and not has_static:
+        out["fix"] = ("set SMARTLEAD_LOGIN_EMAIL and SMARTLEAD_LOGIN_PASSWORD "
+                      "on this deployment")
+    elif not has_login:
+        out["fix"] = ("only a static SMARTLEAD_JWT is set and those expire — add "
+                      "SMARTLEAD_LOGIN_EMAIL and SMARTLEAD_LOGIN_PASSWORD so the "
+                      "token is minted fresh on every run")
+    return out
+
+
 def _headers() -> dict:
     import health_smartlead as hsl
     jwt = hsl.get_jwt()
@@ -177,7 +208,9 @@ def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -
             time.sleep(5 * (attempt + 1))
             continue
         return out
-    raise RuntimeError(f"metrics fetch failed for {start}..{end}: {last}")
+    raise RuntimeError(
+        f"metrics fetch failed for {start}..{end}: {last} "
+        f"| credentials: {credential_state()}")
 
 
 LIVE_DAY_FRACTION = 0.20   # a day counts as a sending day at >=20% of a median day
@@ -276,9 +309,24 @@ def daily_rows(dates: list[str], attrs: dict) -> list[dict]:
     """
     zero = {f: 0 for f in COUNT_FIELDS}
     zero.update({"reply_rate": 0.0, "bounce_rate": 0.0, "open_rate": 0.0})
-    rows = []
+    rows, skipped = [], []
     for d in dates:
         data = fetch_window(d, d)
+        # ZERO RECORDS IS NOT A ZERO DAY. Smartlead returns nothing both for a
+        # genuinely quiet Saturday and for a request that came back empty
+        # because something upstream is broken, and the two are
+        # indistinguishable from the response alone. Zero-filling the whole
+        # fleet on the second case writes a day of silence over a day the fleet
+        # sent 12,000 mails — which is exactly what landed on 2026-09-17: 1,902
+        # rows, every one of them sent=0, on a Thursday.
+        #
+        # So an empty response writes NOTHING for that date. A missing row is
+        # honest — every reader here already works from the dates that exist —
+        # whereas a zero row is a claim, and it poisoned the burn rate, the
+        # capacity split and the health scores for five days.
+        if not data:
+            skipped.append(d)
+            continue
         # A row for EVERY tracked inbox, zero-filled when SmartLead reports
         # nothing for it that day. Writing only the inboxes that appear would
         # leave the previous (wrong) value standing for everyone else — and on a
@@ -301,7 +349,7 @@ def daily_rows(dates: list[str], attrs: dict) -> list[dict]:
                 "smtp_ok": a.get("smtp_ok"),
                 "warmup_reputation": a.get("warmup_reputation"),
             })
-    return rows
+    return rows, skipped
 
 
 def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
@@ -322,11 +370,16 @@ def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
     back a day.
     """
     dates = complete_days(days, end_day)
-    rows = daily_rows(dates, attrs)
-    out = {"days": dates, "rows": len(rows), "sent_by_date": _sent_by_date(rows)}
+    rows, skipped = daily_rows(dates, attrs)
+    out = {"days": dates, "rows": len(rows), "sent_by_date": _sent_by_date(rows),
+           # Days Smartlead returned nothing for. A weekend belongs here and is
+           # harmless; a weekday here means a fetch problem, and the caller must
+           # be able to tell the difference rather than seeing a clean run.
+           "no_data_days": skipped}
 
     if include_today:
-        partial = daily_rows([end_day or today_local()], attrs)
+        partial, partial_skipped = daily_rows([end_day or today_local()], attrs)
+        out["no_data_days"] = skipped + partial_skipped
         store.upsert_health_daily(rows + partial)
         out["rows"] += len(partial)
         out["partial_day"] = end_day or today_local()

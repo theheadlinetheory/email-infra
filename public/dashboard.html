@@ -669,8 +669,35 @@ function renderAcquisition(){
     + card('Over 3 / domain', s.over_cap_domains ?? '\u2013', s.over_cap_domains ? 'bad' : 'ok')
     + '</div>';
 
-  // Volume, stated as volume, with no claim attached. A follow-up-heavy fleet
-  // sends less per inbox by design; that is the sequence spacing its touches.
+  // The full capacity, split by what each inbox is doing TODAY. Measured
+  // against the last complete sending day, because an inbox that has not sent
+  // yet this morning is not the same as one that sent nothing yesterday.
+  const wk = d.work || {};
+  if ((wk.states || []).length) {
+    const mx = Math.max(1, ...wk.states.map(x => x.capacity));
+    const tone = {new_leads: 'good', followups: 'good', between_sequences: 'warn',
+                  no_work: 'bad', unallocated: 'bad', blocked: 'bad'};
+    html += `<h2>What the capacity is doing${wk.day ? ` \u2014 ${esc(wk.day)}` : ''}</h2>
+      <div class="wrap"><table>
+        <tr><th>State</th><th>Inboxes</th><th>Capacity / day</th><th style="width:42%"></th></tr>
+        ${wk.states.map(x => `<tr>
+          <td class="${tone[x.state] === 'bad' ? 'dim' : ''}">${esc(x.label)}</td>
+          <td class="n">${x.inboxes}</td>
+          <td class="n">${x.capacity.toLocaleString()}</td>
+          <td><span style="display:inline-block;height:9px;border-radius:2px;
+            background:var(--${tone[x.state] === 'good' ? 'ok' : tone[x.state] === 'warn' ? 'warn' : 'dim2'});
+            width:${Math.round(100 * x.capacity / mx)}%"></span></td></tr>`).join('')}
+        <tr><td><b>Total</b></td><td class="n"><b>${wk.states.reduce((a, x) => a + x.inboxes, 0)}</b></td>
+          <td class="n"><b>${(wk.total_capacity || 0).toLocaleString()}</b></td><td></td></tr>
+      </table></div>
+      <div class="meta" style="margin-top:8px">
+        <b>Between sequence steps</b> is working capacity, not spare: those inboxes are
+        mid-sequence with nothing due that day. Moving one cuts a live sequence.
+        ${wk.measured === false
+          ? '<br><b>Not measured today</b> \u2014 no send data, so follow-ups and the gap cannot be told apart.'
+          : ''}</div>`;
+  }
+
   html += `<div class="meta" style="margin:-8px 0 16px">Sending
     ${(s.actual_per_day ?? 0).toLocaleString()} a day across ${s.in_use ?? '?'} working inboxes.
     Daily volume is set by where each campaign is in its sequence, so it is not a
