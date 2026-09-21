@@ -82,3 +82,77 @@ def test_inboxes_are_grouped_by_domain_for_readability():
 def test_an_untagged_mailbox_belongs_to_nobody():
     out = cd.build(board(("Acme", 2, 2)), MBX, {"a@d0.info": "Acme"}, {}, [], norm, is_free)
     assert [i["email"] for i in out["acme"]["inboxes"]] == ["a@d0.info"]
+
+
+from datetime import date
+
+TODAY = date(2026, 9, 21)
+
+
+def test_warm_state_is_per_inbox_not_per_group():
+    """McFarlane holds 27 inboxes at 17 days and 15 at 13. The old dashboard
+    derived ONE warmup_days for the whole group from its earliest date tag, so
+    a single verdict covered both batches and hid the half that disagreed."""
+    mbx = {f"a{i}@d.info": {"domain": "d.info", "created_at": "2026-09-04T00:00:00Z"} for i in range(27)}
+    mbx.update({f"b{i}@d.info": {"domain": "d.info", "created_at": "2026-08-12T00:00:00Z"} for i in range(15)})
+    tags = {e: "Acme" for e in mbx}
+    starts = {e: "2026-09-04T00:00:00Z" for e in mbx if e.startswith("a")}
+    starts.update({e: "2026-09-08T00:00:00Z" for e in mbx if e.startswith("b")})
+    out = cd.build(board(("Acme", 42, 1)), mbx, tags, {}, [], norm, is_free,
+                   today=TODAY, warm_starts=starts)
+    w = out["acme"]["warmup"]
+    assert w["ready"] == 27 and w["warming"] == 15
+    assert w["all_ready_on"] == "2026-09-22"
+
+
+def test_the_zapmail_date_is_not_the_warmup_clock():
+    """McFarlane's second batch existed in Zapmail from 2026-08-12 but only
+    began warming on 2026-09-08 — nearly four weeks apart. Reading the Zapmail
+    date calls an unwarmed inbox ready and puts it into a live campaign."""
+    mbx = {"b@d.info": {"domain": "d.info", "created_at": "2026-08-12T00:00:00Z"}}
+    out = cd.build(board(("Acme", 1, 1)), mbx, {"b@d.info": "Acme"}, {}, [], norm, is_free,
+                   today=TODAY, warm_starts={"b@d.info": "2026-09-08T00:00:00Z"})
+    i = out["acme"]["inboxes"][0]
+    assert i["created"] == "2026-08-12"        # billing clock, still shown
+    assert i["warm_started"] == "2026-09-08"   # warm-up clock
+    assert i["ready"] is False and i["age_days"] == 13
+
+
+def test_without_warm_starts_readiness_is_unknown_not_assumed():
+    """No Smartlead read means no warm-up clock. Falling back to the Zapmail
+    date would be a confidently wrong answer in the dangerous direction."""
+    mbx = {"b@d.info": {"domain": "d.info", "created_at": "2026-01-01T00:00:00Z"}}
+    out = cd.build(board(("Acme", 1, 1)), mbx, {"b@d.info": "Acme"}, {}, [], norm, is_free,
+                   today=TODAY, warm_starts=None)
+    w = out["acme"]["warmup"]
+    assert w["unknown"] == 1 and w["ready"] == 0
+
+
+def test_day_fourteen_has_finished_warming():
+    """Strictly less than: an inbox created 14 days ago can send."""
+    assert cd.warm_state("2026-09-07", TODAY)["ready"] is True       # 14 days
+    assert cd.warm_state("2026-09-08", TODAY)["ready"] is False      # 13 days
+
+
+def test_a_warming_inbox_says_when_it_is_ready():
+    w = cd.warm_state("2026-09-08", TODAY)
+    assert w["age_days"] == 13 and w["ready_on"] == "2026-09-22"
+
+
+def test_no_creation_date_is_unknown_not_ready():
+    """Absence of a date is not evidence that it finished warming."""
+    w = cd.warm_state(None, TODAY)
+    assert w["ready"] is None and w["age_days"] is None
+
+
+def test_an_unknown_date_is_counted_separately_from_ready():
+    mbx = {"a@d.info": {"domain": "d.info", "created_at": None}}
+    out = cd.build(board(("Acme", 1, 1)), mbx, {"a@d.info": "Acme"}, {}, [], norm, is_free,
+                   today=TODAY, warm_starts={})
+    w = out["acme"]["warmup"]
+    assert w["ready"] == 0 and w["warming"] == 0 and w["unknown"] == 1
+
+
+def test_warmup_is_None_when_the_inbox_list_could_not_be_read():
+    out = cd.build(board(("Acme", 42, 14)), None, None, {}, [], norm, is_free, today=TODAY)
+    assert out["acme"]["warmup"] is None
