@@ -35,15 +35,26 @@ def _age_days(created, today: date) -> int | None:
         return None
 
 
-def warm_state(created, today: date) -> dict:
-    """Per-inbox warm-up readiness, from that inbox's OWN creation date.
+def warm_state(started, today: date) -> dict:
+    """Per-inbox warm-up readiness, from when THAT inbox started warming.
 
-    The old dashboard derived one `warmup_days` for a whole group, from the
-    earliest date tag on it. A group bought in two batches then got a single
-    verdict covering both: McFarlane holds 27 inboxes at 17 days and 15 at 13,
-    and one number cannot be true for both — it reported the whole group as one
-    state and hid the half that disagreed.
+    Two things this gets right that the old display did not.
+
+    Per inbox, not per group. The old dashboard derived one `warmup_days` for a
+    whole group from its earliest date tag, so a group bought in two batches got
+    a single verdict covering both — McFarlane holds 27 at 17 days and 15 at 13,
+    and no one number is true for both.
+
+    And the SMARTLEAD clock, not the Zapmail one. Warm-up runs in Smartlead, and
+    a mailbox can exist in Zapmail long before it is exported. Those same 15 were
+    created in Zapmail on 2026-08-12 but only started warming on 2026-09-08 —
+    nearly four weeks apart. Reading the Zapmail date calls all 42 ready when 15
+    have another day to go, which is precisely the wrong direction: it puts an
+    unwarmed inbox into a live campaign.
+
+    `started` is the Smartlead warm-up start. None means unknown, never ready.
     """
+    created = started
     age = _age_days(created, today)
     if age is None:
         # No creation date is not evidence of readiness. Say unknown.
@@ -56,7 +67,8 @@ def warm_state(created, today: date) -> dict:
 
 def build(board: dict, zm_mailboxes: dict | None, tags: dict | None,
           health: dict | None, crm_rows: list[dict] | None,
-          norm, is_free, today: date | None = None) -> dict:
+          norm, is_free, today: date | None = None,
+          warm_starts: dict | None = None) -> dict:
     """{normalised client name: detail}. Pure — every input is injected."""
     # An inbox roster needs BOTH halves: what exists (Zapmail) and who owns it
     # (the Smartlead tag). Either one missing makes the list unknowable, not
@@ -70,13 +82,17 @@ def build(board: dict, zm_mailboxes: dict | None, tags: dict | None,
             owner = tags.get(email)
             if not owner:
                 continue
+            # `created` is the ZAPMAIL date — the billing clock, and what the
+            # Created column shows. Warm-up is a different clock entirely.
             created = str(mb.get("created_at") or "")[:10]
+            started = (warm_starts or {}).get(email)
             by_bucket.setdefault(owner, []).append({
                 "email": email,
                 "domain": mb.get("domain"),
                 "created": created,
+                "warm_started": str(started)[:10] if started else None,
                 "health": (health or {}).get(email),
-                **warm_state(created, today),
+                **warm_state(started, today),
             })
 
     crm_by = {norm(c.get("name")): c for c in (crm_rows or []) if c.get("name")}

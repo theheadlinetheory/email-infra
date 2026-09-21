@@ -1212,6 +1212,20 @@ def client_detail_route():
                 tags = ilc.fetch_smartlead_tags() or None
             except Exception:
                 tags = None
+            # When each inbox STARTED WARMING, which is a Smartlead fact. A
+            # mailbox can sit in Zapmail for weeks before it is exported —
+            # McFarlane's second batch was created 2026-08-12 and only began
+            # warming 2026-09-08 — so the Zapmail date would call an unwarmed
+            # inbox ready and put it into a live campaign.
+            warm_starts = None
+            try:
+                import acq_capacity as _ac
+                facts = _ac._live_account_facts()
+                if facts:
+                    warm_starts = {e: (v.get("warmup_started") or v.get("created_at"))
+                                   for e, v in facts.items()}
+            except Exception:
+                warm_starts = None
             try:
                 health = {h["email"]: h.get("status")
                           for h in store.get_health_status_all()}
@@ -1225,7 +1239,8 @@ def client_detail_route():
             return {"clients": cd.build(board, (inv or {}).get("mailboxes") or None,
                                         tags, health, crm_rows,
                                         civ._norm, civ.is_free_account,
-                                        today=_dt.date.today())}
+                                        today=_dt.date.today(),
+                                        warm_starts=warm_starts)}
 
         blob = _slow_cache("cache:client_details", _build, ttl_seconds=12 * 3600)
         details = blob.get("clients") or {}
