@@ -126,10 +126,22 @@ def fix_rule_10(io, confirm: bool) -> dict:
         return {"rule": 10, "targets": [], "count": 0,
                 "note": "nothing to do — every Smartlead account has a Zapmail mailbox"}
 
-    guard = io.safety_check([a["email"] for a in gone])
+    emails = [a["email"] for a in gone]
+
+    # "Is it on a live campaign" needs only the ACTIVE ones and runs here.
+    guard = io.safety_check(emails)
     if guard.get("error"):
         return {"error": f"safety check failed: {guard['error']} — nothing deleted"}
-    blocked = set(guard.get("active") or []) | set(guard.get("positives") or [])
+
+    # "Does it own a positive reply" needs EVERY campaign, including paused and
+    # completed ones, which is far more than a request can scan. That walk runs
+    # nightly; this reads its result. No fresh result means no deletion.
+    import rule10_safety
+    full = rule10_safety.verdict(emails)
+
+    blocked = set(guard.get("active") or [])
+    if not full.get("stale"):
+        blocked |= set(full.get("active") or []) | set(full.get("positives") or [])
     safe = [a for a in gone if a["email"] not in blocked]
 
     plan = {
@@ -138,7 +150,18 @@ def fix_rule_10(io, confirm: bool) -> dict:
         "count": len(safe),
         "held": sorted(blocked),
         "held_reason": "on an ACTIVE campaign or owns a positive reply",
+        "reply_scan": ("stale: " + full.get("reason", "")) if full.get("stale")
+                      else f"{full.get('campaigns_scanned')} campaigns, "
+                           f"{full.get('age_hours')}h old",
     }
+    if full.get("stale"):
+        # Rule 11: a check that did not run is not a check that passed.
+        return {**plan, "targets": [], "count": 0, "dry_run": True,
+                "blocked_by": "reply scan",
+                "note": "NOT deleting. The positive-reply scan is stale "
+                        f"({full.get('reason')}), so a mailbox holding a live "
+                        "thread on a paused campaign would look deletable. "
+                        "The nightly scan refreshes it."}
     if not confirm:
         return {**plan, "dry_run": True,
                 "note": "nothing deleted. Confirm to remove these Smartlead accounts."}

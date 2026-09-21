@@ -1422,6 +1422,40 @@ def rule_fix_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/rule10-reply-scan")
+def rule10_reply_scan():
+    """The nightly full-campaign positive-reply walk behind rule 10's fix.
+
+    This cannot live in the button. Answering "does this mailbox own a reply"
+    honestly means reading EVERY campaign — paused and completed ones hold
+    threads too — which is ~415 campaign reads plus a leads-export each. The
+    button gets ~120s before the browser gives up, so it reads what this wrote.
+
+    A scan that cannot finish writes nothing, and rule 10's fix then refuses to
+    delete rather than deleting against a check that never ran.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import rule10_safety
+        io = _RuleFixIO()
+        live = io.zapmail_mailboxes()
+        accounts = io.smartlead_accounts()
+        if live is None or accounts is None:
+            return _cors(jsonify({"error": "could not read Zapmail and Smartlead "
+                                           "in full — not scanning a partial roster"})), 400
+        external = io.external_domains()
+        candidates = [a["email"] for a in accounts
+                      if a["email"] not in live
+                      and a["email"].split("@")[-1] not in external]
+        res = rule10_safety.refresh(candidates)
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 class _RuleFixIO:
     """The live world for rule_fixes. Every read is all-or-nothing: a short
     answer returns None so the fix refuses rather than acting on part of it."""
@@ -1504,7 +1538,6 @@ class _RuleFixIO:
         """
         import time as _t
         import requests as _rq
-        import health_positive as hp
         key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
         sl = "https://server.smartlead.ai/api/v1"
         want = {e.lower() for e in emails}
@@ -1547,19 +1580,13 @@ class _RuleFixIO:
             _t.sleep(0.06)
         if fails:
             return {"error": f"{fails} campaign(s) could not be read"}
-        # Everything left in `hits` is by definition on an ACTIVE campaign.
-        active = sorted(hits)
-        positives = []
-        for em, cs in hits.items():
-            n = 0
-            for c in cs:
-                try:
-                    n += len(hp.owned_positive_threads(em, c["id"]))
-                except Exception:
-                    return {"error": f"positive-reply check failed for {em}"}
-            if n:
-                positives.append(em)
-        return {"active": active, "positives": sorted(positives)}
+        # Everything left in `hits` is by definition on an ACTIVE campaign, so
+        # that IS the answer. Running a positive-reply pass over `hits` here
+        # would cost ~39s to re-name mailboxes this list already holds, and it
+        # would still miss a reply parked on a paused campaign, because those
+        # campaigns were filtered out above. That question belongs to the
+        # nightly full-campaign walk in rule10_safety.py.
+        return {"active": sorted(hits), "positives": []}
 
     def disable_auto_renew(self, domains):
         """Reuses the same registrar helpers /api/domains/auto-renew uses, so
