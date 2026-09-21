@@ -936,6 +936,13 @@ function buyChrome(){
       <input id="b-manual" class="act" placeholder="your-own-domain.info" style="min-width:220px">
       <button class="act" id="b-add">Add</button>
     </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <label class="dim">Forward to</label>
+      <input id="b-fwd" class="act" placeholder="https://theclient.com" style="min-width:260px">
+      <span class="dim">where a prospect who clicks the domain lands. Provisioning
+        stops before go-live without it.</span>
+    </div>
+    <div id="b-progress" class="meta" style="margin-bottom:10px"></div>
     <div id="b-suggestions"></div>
     <div id="b-plan"></div>
     <h2>Orders</h2><div id="b-orders"></div>
@@ -1126,15 +1133,51 @@ async function doPlan(){
 
 async function doBuy(){
   const p = BUY.plan || {}, c = p.cost || {}, n = p.counts || {};
+  const fwd = (document.getElementById('b-fwd').value || '').trim();
+  if (!fwd && !confirm('No forwarding target set.\n\nThe domains will be bought, but '
+                     + 'provisioning will stop before they go live until you give one — '
+                     + 'a domain that prospects nowhere is worse than no domain.\n\n'
+                     + 'Continue anyway?')) return;
   if (!confirm(`Register ${n.available} domain(s) for ${money(c.domains_onetime)}?\n\n`
              + `This spends money now. Mailboxes (${money(c.mailboxes_monthly)}/mo) are `
              + `bought later, when you press Provision.`)) return;
   const b = document.getElementById('b-buy');
   b.disabled = true; b.textContent = 'registering…';
-  const r = await post('/api/buy-domains', {...buySpec(), confirm: true});
-  if (r.error) { alert(r.error); b.disabled = false; b.textContent = 'Register'; return; }
+  // Poll while it runs. A purchase is a minute or more of irreversible,
+  // paid registrations, and a page that shows nothing invites a second click.
+  let polling = true;
+  const tick = async () => {
+    while (polling) {
+      const pr = await get('/api/buy-progress');
+      if (pr && pr.running) {
+        rpBuyNote(`<b>${pr.done ?? 0} of ${pr.total ?? '?'}</b> registered`
+          + (pr.stage ? ` — ${esc(pr.stage)}` : '')
+          + (pr.connected != null ? ` · ${pr.connected} connected to Zapmail` : '')
+          + '<br><span class="dim">Do not press Register again — domains are not refundable.</span>');
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  };
+  tick();
+  const r = await post('/api/buy-domains', {...buySpec(), forward_to: fwd, confirm: true});
+  polling = false;
+  if (r.error) {
+    rpBuyNote(`<span class="bad">${esc(r.error)}</span>`);
+    b.disabled = false; b.textContent = 'Register'; return;
+  }
+  const bits = [`Registered ${(r.registered || []).length}`,
+                `${(r.connected || []).length} connected to Zapmail`];
+  if ((r.connect_pending || []).length) bits.push(`${r.connect_pending.length} awaiting DNS`);
+  if ((r.failed || []).length) bits.push(`${r.failed.length} FAILED`);
+  rpBuyNote(`<span class="good">${bits.join(' · ')}</span><br>
+    <span class="dim">${esc(r.note || '')}</span>`);
   BUY.chosen.clear(); BUY.plan = null;
   await loadOrders(); renderBuy();
+}
+
+function rpBuyNote(html){
+  const el = document.getElementById('b-progress');
+  if (el) el.innerHTML = html;
 }
 
 // Provisioning answers `resume: true` while DNS propagates or an export

@@ -1000,6 +1000,23 @@ def buy_domains_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/buy-progress", methods=["GET"])
+def buy_progress_route():
+    """Where a running purchase has got to. Polled by the page while it runs.
+
+    A purchase is a minute or more of paid, irreversible registrations. With no
+    feedback the natural reaction is to press the button again, and that spends
+    the money twice.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    try:
+        import buy_inboxes as bi
+        return _cors(jsonify(bi.buy_progress()))
+    except Exception as e:
+        return _cors(jsonify({"error": str(e)})), 500
+
+
 @app.route("/api/buy-orders", methods=["GET"])
 def buy_orders_route():
     """All buy-orders with live DNS readiness (drives the 'Provision inboxes now' button).

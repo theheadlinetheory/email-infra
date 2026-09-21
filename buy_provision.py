@@ -37,6 +37,7 @@ itself and asks to be resumed:
   dns        every domain live in Zapmail with its nameservers resolved
   slots      enough Google mailbox slots bought to cover what we will create
   mailboxes  create up to three per domain
+  forwarding point every domain at the site it is selling for
   export     hand the mailboxes to SmartLead
   find       locate the SmartLead accounts (the export lands asynchronously)
   tag        tag them into their group
@@ -53,7 +54,8 @@ import time
 MAX_PER_DOMAIN = 3
 ALLOWED_PROVIDER = "GOOGLE"
 
-STEPS = ("dns", "slots", "mailboxes", "export", "find", "tag", "warmup", "done")
+STEPS = ("dns", "slots", "mailboxes", "forwarding", "export", "find", "tag",
+         "warmup", "done")
 
 # A call gives up its remaining work at this point and asks to be resumed. Well
 # under Vercel's 300s so the response itself always gets out.
@@ -233,6 +235,47 @@ def _all_mailboxes(order, j):
     return out
 
 
+def _step_forwarding(order, j, io):
+    """Point every domain at the website it is selling for.
+
+    Forwarding is per DOMAIN and does not follow anything else, so nothing
+    upstream sets it: not the purchase, not the Zapmail connect, not the
+    mailbox creation. A batch can therefore go fully live — mailboxes created,
+    warmed, tagged, sending — with every domain forwarding nowhere. LightDMV
+    launched exactly like that, 15 of 19 domains pointing at nothing, and it
+    was found by hand weeks later.
+
+    A missing target BLOCKS rather than skips. "We do not know where this should
+    point" is a thing to answer, not a step to pass over quietly — and a domain
+    prospecting on behalf of a client while forwarding nowhere is the failure
+    this step exists to prevent.
+    """
+    target = (order.get("forward_to") or "").strip()
+    if not target:
+        j["blocked_reason"] = (
+            "no forwarding target on this order — set the client's website (or "
+            "ours, for acquisition) before the domains go live, or prospects who "
+            "click through land nowhere")
+        _note(j, "forwarding: no target set")
+        return False, False                   # needs a person, not a retry
+
+    doms = [d for d in (order.get("domains") or []) if _dom(j, d).get("dns_ready")]
+    done = set(j.get("forwarded") or [])
+    todo = [d for d in doms if d not in done]
+    if not todo:
+        return True, False
+
+    res = io.set_forwarding(todo, target)
+    if not res.get("ok"):
+        j["blocked_reason"] = res.get("error") or "could not set forwarding"
+        _note(j, f"forwarding: {j['blocked_reason']}")
+        return False, True
+    j.pop("blocked_reason", None)
+    j["forwarded"] = sorted(done | set(todo))
+    _note(j, f"forwarding: {len(todo)} domain(s) -> {target}")
+    return True, False
+
+
 def _step_export(order, j, io):
     mbs = _all_mailboxes(order, j)
     if not mbs:
@@ -316,8 +359,8 @@ def _step_warmup(order, j, io):
 
 _HANDLERS = {
     "dns": _step_dns, "slots": _step_slots, "mailboxes": _step_mailboxes,
-    "export": _step_export, "find": _step_find, "tag": _step_tag,
-    "warmup": _step_warmup,
+    "forwarding": _step_forwarding, "export": _step_export, "find": _step_find,
+    "tag": _step_tag, "warmup": _step_warmup,
 }
 
 
@@ -359,6 +402,8 @@ def advance(order: dict, io, budget_seconds: int = DEFAULT_BUDGET_SECONDS,
                     for d, rec in j["domains"].items()},
         "mailboxes": len(_all_mailboxes(order, j)),
         "in_smartlead": len(j.get("smartlead") or {}),
+        "forwarded": len(j.get("forwarded") or []),
+        "forward_to": order.get("forward_to"),
         "tagged": len(j.get("tagged") or []),
         "warmed": len(j.get("warmed") or []),
         "log": j["log"][-20:],
@@ -449,6 +494,29 @@ class LiveIO:
             if not (isinstance(r, dict) and r.get("error")):
                 ok.append(d)
         return ok
+
+    def set_forwarding(self, domains, target):
+        """Point these domains at `target`. Zapmail takes domain IDs, so the
+        names are resolved first and a name it does not know is an error, not a
+        silent omission."""
+        try:
+            idx = {(d.get("domain") or "").lower(): d.get("id")
+                   for d in (self.S.zm_list_domains() or [])}
+        except Exception as e:                           # noqa: BLE001
+            return {"ok": False, "error": f"could not read Zapmail: {str(e)[:120]}"}
+        ids, missing = [], []
+        for d in domains:
+            i = idx.get(d.lower())
+            (ids.append(i) if i else missing.append(d))
+        if missing:
+            return {"ok": False,
+                    "error": f"{len(missing)} domain(s) not found in Zapmail: "
+                             f"{', '.join(sorted(missing)[:4])}"}
+        try:
+            self.S.zm_set_forwarding(ids, target)
+        except Exception as e:                           # noqa: BLE001
+            return {"ok": False, "error": str(e)[:140]}
+        return {"ok": True}
 
     def zapmail_export_to_smartlead(self, mailbox_ids):
         try:
