@@ -572,10 +572,14 @@ def inboxes_route():
         # old health tab showed it and how the decision is actually made:
         # Zapmail bills by whole domain, so one burned inbox on a domain is a
         # replacement and three is a cancellation.
+        # Cached: measured at 9.7s, and this route already does five other
+        # reads. An Inboxes tab that takes fifteen seconds is a tab nobody
+        # opens, and on a cold Vercel instance it is a tab that times out.
         domain_view = {"domains": [], "summary": {}}
         try:
             import health_domains as hdm
-            domain_view = hdm.domain_view() or domain_view
+            domain_view = _slow_cache("cache:domain_view", hdm.domain_view,
+                                      ttl_seconds=3600) or domain_view
         except Exception as e:
             domain_view = {"domains": [], "summary": {},
                            "error": f"domain view unavailable: {str(e)[:120]}"}

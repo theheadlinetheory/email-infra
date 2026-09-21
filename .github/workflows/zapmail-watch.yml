@@ -97,6 +97,19 @@ jobs:
       # NOT continue-on-error. This step writes the health history that burn
       # rate, capacity and every health score read from; a run that fails to
       # write it must turn the workflow red, or the outage is invisible again.
+      # Warm the Inboxes tab too. Its burned-domain view is a ~10s build on top
+      # of five other reads; whoever opens the tab first should not pay for it.
+      - name: Warm the inboxes view
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/inboxes?refresh=1&pw=${PW}" \
+            | jq -r '"inboxes cached: \(.summary.inboxes // "?") inboxes, \(.domain_view.summary.domains // 0) burned domains"'
+
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         env:

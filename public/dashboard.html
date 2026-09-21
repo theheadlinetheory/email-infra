@@ -148,8 +148,24 @@ function setPw(v){
     history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
   }
 })();
+// Every fetch is bounded. Without this a request that never settles leaves the
+// page on "loading…" for ever with nothing on screen saying why — which is
+// exactly what a slow endpoint behind Vercel's 300s limit looks like from here.
+const FETCH_TIMEOUT_MS = 120000;
+
 async function api(path){
-  const r = await fetch(path, {credentials: 'same-origin'});
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  let r;
+  try {
+    r = await fetch(path, {credentials: 'same-origin', signal: ctl.signal});
+  } catch (e) {
+    return {error: e.name === 'AbortError'
+      ? `${path} took longer than ${FETCH_TIMEOUT_MS / 1000}s and was given up on`
+      : `${path} failed: ${e.message}`};
+  } finally {
+    clearTimeout(timer);
+  }
   if (r.status === 401) {
     const p = prompt('Dashboard password:');
     if (p) { setPw(p); location.reload(); }
@@ -159,8 +175,22 @@ async function api(path){
   return r.ok ? j : {error: j.error || ('HTTP ' + r.status)};
 }
 async function post(path, body){
-  const r = await fetch(path, {method: 'POST', credentials: 'same-origin',
-    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  let r;
+  try {
+    r = await fetch(path, {method: 'POST', credentials: 'same-origin', signal: ctl.signal,
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  } catch (e) {
+    // A POST that times out may still have LANDED — say so rather than implying
+    // nothing happened, because the next click could repeat a paid action.
+    return {error: e.name === 'AbortError'
+      ? `${path} took longer than ${FETCH_TIMEOUT_MS / 1000}s. It may still have `
+        + `gone through — reload and check before trying again.`
+      : `${path} failed: ${e.message}`};
+  } finally {
+    clearTimeout(timer);
+  }
   if (r.status === 401) { const p = prompt('Dashboard password:'); if (p) { setPw(p); location.reload(); }
     return {error: 'not signed in'}; }
   const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
@@ -1389,6 +1419,9 @@ function renderPools(){
 function banners(){
   const inv = DATA.invariants || {}, cl = DATA.clients || {};
   let h = '';
+  if (LOAD_ERRORS.length)
+    h += `<div class="banner">${LOAD_ERRORS.length} feed(s) did not load:
+      ${LOAD_ERRORS.map(esc).join(' · ')}. Anything below is incomplete.</div>`;
   if (inv.stale) h += `<div class="banner">Rule results are ${ago(inv.age_seconds)} — the daily cron may not have run.</div>`;
   if (cl._stale) h += `<div class="banner">Client data is ${ago(cl._age_seconds)} and was rebuilt on request.</div>`;
   if (inv.active_campaigns === 0) h += `<div class="banner">0 ACTIVE campaigns. Anything keyed on campaign membership was skipped, not passed.</div>`;
@@ -1425,11 +1458,16 @@ const LOADED = {};
 
 async function need(keys, force){
   const want = keys.filter(k => force || !(k in LOADED));
-  if (want.length) {
-    const got = await Promise.all(want.map(k => get(FEEDS[k])));
-    want.forEach((k, i) => { DATA[k] = got[i]; LOADED[k] = true; });
-  }
+  if (!want.length) return;
+  const got = await Promise.all(want.map(k => get(FEEDS[k])));
+  want.forEach((k, i) => { DATA[k] = got[i]; LOADED[k] = true; });
+  // One failed feed must not be mistaken for an empty one: each renderer shows
+  // its own error, and the header says the load was not clean.
+  const bad = want.filter((k, i) => got[i] && got[i].error);
+  if (bad.length) LOAD_ERRORS = bad.map(k => `${k}: ${DATA[k].error}`);
+  else LOAD_ERRORS = [];
 }
+let LOAD_ERRORS = [];
 
 function stamp(){
   const bits = [];
@@ -1446,10 +1484,20 @@ async function showTab(t, force){
   const el = document.getElementById(t);
   const pending = (TAB_FEEDS[t] || []).some(k => force || !(k in LOADED));
   if (pending && RENDER[t]) el.innerHTML = '<div class="empty">loading…</div>';
-  await need(TAB_FEEDS[t] || [], force);
-  stamp(); banners();
-  if (RENDER[t]) RENDER[t]();
-  if (t === 'buy') { await loadOrders(); renderBuy(); }
+  try {
+    await need(TAB_FEEDS[t] || [], force);
+    stamp(); banners();
+    if (RENDER[t]) RENDER[t]();
+    if (t === 'buy') { await loadOrders(); renderBuy(); }
+  } catch (e) {
+    // A throw here used to leave the tab showing "loading…" for ever. Whatever
+    // went wrong, say so on the page — a stuck spinner is the one outcome that
+    // tells you nothing.
+    el.innerHTML = `<div class="banner">This tab failed to load:
+      ${esc(e && e.message ? e.message : String(e))}<br>
+      <span class="dim">Press Reload, or open another tab and come back.</span></div>`;
+    document.getElementById('meta').textContent = 'load failed';
+  }
 }
 
 async function load(){
