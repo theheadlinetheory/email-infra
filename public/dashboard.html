@@ -1002,6 +1002,8 @@ function renderOrders(){
   const STALE_DAYS = 30;
   const age = o => {
     const t = Date.parse(o.created || '');
+    // An unparseable date must read as NEW, not old. Treating it as 0 days is
+    // the safe direction: a visible order you can ignore beats a hidden one.
     return isNaN(t) ? 0 : Math.floor((Date.now() - t) / 86400000);
   };
   const live = BUY.orders.filter(o => !(o.status === 'domains_registered' && age(o) > STALE_DAYS));
@@ -1015,22 +1017,50 @@ function renderOrders(){
     return;
   }
   BUY.orders = live;
+  // The pipeline, named, so an order in flight says WHERE it is rather than
+  // showing a bare status nobody can act on.
+  const STEPS = [
+    ['bought', 'Domains bought'],
+    ['dns', 'Waiting for DNS'],
+    ['slots', 'Buying mailbox slots'],
+    ['mailboxes', 'Creating mailboxes'],
+    ['export', 'Sending to SmartLead'],
+    ['find', 'Waiting for SmartLead'],
+    ['tag', 'Tagging'],
+    ['warmup', 'Starting warm-up'],
+    ['done', 'Live'],
+  ];
   d.innerHTML = BUY.orders.map(o => {
     const j = o.journal || {};
-    const step = j.step || (o.status === 'live' ? 'done' : 'dns');
+    const step = j.step || (o.status === 'live' ? 'done' : 'bought');
+    const at = Math.max(0, STEPS.findIndex(x => x[0] === step));
     const r = o.readiness || {};
-    const ready = r.ready_count != null ? `${r.ready_count}/${(r.domains || []).length} DNS ready` : '';
+    const nd = (o.domains || []).length;
+    const ready = r.ready_count != null ? `${r.ready_count}/${nd} DNS ready` : '';
+    const track = STEPS.map(([k, label], i) => {
+      const cls = i < at ? 'good' : i === at ? 'warn' : 'dim';
+      const mark = i < at ? '✓' : i === at ? '●' : '○';
+      return `<span class="${cls}" title="${esc(label)}">${mark}</span>`;
+    }).join(' ');
     return `<div class="c" style="margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
         <b>Order ${o.id}</b>
-        <span class="tag">${esc(o.client_name || o.owner)}</span>
+        <span class="tag">${esc(o.client_name || o.owner || 'unassigned')}</span>
         <span class="tag">${esc(o.provider || 'GOOGLE')}</span>
-        <span class="${step === 'done' ? 'good' : 'warn'}">${esc(step)}</span>
-        <span class="dim">${(o.domains || []).length} domains · ${ready}</span>
+        <span class="dim">${nd} domains · ${(o.connected || []).length} connected to Zapmail
+          ${ready ? '· ' + ready : ''}</span>
         <span style="flex:1"></span>
-        ${step === 'done' ? '' :
+        <span class="dim" style="font-size:11px">${esc(String(o.created || '').slice(0, 10))}</span>
+        ${step === 'done' ? '<span class="chip ok">live</span>' :
           `<button class="act" data-prov="${o.id}">Provision now</button>`}
       </div>
+      <div style="margin-top:7px;font-size:12px">
+        ${track} <span class="dim" style="margin-left:8px">${
+          esc((STEPS[at] || ['', ''])[1])}</span>
+      </div>
+      ${(o.failed || []).length
+        ? `<div class="viol" style="margin-left:0">${o.failed.length} domain(s) failed to register:
+             ${o.failed.slice(0, 4).map(f => esc(f.domain || f)).join(', ')}</div>` : ''}
       <div class="dim" style="margin-top:6px;font-size:11.5px">${(o.domains || []).join(', ')}</div>
       ${j.blocked_reason ? `<div class="viol" style="margin-left:0">${esc(j.blocked_reason)}</div>` : ''}
       ${(j.log || []).length ? `<div class="dim" style="margin-top:6px;font-size:11px">${

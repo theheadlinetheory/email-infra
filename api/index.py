@@ -1002,12 +1002,22 @@ def buy_domains_route():
 
 @app.route("/api/buy-orders", methods=["GET"])
 def buy_orders_route():
-    """All buy-orders with live DNS readiness (drives the 'Provision inboxes now' button)."""
+    """All buy-orders with live DNS readiness (drives the 'Provision inboxes now' button).
+
+    NEVER CACHED. This is the record of what you just did. It was served from a
+    six-hour cache, so an order created at 20:42 was invisible behind a cache
+    written at 20:31 — Tim bought 14 domains and the tab showed nothing. A
+    caching layer in front of "did my purchase register?" answers the one
+    question it must never get wrong.
+
+    The DNS-readiness lookup inside it is a single Zapmail call, which is what
+    the cache was protecting against; that is not worth hiding a purchase for.
+    """
     if not _check_auth():
         return _cors(jsonify({"error": "Unauthorized"})), 401
     try:
         import buy_inboxes as bi
-        return _cors(jsonify(_slow_cache("cache:buy_orders", bi.list_orders)))
+        return _cors(jsonify(bi.list_orders()))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500

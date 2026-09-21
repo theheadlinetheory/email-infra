@@ -260,3 +260,31 @@ def test_usernames_are_fixed_so_a_resume_asks_for_the_same_three():
     b = bp.mailbox_specs("x.co", 3)
     assert a == b
     assert [s["mailboxUsername"] for s in a] == ["s.reynolds", "sean.r", "sean.reynolds"]
+
+
+def test_dns_step_retries_domains_whose_nameservers_were_not_ready(monkeypatch):
+    """A domain bought minutes ago is still on the registrar's nameservers, so
+    Zapmail refuses it. That is a wait, not a failure — 14 domains were bought,
+    all 14 refused, and all 14 recorded as connected."""
+    io = FakeIO(["a.co", "b.co"])
+    io.connected_calls = []
+
+    def connect(domains):
+        io.connected_calls.append(list(domains))
+        return ["b.co"]                       # b caught up, a has not
+    io.connect_domains = connect
+
+    o = order(domains=["a.co", "b.co"])
+    o["connect_pending"] = ["a.co", "b.co"]
+    o["connected"] = []
+    bp.advance(o, io)
+    assert io.connected_calls == [["a.co", "b.co"]]
+    assert o["connected"] == ["b.co"]
+    assert o["connect_pending"] == ["a.co"]
+
+
+def test_dns_step_is_fine_when_nothing_is_pending():
+    io = FakeIO(["x.co"])
+    o = order()
+    r = bp.advance(o, io)
+    assert r["done"] is True

@@ -368,30 +368,54 @@ def buy_domains(spec, confirm=False):
         return {"dry_run": True, "would_register": available,
                 "cost": p["cost"], "plan": p}
 
-    registered, failed = [], []
+    registered, failed, ns_failed = [], [], []
     for d in available:
         try:
             res = S.Spaceship.purchase_domain(d)
             if res.get("success"):
                 registered.append(d)
+                # NAMESERVERS ARE NOT OPTIONAL. Zapmail refuses to connect a
+                # domain whose nameservers still point at the registrar, so a
+                # silent failure here guarantees the connect below fails too.
+                # This was a bare `except: pass`, and 14 domains were bought,
+                # left on launch1.spaceship.net, and recorded as connected.
                 try:
-                    S.Spaceship.set_nameservers(d)
-                except Exception:
-                    pass
+                    nr = S.Spaceship.set_nameservers(d)
+                    if isinstance(nr, dict) and not nr.get("success", True):
+                        ns_failed.append({"domain": d,
+                                          "error": str(nr.get("error") or nr)[:140]})
+                except Exception as e:
+                    ns_failed.append({"domain": d, "error": str(e)[:140]})
             else:
                 failed.append({"domain": d, "error": str(res.get("error"))[:140]})
         except Exception as e:
             failed.append({"domain": d, "error": str(e)[:140]})
 
-    # connect each registered domain to Zapmail (DNS still needs to propagate
-    # before mailboxes can be created — that's what "Provision inboxes" waits on)
-    connected = []
+    # Connect each registered domain to Zapmail. DNS still needs to propagate
+    # before mailboxes can be created — that is what "Provision inboxes" waits
+    # on — so a domain whose nameservers have not caught up yet is PENDING, not
+    # failed, and is retried rather than written off.
+    connected, pending, connect_failed = [], [], []
     for d in registered:
         try:
-            S.zm_connect_domain_single(d)
+            r = S.zm_connect_domain_single(d)
+        except Exception as e:
+            connect_failed.append({"domain": d, "error": str(e)[:140]})
+            continue
+        # Zapmail reports a refusal as a 400 in the RESPONSE BODY, not an
+        # exception. Appending to `connected` on "no exception raised" recorded
+        # 14 of 14 connected when the true number was 0.
+        if isinstance(r, dict) and r.get("error"):
+            got = r.get("gotNameServers")
+            entry = {"domain": d, "status": r.get("statusCode"),
+                     "got_nameservers": got,
+                     "expected": r.get("expectedNameServers")}
+            if got and "cloudns" not in str(got).lower():
+                pending.append(entry)          # nameservers have not propagated
+            else:
+                connect_failed.append(entry)
+        else:
             connected.append(d)
-        except Exception:
-            pass
 
     orders = _orders()
     oid = max([o.get("id", 0) for o in orders], default=0) + 1
@@ -402,16 +426,31 @@ def buy_domains(spec, confirm=False):
         "provider": p["provider"],
         "inboxes_per_domain": p["inboxes_per_domain"],
         "domains": registered, "connected": connected, "failed": failed,
+        "nameserver_failed": ns_failed,
+        "connect_pending": [p["domain"] for p in pending],
+        "connect_failed": connect_failed,
         "status": "domains_registered",       # -> provisioning -> live
         "batch_config": p["batch_config"],
         "mailboxes_created": [], "exported": [], "tagged": [], "warmed": [],
     }
     orders.append(order)
     _save_orders(orders)
+    note = ("Domains registered and connected to Zapmail. Wait ~15-60 min for DNS "
+            "to propagate, then press 'Provision inboxes now' on the order.")
+    if pending:
+        note = (f"{len(connected)} of {len(registered)} connected to Zapmail. "
+                f"{len(pending)} are still on the registrar's nameservers — that is "
+                "normal for a few minutes after purchase, and 'Provision inboxes now' "
+                "retries them.")
+    if ns_failed or connect_failed:
+        note += (f" {len(ns_failed)} nameserver update(s) and {len(connect_failed)} "
+                 "connect(s) FAILED and need looking at.")
     return {"ok": True, "order_id": oid, "registered": registered,
-            "connected": connected, "failed": failed, "status": "domains_registered",
-            "note": "Domains registered + connected to Zapmail. Wait ~15-60 min for "
-                    "DNS to propagate, then click 'Provision inboxes now' on the order."}
+            "connected": connected, "failed": failed,
+            "nameserver_failed": ns_failed,
+            "connect_pending": [p["domain"] for p in pending],
+            "connect_failed": connect_failed,
+            "status": "domains_registered", "note": note}
 
 
 def _zm_domain_state(domains):

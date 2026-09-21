@@ -129,6 +129,17 @@ def _dom(j: dict, domain: str) -> dict:
 # Each returns (done, wants_resume). `done` advances to the next step.
 
 def _step_dns(order, j, io):
+    # Retry any domain the purchase could not connect because its nameservers
+    # had not propagated yet. That is a normal few-minute state after buying,
+    # not a failure, and it is exactly what this step is waiting on anyway.
+    pending = [d for d in (order.get("connect_pending") or [])]
+    if pending and hasattr(io, "connect_domains"):
+        now_ok = io.connect_domains(pending)
+        if now_ok:
+            order["connected"] = sorted(set(order.get("connected") or []) | set(now_ok))
+            order["connect_pending"] = [d for d in pending if d not in set(now_ok)]
+            _note(j, f"dns: connected {len(now_ok)} domain(s) whose nameservers caught up")
+
     state = io.zapmail_domain_state(order.get("domains") or [])
     ready = []
     for d in order.get("domains") or []:
@@ -425,6 +436,19 @@ class LiveIO:
         if isinstance(data, list) and data:
             return {"ok": True}
         return {"ok": False, "error": str((r or {}).get("message") or r)[:160]}
+
+    def connect_domains(self, domains):
+        """Retry the Zapmail connect for domains whose nameservers were not
+        ready at purchase time. Returns the ones that connected."""
+        ok = []
+        for d in domains:
+            try:
+                r = self.S.zm_connect_domain_single(d)
+            except Exception:                            # noqa: BLE001
+                continue
+            if not (isinstance(r, dict) and r.get("error")):
+                ok.append(d)
+        return ok
 
     def zapmail_export_to_smartlead(self, mailbox_ids):
         try:
