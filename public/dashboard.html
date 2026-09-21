@@ -191,8 +191,15 @@ async function post(path, body){
   } finally {
     clearTimeout(timer);
   }
-  if (r.status === 401) { const p = prompt('Dashboard password:'); if (p) { setPw(p); location.reload(); }
-    return {error: 'not signed in'}; }
+  if (r.status === 401) {
+    // A POST is an ACTION the user just chose. Reloading here throws that away
+    // and drops them back on a fresh page, which reads as "the button did
+    // nothing" — they click again and nothing happens again. Re-auth in place
+    // and tell them to repeat the click, instead of wiping the page.
+    const p = prompt('Signed out. Dashboard password to continue:');
+    if (p) { setPw(p); return {error: 'signed back in — click again to run this.'}; }
+    return {error: 'not signed in — nothing was changed.'};
+  }
   const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
   return r.ok ? j : {error: j.error || ('HTTP ' + r.status), refused: j.refused};
 }
@@ -1266,7 +1273,59 @@ function rpSelected(){
 }
 function rpNote(html){ document.getElementById('rp-out').innerHTML = html; }
 
+function wireDomainCards(){
+  const dmsg = (dom, html) => {
+    const el = document.getElementById('dm-' + dom.replace(/[^a-z0-9]/gi, '-'));
+    if (el) el.innerHTML = html;
+  };
+  document.querySelectorAll('button[data-dreal]').forEach(b => b.onclick = async () => {
+    const dom = b.dataset.dreal;
+    const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
+    const emails = (row.need_reallocate || []).map(m => m.email);
+    dmsg(dom, 'checking reserve…');
+    // Positive-reply pre-flight first, same order as every other path here:
+    // a reply is welded to the mailbox that sent it.
+    const pre = await post('/api/health-positive-check', {emails});
+    const held = (pre.results || []).filter(r => (r.positive_total ?? 0) > 0).length;
+    if (!confirm(`Reallocate ${emails.length} burned inbox(es) on ${dom}?\n\n`
+               + (held ? `${held} own a positive reply and will be HELD in their campaign — `
+                       + `the replacement still goes in.\n\n` : '')
+               + `Each is swapped for a niche-matched reserve inbox.`)) { dmsg(dom, ''); return; }
+    dmsg(dom, 'reallocating…');
+    const r = await post('/api/health-reallocate', {emails, confirm: true});
+    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
+                      : `<span class="good">done — now hit Reallocate mailboxes in SmartLead</span>`);
+    showTab('inboxes', true);
+  });
+  document.querySelectorAll('button[data-dcancel]').forEach(b => b.onclick = async () => {
+    const dom = b.dataset.dcancel;
+    const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
+    const warn = row && !row.clean_cancel
+      ? `\n\nWARNING: this domain still carries inboxes that are NOT burned. Cancelling `
+        + `removes every mailbox on it.`
+      : '';
+    if (!confirm(`Schedule Zapmail removal for ${dom}?\n\n`
+               + `Every mailbox on the domain goes on its next billing date.${warn}`)) return;
+    dmsg(dom, 'registering…');
+    const r = await post('/api/zapmail-removals',
+                         {action: 'register', domains: [dom], source: 'dashboard-domain'});
+    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
+                      : '<span class="good">scheduled — #zapmail-billing will confirm</span>');
+    showTab('inboxes', true);
+  });
+  document.querySelectorAll('button[data-realdone]').forEach(b => b.onclick = async () => {
+    await post('/api/health-reallocate-campaigns', {done: b.dataset.realdone});
+    showTab('inboxes', true);
+  });
+}
+
 function wireReplace(act){
+  // The burned-DOMAIN cards are wired unconditionally. They used to live below
+  // the `if (!sel) return` guard, so whenever "Burned on a live client" was
+  // empty there was no #rp-sel, this function bailed, and every "Cancel domain"
+  // and "Reallocate" button on the page was left dead — a button that looks
+  // live and does nothing.
+  wireDomainCards();
   const sel = document.getElementById('rp-sel');
   const flag = document.getElementById('rp-flag');
   const canc = document.getElementById('rp-cancel');
@@ -1362,49 +1421,7 @@ function wireReplace(act){
     await post('/api/health-positive-release', {key: b.dataset.rel, confirm: true});
     showTab('inboxes', true);
   });
-  const dmsg = (dom, html) => {
-    const el = document.getElementById('dm-' + dom.replace(/[^a-z0-9]/gi, '-'));
-    if (el) el.innerHTML = html;
-  };
-  document.querySelectorAll('button[data-dreal]').forEach(b => b.onclick = async () => {
-    const dom = b.dataset.dreal;
-    const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
-    const emails = (row.need_reallocate || []).map(m => m.email);
-    dmsg(dom, 'checking reserve…');
-    // Positive-reply pre-flight first, same order as every other path here:
-    // a reply is welded to the mailbox that sent it.
-    const pre = await post('/api/health-positive-check', {emails});
-    const held = (pre.results || []).filter(r => (r.positive_total ?? 0) > 0).length;
-    if (!confirm(`Reallocate ${emails.length} burned inbox(es) on ${dom}?\n\n`
-               + (held ? `${held} own a positive reply and will be HELD in their campaign — `
-                       + `the replacement still goes in.\n\n` : '')
-               + `Each is swapped for a niche-matched reserve inbox.`)) { dmsg(dom, ''); return; }
-    dmsg(dom, 'reallocating…');
-    const r = await post('/api/health-reallocate', {emails, confirm: true});
-    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
-                      : `<span class="good">done — now hit Reallocate mailboxes in SmartLead</span>`);
-    showTab('inboxes', true);
-  });
-  document.querySelectorAll('button[data-dcancel]').forEach(b => b.onclick = async () => {
-    const dom = b.dataset.dcancel;
-    const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
-    const warn = row && !row.clean_cancel
-      ? `\n\nWARNING: this domain still carries inboxes that are NOT burned. Cancelling `
-        + `removes every mailbox on it.`
-      : '';
-    if (!confirm(`Schedule Zapmail removal for ${dom}?\n\n`
-               + `Every mailbox on the domain goes on its next billing date.${warn}`)) return;
-    dmsg(dom, 'registering…');
-    const r = await post('/api/zapmail-removals',
-                         {action: 'register', domains: [dom], source: 'dashboard-domain'});
-    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
-                      : '<span class="good">scheduled — #zapmail-billing will confirm</span>');
-    showTab('inboxes', true);
-  });
-  document.querySelectorAll('button[data-realdone]').forEach(b => b.onclick = async () => {
-    await post('/api/health-reallocate-campaigns', {done: b.dataset.realdone});
-    showTab('inboxes', true);
-  });
+
   document.querySelectorAll('button[data-adv]').forEach(b => b.onclick = async () => {
     if (!confirm('Swap the replacement in?')) return;
     await post('/api/health-replace/advance', {id: +b.dataset.adv, action: b.dataset.act, confirm: true});
