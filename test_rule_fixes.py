@@ -4,7 +4,19 @@ Every test is about refusing to act, because that is the failure that costs
 money: disabling auto-renew on a domain with live senders, or deleting a
 Smartlead account that still owns a conversation.
 """
+import pytest
+
+import rule10_safety
 import rule_fixes as rf
+
+
+@pytest.fixture(autouse=True)
+def fresh_reply_scan(monkeypatch):
+    """Default: last night's full-campaign reply scan ran and found nothing.
+    Tests that care override `verdict` themselves."""
+    monkeypatch.setattr(rule10_safety, "verdict",
+                        lambda emails: {"stale": False, "active": [], "positives": [],
+                                        "campaigns_scanned": 415, "age_hours": 3.0})
 
 
 class IO:
@@ -94,11 +106,38 @@ def test_rule_10_holds_anything_on_an_active_campaign():
     assert r["held"] == ["busy@x.co"]
 
 
-def test_rule_10_holds_anything_owning_a_positive_reply():
-    io = IO(live=set(), accts=[acct("talks@x.co")],
-            guard={"active": [], "positives": ["talks@x.co"]})
+def test_rule_10_holds_anything_owning_a_positive_reply(monkeypatch):
+    """The reply may sit on a PAUSED campaign, which the in-request ACTIVE
+    scan cannot see — so this verdict comes from the nightly full walk."""
+    monkeypatch.setattr(rule10_safety, "verdict",
+                        lambda e: {"stale": False, "active": [],
+                                   "positives": ["talks@x.co"],
+                                   "campaigns_scanned": 415, "age_hours": 3.0})
+    io = IO(live=set(), accts=[acct("talks@x.co")], guard={"active": [], "positives": []})
     r = rf.run(10, io, confirm=True)
     assert io.deleted == [] and r["held"] == ["talks@x.co"]
+
+
+def test_rule_10_deletes_nothing_when_the_reply_scan_is_stale(monkeypatch):
+    """Rule 11 applied to the button: a check that did not run is not a check
+    that passed. Without a fresh full-campaign walk, a mailbox holding a live
+    thread on a paused campaign is indistinguishable from a dead one."""
+    monkeypatch.setattr(rule10_safety, "verdict",
+                        lambda e: {"stale": True, "reason": "last full scan was 71h ago"})
+    io = IO(live=set(), accts=[acct("gone@x.co")])
+    r = rf.run(10, io, confirm=True)
+    assert io.deleted == []
+    assert r["count"] == 0 and r["targets"] == []
+    assert r["blocked_by"] == "reply scan"
+    assert "71h" in r["note"]
+
+
+def test_rule_10_still_holds_active_campaigns_when_the_reply_scan_is_stale(monkeypatch):
+    monkeypatch.setattr(rule10_safety, "verdict",
+                        lambda e: {"stale": True, "reason": "no scan on record"})
+    io = IO(live=set(), accts=[acct("busy@x.co")], guard={"active": ["busy@x.co"], "positives": []})
+    r = rf.run(10, io, confirm=True)
+    assert io.deleted == [] and r["held"] == ["busy@x.co"]
 
 
 def test_rule_10_aborts_entirely_if_the_safety_check_failed():

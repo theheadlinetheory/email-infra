@@ -110,6 +110,30 @@ jobs:
             "https://email-infra.vercel.app/api/inboxes?refresh=1&pw=${PW}" \
             | jq -r '"inboxes cached: \(.summary.inboxes // "?") inboxes, \(.domain_view.summary.domains // 0) burned domains"'
 
+      # Rule 10's fix button deletes Smartlead accounts. It must not delete one
+      # that still owns a positive reply — and a reply can sit on a PAUSED or
+      # COMPLETED campaign just as easily as a live one, so answering that
+      # honestly means reading every campaign. That is minutes, not the ~120s a
+      # button gets. So the walk happens here and the button reads the result.
+      # NOT continue-on-error: if this stops running, the button stops deleting
+      # (by design), and a silently-red-for-weeks step is how that gets missed.
+      - name: Full-campaign positive-reply scan (rule 10's safety net)
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/rule10-reply-scan?pw=${PW}")
+          echo "$body" | head -c 1200; echo
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "::error::reply scan failed: $(echo "$body" | jq -r '.error')"
+            exit 1
+          fi
+          echo "ok - candidates=$(echo "$body" | jq -r '(.candidates // []) | length')" \
+               "campaigns=$(echo "$body" | jq -r '.campaigns_scanned // "?"')" \
+               "holding replies=$(echo "$body" | jq -r '(.positives // []) | length')"
+
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         env:
