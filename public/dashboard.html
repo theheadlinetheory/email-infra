@@ -81,6 +81,21 @@
   .fact .k{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em}
   .fact .v{font-size:15px;margin-top:3px;font-variant-numeric:tabular-nums}
   .mono{font:inherit;font-size:11.5px;color:var(--dim);line-height:1.7;word-break:break-all}
+  /* Burned domains, grouped — the old health tab's view, which is how the
+     decision is actually made: Zapmail bills by whole domain. */
+  .dcard{background:var(--card);border:1px solid var(--line);border-radius:8px;
+         padding:11px 13px;margin-bottom:9px}
+  .dcard.d3{border-color:#5e2626} .dcard.d2{border-color:#5a4512}
+  .dhead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .dhead b{font-size:12.5px}
+  .dratio{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
+  .drow{display:flex;gap:8px;padding:3px 0;font-size:11.5px;align-items:center}
+  .drow .em{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dnote{margin:6px 0;padding:7px 10px;border-radius:6px;font-size:11.5px;
+         background:#2b2209;border:1px solid #6b5412;color:#f0d68a}
+  .dacts{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
+  .dmsg{margin-top:6px;font-size:11.5px;color:var(--dim)}
+  button.act:disabled{opacity:.45;cursor:not-allowed;border-color:var(--line)}
 </style>
 </head>
 <body>
@@ -197,18 +212,61 @@ function renderOverview(){
   if (inv.error) {
     html += `<div class="empty">${esc(inv.error)}</div>`;
   } else {
+    // A Fix button only where a fix EXISTS as a script. Everything else needs a
+    // decision — which value is right, whether to spend — and a button that
+    // pretends otherwise is worse than no button.
+    const FIXABLE = {
+      7: 'Turn auto-renew off',
+      10: 'Remove from SmartLead',
+    };
     html += (inv.results || []).map(r => `
       <div class="rule">
         <span class="st ${r.status === 'PASS' ? 'good' : r.status === 'FAIL' ? 'bad' : 'warn'}">${r.status}</span>
         <span class="nm">${esc(r.name)}</span>
         <span class="dt">${esc(r.detail || '')}</span>
+        ${r.status === 'FAIL' && FIXABLE[r.rule]
+          ? `<button class="act" data-fix="${r.rule}">${FIXABLE[r.rule]}</button>` : ''}
       </div>
       ${(r.violations || []).length ? '<div class="viol">'
         + r.violations.slice(0, 6).map(v => `<div>${esc(v)}</div>`).join('')
         + (r.violation_count > 6 ? `<div class="dim">…and ${r.violation_count - 6} more</div>` : '')
-        + '</div>' : ''}`).join('');
+        + '</div>' : ''}
+      <div class="dmsg" id="fix-${r.rule}"></div>`).join('');
   }
   el.innerHTML = html;
+  wireRuleFixes();
+}
+
+// Every fix DRY-RUNS first and shows exactly what it would touch, then asks.
+// The server re-derives its own target list from live data rather than trusting
+// the stored rule result, which can be hours old.
+function wireRuleFixes(){
+  document.querySelectorAll('button[data-fix]').forEach(b => b.onclick = async () => {
+    const rule = +b.dataset.fix;
+    const out = document.getElementById('fix-' + rule);
+    b.disabled = true; out.textContent = 'checking…';
+    const dry = await post('/api/rule-fix', {rule});
+    if (dry.error) { out.innerHTML = `<span class="bad">${esc(dry.error)}</span>`; b.disabled = false; return; }
+    if (!dry.count) {
+      out.innerHTML = `<span class="good">${esc(dry.note || 'nothing to do')}</span>`;
+      b.disabled = false; return;
+    }
+    const held = (dry.held || []).length
+      ? `\n\n${dry.held.length} held back (${dry.held_reason}) and will NOT be touched.` : '';
+    const money = dry.saving_yr ? `\n\nSaves about $${dry.saving_yr}/yr.` : '';
+    const preview = dry.targets.slice(0, 15).join('\n   ')
+      + (dry.targets.length > 15 ? `\n   …and ${dry.targets.length - 15} more` : '');
+    if (!confirm(`${b.textContent} for ${dry.count} item(s)?\n\n   ${preview}${held}${money}`)) {
+      out.textContent = ''; b.disabled = false; return;
+    }
+    out.textContent = 'working…';
+    const res = await post('/api/rule-fix', {rule, confirm: true});
+    out.innerHTML = res.error
+      ? `<span class="bad">${esc(res.error)}</span>`
+      : `<span class="good">done — ${res.deleted ?? res.disabled ?? 0} changed${
+          (res.failed || []).length ? `, ${res.failed.length} failed` : ''}</span>`;
+    b.disabled = false;
+  });
 }
 
 function renderClients(){
@@ -544,6 +602,69 @@ function renderInboxes(){
   //   3 swap
   //   4 schedule the Zapmail removal, so we stop paying on the billing date
   // Nothing here skips step 1. That is the whole reason the old flow was safe.
+  // ── Burned domains, grouped. Ported from the old health tab because that
+  // is the unit the decision is made in: one burned inbox on a domain is a
+  // replacement, three is a cancellation, and Zapmail bills the whole domain
+  // either way.
+  const dv = d.domain_view || {};
+  const dsum = dv.summary || {};
+  if (dv.error) {
+    html += `<h2>Burned domains</h2><div class="banner">${esc(dv.error)}</div>`;
+  } else if ((dv.domains || []).length) {
+    html += `<h2 class="bad">Burned domains — reallocate &amp; cancel</h2>
+      <div class="meta" style="margin-bottom:10px">
+        ${dsum.domains ?? 0} domains · ${dsum.burned_mailboxes ?? 0} burned mailboxes ·
+        ${dsum.fully_dead ?? 0} fully dead · ${dsum.cancelable_now ?? 0} clean to cancel ·
+        ${dsum.already_scheduled ?? 0} already scheduled.
+        Inboxes burned (bounce ≥3% and reply ≤0.5%) while actively sending, grouped by domain.
+      </div>`;
+    html += dv.domains.map(x => {
+      const c = x.counts || {};
+      const cls = c.burned >= 3 ? 'd3' : c.burned === 2 ? 'd2' : '';
+      const col = c.burned >= 3 ? 'var(--bad)' : c.burned === 2 ? 'var(--warn)' : 'var(--warn)';
+      const rows = (x.burned_mailboxes || []).map(m => {
+        const where = m.in_campaign ? ''
+          : (m.idle ? ' · <span class="dim">idle (paused/completed campaign)</span>'
+                    : ' · <span class="dim">not in campaign</span>');
+        const job = m.has_job ? ' · <span class="good">reallocated</span>' : '';
+        return `<div class="drow"><span class="bad">✖</span>
+          <span class="em">${esc(m.email)}</span>
+          <span class="dim">b ${m.bounce_3d == null ? '—' : m.bounce_3d + '%'} ·
+            r ${m.reply_3d == null ? '—' : m.reply_3d + '%'}${job}${where}</span></div>`;
+      }).join('');
+      const collat = (c.collateral
+        ? `<div class="dnote">⚠ ${c.collateral} healthy inbox(es) actively sending on this
+             domain would ALSO be deleted on cancel:
+             ${(x.collateral || []).map(y => esc(y.email)).join(', ')}. Replace them first.</div>`
+        : '');
+      const needR = (x.need_reallocate || []).length;
+      const reBtn = needR
+        ? (x.reserve_ok
+            ? `<button class="act" data-dreal="${esc(x.domain)}">Reallocate ${needR} burned</button>`
+            : `<button class="act" disabled title="compatible reserve: ${x.reserve_pool}">Reallocate ${needR} — reserve ${x.reserve_pool} (warm more)</button>`)
+        : `<span class="dim good">✓ ${(x.burned_mailboxes || []).some(m => m.idle || !m.in_campaign)
+             ? 'burned but not sending — cancel directly' : 'burned already reallocated'}</span>`;
+      const canBtn = x.scheduled
+        ? '<span class="dim">⏳ scheduled for removal</span>'
+        : `<button class="act" data-dcancel="${esc(x.domain)}">Cancel domain${x.clean_cancel ? '' : ' ⚠'}</button>`;
+      return `<div class="dcard ${cls}">
+        <div class="dhead">
+          <b>${esc(x.domain)}</b>
+          <span class="chip">${esc(x.niche || '')}</span>
+          <span class="dim">${esc(x.source || '')}${(x.clients || []).length && x.source === 'client'
+            ? ' · ' + x.clients.map(esc).join(', ') : ''}</span>
+          <span class="dratio" style="color:${col}">${c.burned}/${x.total} burned</span>
+        </div>
+        <div style="margin-top:5px">${rows}</div>
+        ${collat}
+        <div class="dacts">${reBtn} ${canBtn}</div>
+        <div class="dmsg" id="dm-${esc(x.domain).replace(/[^a-z0-9]/gi, '-')}"></div>
+      </div>`;
+    }).join('');
+  } else {
+    html += '<h2>Burned domains</h2><div class="empty">No burned domains.</div>';
+  }
+
   html += `<h2>Burned on a live client — ${act.length}</h2>`;
   if (!act.length) {
     html += '<div class="empty">Nothing burned on a live client.</div>';
@@ -873,6 +994,27 @@ function renderPlan(){
 function renderOrders(){
   const d = document.getElementById('b-orders'); if (!d) return;
   if (!BUY.orders.length) { d.innerHTML = '<div class="empty">No orders yet.</div>'; return; }
+  // Orders that never finished provisioning and are now months old are history,
+  // not work in progress: their domains were registered and the batch was
+  // completed by hand, so the order row just never advanced. Showing them as
+  // live work invites someone to press Provision on a domain set that has been
+  // in service since August.
+  const STALE_DAYS = 30;
+  const age = o => {
+    const t = Date.parse(o.created || '');
+    return isNaN(t) ? 0 : Math.floor((Date.now() - t) / 86400000);
+  };
+  const live = BUY.orders.filter(o => !(o.status === 'domains_registered' && age(o) > STALE_DAYS));
+  const stale = BUY.orders.filter(o => o.status === 'domains_registered' && age(o) > STALE_DAYS);
+  if (!live.length) {
+    d.innerHTML = `<div class="empty">No orders in progress.</div>`
+      + (stale.length ? `<div class="meta" style="margin-top:8px">${stale.length} order(s) older than
+           ${STALE_DAYS} days never advanced past “domains registered” —
+           ${stale.map(o => esc(o.client_name || o.owner) + ' (' + age(o) + 'd)').join(', ')}.
+           Their domains are live, so the order row is stale bookkeeping, not work to do.</div>` : '');
+    return;
+  }
+  BUY.orders = live;
   d.innerHTML = BUY.orders.map(o => {
     const j = o.journal || {};
     const step = j.step || (o.status === 'live' ? 'done' : 'dns');
@@ -1100,6 +1242,45 @@ function wireReplace(act){
     await post('/api/health-positive-release', {key: b.dataset.rel, confirm: true});
     showTab('inboxes', true);
   });
+  const dmsg = (dom, html) => {
+    const el = document.getElementById('dm-' + dom.replace(/[^a-z0-9]/gi, '-'));
+    if (el) el.innerHTML = html;
+  };
+  document.querySelectorAll('button[data-dreal]').forEach(b => b.onclick = async () => {
+    const dom = b.dataset.dreal;
+    const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
+    const emails = (row.need_reallocate || []).map(m => m.email);
+    dmsg(dom, 'checking reserve…');
+    // Positive-reply pre-flight first, same order as every other path here:
+    // a reply is welded to the mailbox that sent it.
+    const pre = await post('/api/health-positive-check', {emails});
+    const held = (pre.results || []).filter(r => (r.positive_total ?? 0) > 0).length;
+    if (!confirm(`Reallocate ${emails.length} burned inbox(es) on ${dom}?\n\n`
+               + (held ? `${held} own a positive reply and will be HELD in their campaign — `
+                       + `the replacement still goes in.\n\n` : '')
+               + `Each is swapped for a niche-matched reserve inbox.`)) { dmsg(dom, ''); return; }
+    dmsg(dom, 'reallocating…');
+    const r = await post('/api/health-reallocate', {emails, confirm: true});
+    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
+                      : `<span class="good">done — now hit Reallocate mailboxes in SmartLead</span>`);
+    showTab('inboxes', true);
+  });
+  document.querySelectorAll('button[data-dcancel]').forEach(b => b.onclick = async () => {
+    const dom = b.dataset.dcancel;
+    const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
+    const warn = row && !row.clean_cancel
+      ? `\n\nWARNING: this domain still carries inboxes that are NOT burned. Cancelling `
+        + `removes every mailbox on it.`
+      : '';
+    if (!confirm(`Schedule Zapmail removal for ${dom}?\n\n`
+               + `Every mailbox on the domain goes on its next billing date.${warn}`)) return;
+    dmsg(dom, 'registering…');
+    const r = await post('/api/zapmail-removals',
+                         {action: 'register', domains: [dom], source: 'dashboard-domain'});
+    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
+                      : '<span class="good">scheduled — #zapmail-billing will confirm</span>');
+    showTab('inboxes', true);
+  });
   document.querySelectorAll('button[data-realdone]').forEach(b => b.onclick = async () => {
     await post('/api/health-reallocate-campaigns', {done: b.dataset.realdone});
     showTab('inboxes', true);
@@ -1119,9 +1300,13 @@ function renderPools(){
   if (d.error) { el.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
   const rows = (d.pools || []).map(p => `<tr><td>${esc(p.name)}</td>
     <td class="n">${p.inboxes}</td><td class="n dim">${money(p.monthly_cost)}</td></tr>`).join('');
+  // The numbers sat miles from their heading because the table stretched to the
+  // full page width for three columns. Constrain it and let the name column
+  // absorb the slack.
   el.innerHTML = `<h2>Pools — inboxes with no client attached</h2>
-    <div class="wrap"><table>
-      <tr><th>Pool</th><th>Inboxes</th><th>$/mo</th></tr>${rows}</table></div>
+    <div class="wrap"><table style="max-width:560px">
+      <tr><th style="width:60%">Pool</th><th style="width:20%">Inboxes</th>
+          <th style="width:20%">$/mo</th></tr>${rows}</table></div>
     <div class="meta" style="margin-top:10px">Stock that can still be given to a client.
       Reserve is Generic Landscaping 1 + 2 (84 = two clients' worth); Replacement Group is separate,
       for swapping burned inboxes. Acquisition is not listed here \u2014 it is our own prospecting
