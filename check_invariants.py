@@ -413,7 +413,8 @@ def rule_11_reads_were_complete(s) -> Result:
 
     See docs/INFRA_RULES.md rule 11.
     """
-    name = "every source answered in full"
+    name = ("the ten rules above were checked against a COMPLETE picture "
+            "(no source returned a short answer)")
     bad = []
 
     # Nothing read at all is the collector not having run, which every other
@@ -447,10 +448,12 @@ def rule_11_reads_were_complete(s) -> Result:
             bad.append(f"{key}: exactly 1000 rows — the PostgREST page cap, almost "
                        "certainly truncated")
 
-    checked = [k for k in ("accounts", "zm_mailboxes", "zm_domains", "crm")
-               if s.get(k) is not None]
-    return Result(11, name, FAIL if bad else PASS,
-                  f"{len(checked)} of 4 sources read", bad)
+    sizes = []
+    for label, key in (("Smartlead", "accounts"), ("Zapmail mailboxes", "zm_mailboxes"),
+                       ("Zapmail domains", "zm_domains"), ("CRM clients", "crm")):
+        v = s.get(key)
+        sizes.append(f"{label} {len(v) if v is not None else 'not read'}")
+    return Result(11, name, FAIL if bad else PASS, " · ".join(sizes), bad)
 
 
 RULES = [rule_1_client_counts, rule_2_one_tag, rule_3_one_client_per_domain,

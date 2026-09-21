@@ -238,7 +238,13 @@ function renderOverview(){
       })(), 'warn')
     + '</div>';
 
-  html += '<h2>The ten rules</h2>';
+  html += `<h2>The rules</h2>
+    <div class="meta" style="margin:-4px 0 10px">
+      <b>FAIL</b> means the rule was checked and broken. <b>SKIP</b> means it could not be
+      checked at all — treat that as unknown, never as fine. A <b>Fix</b> button appears only
+      where the repair is a fixed script; everything else needs a decision about which value
+      is right or whether to spend, and it re-checks against live data before touching anything.
+    </div>`;
   if (inv.error) {
     html += `<div class="empty">${esc(inv.error)}</div>`;
   } else {
