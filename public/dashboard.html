@@ -284,15 +284,26 @@ function wireRuleFixes(){
     const dry = await post('/api/rule-fix', {rule});
     if (dry.error) { out.innerHTML = `<span class="bad">${esc(dry.error)}</span>`; b.disabled = false; return; }
     if (!dry.count) {
-      out.innerHTML = `<span class="good">${esc(dry.note || 'nothing to do')}</span>`;
+      // A refusal is NOT "nothing to do". `blocked_by` means the fix stopped
+      // because a safety check could not run — painting that green is how a
+      // guard that is protecting you gets read as a guard that found nothing.
+      const cls = dry.blocked_by ? 'warn' : 'good';
+      out.innerHTML = `<span class="${cls}">${esc(dry.note || 'nothing to do')}</span>`;
       b.disabled = false; return;
     }
     const held = (dry.held || []).length
       ? `\n\n${dry.held.length} held back (${dry.held_reason}) and will NOT be touched.` : '';
+    // Rule 7: domains that look empty but are actively sending from outside
+    // Zapmail. Showing the count is the difference between an informed click
+    // and lapsing a domain with live senders on it.
+    const ext = (dry.kept_external || []).length
+      ? `\n\n${dry.kept_external.length} skipped — no Zapmail mailbox but still `
+        + `sending from Smartlead.` : '';
+    const scan = dry.reply_scan ? `\n\nPositive-reply scan: ${dry.reply_scan}.` : '';
     const money = dry.saving_yr ? `\n\nSaves about $${dry.saving_yr}/yr.` : '';
     const preview = dry.targets.slice(0, 15).join('\n   ')
       + (dry.targets.length > 15 ? `\n   …and ${dry.targets.length - 15} more` : '');
-    if (!confirm(`${b.textContent} for ${dry.count} item(s)?\n\n   ${preview}${held}${money}`)) {
+    if (!confirm(`${b.textContent} for ${dry.count} item(s)?\n\n   ${preview}${held}${ext}${scan}${money}`)) {
       out.textContent = ''; b.disabled = false; return;
     }
     out.textContent = 'working…';
