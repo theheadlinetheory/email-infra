@@ -310,7 +310,7 @@ class Harness(unittest.TestCase):
 
     def test_a_broken_rule_does_not_mask_the_others(self):
         results = ci.check({"accounts": "not-a-list", "crm": [client("Acme")]})
-        self.assertEqual(len(results), 10)
+        self.assertEqual(len(results), 11)
 
     def test_exit_code_is_nonzero_only_on_failure(self):
         ok = [ci.Result(1, "x", ci.PASS), ci.Result(2, "y", ci.SKIP)]
@@ -321,3 +321,54 @@ class Harness(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Rule 11: did we actually see the fleet? ──────────────────────────────
+
+def _snap(**kw):
+    base = {"accounts": [{"from_email": f"a{i}@x.co"} for i in range(1800)],
+            "zm_mailboxes": {f"a{i}@x.co": {} for i in range(1750)},
+            "zm_domains": {f"d{i}.co": {} for i in range(600)},
+            "crm": [{"name": "Acme"}]}
+    base.update(kw)
+    return base
+
+
+def test_rule_11_passes_on_a_full_snapshot():
+    r = ci.rule_11_reads_were_complete(_snap())
+    assert r.status == "PASS"
+
+
+def test_rule_11_catches_a_truncated_smartlead_walk():
+    """214 acquisition inboxes when there were 307; 286 empty domains when the
+    answer was 0. Both were short reads believed in full."""
+    r = ci.rule_11_reads_were_complete(_snap(accounts=[{"from_email": "a@x.co"}] * 200))
+    assert r.status == "FAIL"
+    assert any("truncated walk" in v for v in r.violations)
+
+
+def test_rule_11_catches_the_postgrest_thousand_row_cap():
+    """An unbounded select returns exactly 1000 rows as an ordinary 200."""
+    r = ci.rule_11_reads_were_complete(
+        _snap(zm_mailboxes={f"a{i}@x.co": {} for i in range(1000)}))
+    assert r.status == "FAIL"
+    assert any("1000 rows" in v for v in r.violations)
+
+
+def test_rule_11_catches_an_rls_denied_crm_read():
+    """A 200 with zero rows is what a denied read looks like."""
+    r = ci.rule_11_reads_were_complete(_snap(crm=[]))
+    assert r.status == "FAIL"
+    assert any("denied read" in v for v in r.violations)
+
+
+def test_rule_11_names_a_source_that_was_never_read():
+    r = ci.rule_11_reads_were_complete(_snap(accounts=None))
+    assert r.status == "FAIL"
+    assert any("not read at all" in v for v in r.violations)
+
+
+def test_rule_11_is_registered_and_last():
+    """It has to run, and it reads best beneath the rules it qualifies."""
+    assert ci.rule_11_reads_were_complete in ci.RULES
+    assert ci.RULES[-1] is ci.rule_11_reads_were_complete

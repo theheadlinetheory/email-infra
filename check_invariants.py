@@ -31,6 +31,12 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 # Seasonal verticals run a short, hard season, so they carry 57 inboxes
 # (57 x 15/day = 855/day) instead of the standard 42 (630/day).
 SEASONAL_TARGET, STANDARD_TARGET = 57, 42
+
+# Floors for rule 11. The fleet has been 1,700-1,900 Smartlead accounts and
+# ~1,700-1,800 Zapmail mailboxes all year; anything near a single API page is a
+# truncated walk, not a smaller fleet.
+MIN_PLAUSIBLE_ACCOUNTS = 1000
+MIN_PLAUSIBLE_MAILBOXES = 1000
 RESERVE_CEILING = 84          # Generic Landscaping 1 + 2, 42 each
 REPLACEMENT_CEILING = 45      # a separate pool, for swapping burned inboxes.
                               # Raised from 42 to 45 on 2026-09-18: the three
@@ -396,9 +402,60 @@ def rule_10_expired_purged(s) -> Result:
                   f"{len(s['zm_mailboxes'])} Zapmail mailboxes", bad)
 
 
+def rule_11_reads_were_complete(s) -> Result:
+    """The rule the other ten depend on: did we actually see the fleet?
+
+    Six bugs in this codebase have been the same shape — a read that came back
+    short, treated as complete, producing a confident wrong number, and every
+    one of them pointed at deleting something we should have kept. A rule that
+    PASSES on a truncated snapshot is worse than one that fails, so this checks
+    the snapshot itself before any verdict above it is worth reading.
+
+    See docs/INFRA_RULES.md rule 11.
+    """
+    name = "every source answered in full"
+    bad = []
+
+    # Nothing read at all is the collector not having run, which every other
+    # rule already reports as SKIP. This rule judges reads that DID happen.
+    if all(s.get(k) is None for k in ("accounts", "zm_mailboxes", "zm_domains", "crm")):
+        return Result(11, name, SKIP, "no sources were read")
+
+    accounts = s.get("accounts")
+    if accounts is None:
+        bad.append("Smartlead accounts: not read at all")
+    elif len(accounts) < MIN_PLAUSIBLE_ACCOUNTS:
+        bad.append(f"Smartlead returned {len(accounts)} accounts — under "
+                   f"{MIN_PLAUSIBLE_ACCOUNTS}, which is a truncated walk, not a smaller fleet")
+
+    zm = s.get("zm_mailboxes")
+    if zm is None:
+        bad.append("Zapmail mailboxes: not read at all")
+    elif len(zm) < MIN_PLAUSIBLE_MAILBOXES:
+        bad.append(f"Zapmail returned {len(zm)} mailboxes — under {MIN_PLAUSIBLE_MAILBOXES}")
+
+    crm = s.get("crm")
+    if crm is not None and len(crm) == 0:
+        # A 200 with zero rows is what RLS denial looks like.
+        bad.append("CRM returned zero clients — that is what a denied read looks like")
+
+    # PostgREST caps an unbounded select at exactly 1000 and returns it as a
+    # normal 200, so that count is a tell rather than a coincidence.
+    for key in ("accounts", "zm_mailboxes", "zm_domains"):
+        v = s.get(key)
+        if v is not None and len(v) == 1000:
+            bad.append(f"{key}: exactly 1000 rows — the PostgREST page cap, almost "
+                       "certainly truncated")
+
+    checked = [k for k in ("accounts", "zm_mailboxes", "zm_domains", "crm")
+               if s.get(k) is not None]
+    return Result(11, name, FAIL if bad else PASS,
+                  f"{len(checked)} of 4 sources read", bad)
+
+
 RULES = [rule_1_client_counts, rule_2_one_tag, rule_3_one_client_per_domain,
          rule_4_forwarding, rule_5_crm_rows, rule_6_expiry, rule_7_empty_autorenew,
-         rule_8_billing, rule_9_pool_ceilings, rule_10_expired_purged]
+         rule_8_billing, rule_9_pool_ceilings, rule_10_expired_purged, rule_11_reads_were_complete]
 
 
 def _norm(n) -> str:

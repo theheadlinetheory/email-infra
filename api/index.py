@@ -568,6 +568,18 @@ def inboxes_route():
         except Exception:
             reserve_by_niche = {}
 
+        # The burned fleet GROUPED BY DOMAIN — 1/3, 2/3, 3/3 — which is how the
+        # old health tab showed it and how the decision is actually made:
+        # Zapmail bills by whole domain, so one burned inbox on a domain is a
+        # replacement and three is a cancellation.
+        domain_view = {"domains": [], "summary": {}}
+        try:
+            import health_domains as hdm
+            domain_view = hdm.domain_view() or domain_view
+        except Exception as e:
+            domain_view = {"domains": [], "summary": {},
+                           "error": f"domain view unavailable: {str(e)[:120]}"}
+
         try:
             import health_replace as hr
             all_jobs = hr.list_jobs() or []
@@ -600,6 +612,7 @@ def inboxes_route():
             "jobs": jobs,
             "reallocate_queue": realloc,
             "reserve_by_niche": reserve_by_niche,
+            "domain_view": domain_view,
             "summary": {
                 "inboxes": len(fleet.get("inboxes") or []),
                 "burned": len(burned),
@@ -1345,6 +1358,207 @@ def onboarding_route():
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/rule-fix", methods=["POST", "OPTIONS"])
+def rule_fix_route():
+    """Fix a failing invariant rule. Body {rule, confirm}.
+
+    Dry-run without `confirm`. Every fix re-derives its own target list from
+    live data rather than trusting the stored rule result, which can be hours
+    old — acting on a stale violation is the failure this repo has had six
+    times. See rule_fixes.py for which rules have a fix and why the others do
+    not.
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    try:
+        rule = int(body.get("rule"))
+    except (TypeError, ValueError):
+        return _cors(jsonify({"error": "rule (number) required"})), 400
+    try:
+        import rule_fixes as rfx
+        io = _RuleFixIO()
+        res = rfx.run(rule, io, confirm=bool(body.get("confirm")))
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+class _RuleFixIO:
+    """The live world for rule_fixes. Every read is all-or-nothing: a short
+    answer returns None so the fix refuses rather than acting on part of it."""
+
+    def registrar_domains(self):
+        try:
+            import domain_expiry_alert as dea
+            return dea.fetch_registrar_domains() or None
+        except Exception:
+            return None
+
+    def mailbox_counts_by_domain(self):
+        try:
+            import infra_lifecycle as ilc
+            mbx = (ilc.fetch_zapmail_inventory() or {}).get("mailboxes") or None
+        except Exception:
+            return None
+        if not mbx:
+            return None
+        out = {}
+        for mb in mbx.values():
+            d = (mb.get("domain") or "").lower()
+            if d:
+                out[d] = out.get(d, 0) + 1
+        return out
+
+    def renewal_price(self, domain):
+        try:
+            import domain_expiry_alert as dea
+            return dea.renewal_price(domain)
+        except Exception:
+            return 0.0
+
+    def zapmail_mailboxes(self):
+        try:
+            import infra_lifecycle as ilc
+            mbx = (ilc.fetch_zapmail_inventory() or {}).get("mailboxes") or None
+        except Exception:
+            return None
+        return set(mbx) if mbx else None
+
+    def smartlead_accounts(self):
+        try:
+            import acq_capacity as ac
+            facts = ac._live_account_facts()
+        except Exception:
+            return None
+        if not facts:
+            return None
+        return [{"email": e, "id": v.get("account_id")} for e, v in facts.items()]
+
+    def external_domains(self):
+        try:
+            import check_invariants as civ
+            return set(civ.EXTERNAL_DOMAINS)
+        except Exception:
+            return set()
+
+    def safety_check(self, emails):
+        """Which of these are on an ACTIVE campaign or own a positive reply.
+
+        A scan that cannot complete returns an error, and the fix aborts — an
+        incomplete scan is not a clean scan.
+        """
+        import time as _t
+        import requests as _rq
+        import health_positive as hp
+        key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
+        sl = "https://server.smartlead.ai/api/v1"
+        want = {e.lower() for e in emails}
+
+        def _get(path, **p):
+            p["api_key"] = key
+            for a in range(6):
+                try:
+                    r = _rq.get(f"{sl}{path}", params=p, timeout=60)
+                    if r.status_code == 200:
+                        return r.json()
+                    if r.status_code == 429:
+                        _t.sleep(10 * (a + 1))
+                        continue
+                except _rq.RequestException:
+                    pass
+                _t.sleep(4 * (a + 1))
+            return None
+
+        camps = _get("/campaigns")
+        if camps is None:
+            return {"error": "campaign list unreadable"}
+        hits, fails = {}, 0
+        for c in camps:
+            accs = _get(f"/campaigns/{c['id']}/email-accounts")
+            if accs is None:
+                fails += 1
+                continue
+            for a in accs or []:
+                em = (a.get("from_email") or "").lower()
+                if em in want:
+                    hits.setdefault(em, []).append(
+                        {"id": c.get("id"), "status": (c.get("status") or "").upper()})
+            _t.sleep(0.06)
+        if fails:
+            return {"error": f"{fails} campaign(s) could not be read"}
+        active = sorted(e for e, cs in hits.items()
+                        if any(c["status"] == "ACTIVE" for c in cs))
+        positives = []
+        for em, cs in hits.items():
+            n = 0
+            for c in cs:
+                try:
+                    n += len(hp.owned_positive_threads(em, c["id"]))
+                except Exception:
+                    return {"error": f"positive-reply check failed for {em}"}
+            if n:
+                positives.append(em)
+        return {"active": active, "positives": sorted(positives)}
+
+    def disable_auto_renew(self, domains):
+        """Reuses the same registrar helpers /api/domains/auto-renew uses, so
+        there is one implementation of 'turn auto-renew off', not two."""
+        import db as store
+        known = {d["domain"]: d for d in store.get_all_domains()}
+        ok, failed = [], []
+        for d in domains:
+            rec = known.get(d)
+            if not rec:
+                failed.append(f"{d}: not in the domains table")
+                continue
+            prov = (rec.get("provider") or "").lower()
+            try:
+                if prov == "porkbun":
+                    r = _porkbun_set_ar(d, False)
+                elif prov == "spaceship":
+                    r = _spaceship_set_ar(d, False)
+                else:
+                    failed.append(f"{d}: unknown provider {prov!r}")
+                    continue
+            except Exception as e:
+                failed.append(f"{d}: {str(e)[:60]}")
+                continue
+            if r.get("success"):
+                ok.append(d)
+                store.update_domain(d, auto_renew=False)
+            else:
+                failed.append(f"{d}: {str(r.get('message') or r.get('error'))[:60]}")
+        return {"ok": not failed, "disabled": len(ok), "failed": failed}
+
+    def delete_smartlead(self, rows):
+        import time as _t
+        import requests as _rq
+        key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
+        sl = "https://server.smartlead.ai/api/v1"
+        ok, failed = [], []
+        for r in rows:
+            done = False
+            for a in range(5):
+                resp = _rq.delete(f"{sl}/email-accounts/{r['id']}",
+                                  params={"api_key": key}, timeout=30)
+                if resp.status_code in (200, 204):
+                    done = True
+                    break
+                if resp.status_code == 429:
+                    _t.sleep(15 * (a + 1))
+                    continue
+                break
+            (ok if done else failed).append(r["email"])
+            _t.sleep(0.8)
+        return {"ok": not failed, "deleted": len(ok), "failed": failed}
 
 
 @app.route("/api/acquisition")
