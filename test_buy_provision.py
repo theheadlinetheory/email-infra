@@ -26,6 +26,8 @@ class FakeIO:
         self.export_lands = True
         self.create_ok = True
         self.warmup_ok = True
+        self.forwarding_ok = True
+        self.forwarded = {}
         self.next_account_id = 1000
 
     # -- Zapmail --
@@ -51,6 +53,13 @@ class FakeIO:
         for s in specs:
             email = f"{s['mailboxUsername']}@{domain}"
             self.mailboxes[domain].append({"id": f"mb-{email}", "email": email})
+        return {"ok": True}
+
+    def set_forwarding(self, domains, target):
+        if not self.forwarding_ok:
+            return {"ok": False, "error": "zapmail refused"}
+        for d in domains:
+            self.forwarded[d] = target
         return {"ok": True}
 
     def zapmail_export_to_smartlead(self, ids):
@@ -83,7 +92,8 @@ class FakeIO:
 
 def order(**kw):
     o = {"id": 1, "owner": "acquisition", "provider": "GOOGLE",
-         "inboxes_per_domain": 3, "domains": ["x.co"], "tag": "Acquisition T"}
+         "inboxes_per_domain": 3, "domains": ["x.co"], "tag": "Acquisition T",
+         "forward_to": "https://theheadlinetheory.com"}
     o.update(kw)
     return o
 
@@ -288,3 +298,63 @@ def test_dns_step_is_fine_when_nothing_is_pending():
     o = order()
     r = bp.advance(o, io)
     assert r["done"] is True
+
+
+# ── forwarding ───────────────────────────────────────────────────────────
+# Forwarding is per DOMAIN and follows nothing else — not the purchase, not the
+# Zapmail connect, not the mailboxes. LightDMV went live with 15 of 19 domains
+# pointing nowhere and it was found by hand weeks later.
+
+def test_every_domain_is_pointed_at_the_site_it_sells_for():
+    io = FakeIO(["a.co", "b.co"])
+    o = order(domains=["a.co", "b.co"], forward_to="https://client.com")
+    r = bp.advance(o, io)
+    assert r["done"] is True
+    assert io.forwarded == {"a.co": "https://client.com", "b.co": "https://client.com"}
+    assert r["forwarded"] == 2
+
+
+def test_no_forwarding_target_blocks_instead_of_skipping():
+    """"We do not know where this points" is a question, not a step to pass."""
+    io = FakeIO(["x.co"])
+    o = order(forward_to=None)
+    r = bp.advance(o, io)
+    assert r["step"] == "forwarding"
+    assert r["done"] is False and r["resume"] is False      # needs a person
+    assert "forwarding target" in r["blocked_reason"]
+    assert io.forwarded == {}
+
+
+def test_nothing_reaches_smartlead_before_forwarding_is_set():
+    """Order matters: a domain that is already sending cannot be un-sent."""
+    io = FakeIO(["x.co"])
+    bp.advance(order(forward_to=None), io)
+    assert io.exported == [] and io.tagged == [] and io.warmed == []
+
+
+def test_a_forwarding_failure_is_retried_not_swallowed():
+    io = FakeIO(["x.co"])
+    io.forwarding_ok = False
+    o = order()
+    r = bp.advance(o, io)
+    assert r["step"] == "forwarding" and r["resume"] is True
+    io.forwarding_ok = True
+    r = bp.advance(o, io)
+    assert r["done"] and io.forwarded == {"x.co": "https://theheadlinetheory.com"}
+
+
+def test_forwarding_is_not_redone_on_a_resume():
+    io = FakeIO(["a.co", "b.co"])
+    o = order(domains=["a.co", "b.co"])
+    bp.advance(o, io)
+    io.forwarded = {}
+    bp.advance(o, io)
+    assert io.forwarded == {}          # already recorded as done
+
+
+def test_only_dns_ready_domains_are_forwarded():
+    io = FakeIO(["fast.co", "slow.co"])
+    io.state["slow.co"]["dns_ready"] = False
+    o = order(domains=["fast.co", "slow.co"])
+    bp.advance(o, io)
+    assert list(io.forwarded) == ["fast.co"]

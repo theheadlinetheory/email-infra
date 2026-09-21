@@ -46,3 +46,31 @@ def test_client_suggestions_keep_the_loose_roots():
     """A client brand still wants short variants — that is why they exist."""
     out = bi.suggest_client_domains("The Headline Theory", count=0, max_checks=0)
     assert any("theory" in r and "headline" not in r for r in out["roots"])
+
+
+def test_a_purchase_refuses_to_start_while_one_is_running(monkeypatch):
+    """Two overlapping runs register the same shortlist twice, and domains are
+    not refundable."""
+    monkeypatch.setattr(bi, "buy_progress", lambda: {"running": True, "done": 3, "total": 14})
+    r = bi.buy_domains({"provider": "google", "domains": ["x.info"]}, confirm=True)
+    assert "already running" in r["error"]
+    assert r["in_flight"]["done"] == 3
+
+
+def test_a_stale_lock_does_not_block_buying_for_ever(monkeypatch):
+    """A crashed run must not leave the button dead."""
+    import datetime as dt
+    old = (dt.datetime.now(dt.timezone.utc)
+           - dt.timedelta(seconds=bi.BUY_LOCK_STALE_SECONDS + 60)).isoformat()
+    monkeypatch.setattr(bi.store, "get_state",
+                        lambda k: {"running": True, "at": old} if k == bi.BUY_PROGRESS_KEY else None)
+    p = bi.buy_progress()
+    assert p["running"] is False and p["stale"] is True
+
+
+def test_a_fresh_lock_still_blocks(monkeypatch):
+    import datetime as dt
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    monkeypatch.setattr(bi.store, "get_state",
+                        lambda k: {"running": True, "at": now} if k == bi.BUY_PROGRESS_KEY else None)
+    assert bi.buy_progress()["running"] is True

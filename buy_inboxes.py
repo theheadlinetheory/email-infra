@@ -41,6 +41,42 @@ _THEME_ROOTS = {
 }
 
 ORDERS_KEY = "buy_orders"          # {orders: [ {id, owner, provider, domains, status, ...} ]}
+BUY_PROGRESS_KEY = "buy_progress"  # live state while a purchase is running
+
+# A purchase is a sequence of paid, irreversible registrations that takes a
+# minute or more. If the page shows nothing while it runs, the natural reaction
+# is to press the button again — and that spends the money twice. So the
+# purchase publishes where it is after every domain, and refuses to start while
+# another one is already in flight.
+BUY_LOCK_STALE_SECONDS = 15 * 60
+
+
+def _progress(**kw) -> None:
+    import datetime as _dt
+    try:
+        cur = store.get_state(BUY_PROGRESS_KEY) or {}
+        cur.update(kw)
+        cur["at"] = _dt.datetime.now(timezone.utc).isoformat()
+        store.set_state(BUY_PROGRESS_KEY, cur)
+    except Exception:
+        pass                                   # progress is cosmetic, never fatal
+
+
+def buy_progress() -> dict:
+    """Where a running purchase has got to, for the page to poll."""
+    import datetime as _dt
+    p = store.get_state(BUY_PROGRESS_KEY) or {}
+    if p.get("running") and p.get("at"):
+        try:
+            age = (_dt.datetime.now(timezone.utc)
+                   - _dt.datetime.fromisoformat(p["at"])).total_seconds()
+            # A lock left behind by a crashed run must not block buying for ever.
+            if age > BUY_LOCK_STALE_SECONDS:
+                p["running"] = False
+                p["stale"] = True
+        except ValueError:
+            pass
+    return p
 
 # --- cost model (previews only; the real charge is confirmed at purchase) ---
 MAILBOX_MO = 3                      # Zapmail mailbox slot, $/month
@@ -292,12 +328,13 @@ def _batch_config(owner, client_name, provider, avail_domains, per):
     }]}
 
 
-def plan(spec):
-    """Full cost preview + provisioning batch config for a purchase spec.
-    spec = {owner:'acquisition'|'client', client_name?, provider:'google'|'outlook',
-            inboxes_per_domain, domains:[...]}.  No spend."""
-    owner = spec.get("owner", "acquisition")
-    client_name = spec.get("client_name")
+def validate_spec(spec) -> dict | None:
+    """The refusals that need nothing but the spec itself.
+
+    Pure and free, so they run before anything that touches the network or the
+    database — an Outlook order must be refused whether or not Supabase is
+    reachable.
+    """
     provider = (spec.get("provider") or "google").lower()
     if provider in BANNED_PROVIDERS:
         return {"error": "Outlook inboxes are not provisioned — Google only.",
@@ -308,6 +345,20 @@ def plan(spec):
                          f"{MAX_INBOXES_PER_DOMAIN}. The admin mailbox cannot be "
                          "removed later while its siblings remain.",
                 "ready_to_buy": False}
+    return None
+
+
+def plan(spec):
+    """Full cost preview + provisioning batch config for a purchase spec.
+    spec = {owner:'acquisition'|'client', client_name?, provider:'google',
+            inboxes_per_domain, domains:[...]}.  No spend."""
+    bad = validate_spec(spec)
+    if bad:
+        return bad
+    owner = spec.get("owner", "acquisition")
+    client_name = spec.get("client_name")
+    provider = (spec.get("provider") or "google").lower()
+    per = max(1, int(spec.get("inboxes_per_domain") or MAX_INBOXES_PER_DOMAIN))
     checked = check_domains(spec.get("domains") or [])["domains"]
     available = [c for c in checked if c["available"]]
     unavailable = [c for c in checked if c["available"] is False]
@@ -358,6 +409,24 @@ def buy_domains(spec, confirm=False):
     """PHASE 1 — register the available domains on Spaceship + connect them to
     Zapmail, and open an order. Dry-run unless confirm=True. SPENDS on domains
     when confirm=True (the UI's Confirm click is the approval)."""
+    # The free refusals first: they need neither the network nor the database,
+    # so an Outlook order is refused even when Supabase is unreachable.
+    bad = validate_spec(spec)
+    if bad:
+        return bad
+
+    # THEN the lock, before any work. A second click must not even re-check
+    # availability, let alone register: two overlapping runs would buy the same
+    # shortlist twice and domains are not refundable. Only a committed purchase
+    # takes the lock — a dry run is free and must stay clickable.
+    if confirm:
+        running = buy_progress()
+        if running.get("running"):
+            return {"error": "a purchase is already running — wait for it to finish. "
+                             f"It is on {running.get('done', 0)} of "
+                             f"{running.get('total', '?')}.",
+                    "in_flight": running}
+
     p = plan(spec)
     if p.get("error"):
         return p
@@ -367,6 +436,9 @@ def buy_domains(spec, confirm=False):
     if not confirm:
         return {"dry_run": True, "would_register": available,
                 "cost": p["cost"], "plan": p}
+
+    _progress(running=True, done=0, total=len(available), stage="starting",
+              domains=available, registered=[], failed=[], order_id=None)
 
     registered, failed, ns_failed = [], [], []
     for d in available:
@@ -390,6 +462,8 @@ def buy_domains(spec, confirm=False):
                 failed.append({"domain": d, "error": str(res.get("error"))[:140]})
         except Exception as e:
             failed.append({"domain": d, "error": str(e)[:140]})
+        _progress(done=len(registered) + len(failed), stage=f"registering {d}",
+                  registered=list(registered), failed=[f["domain"] for f in failed])
 
     # Connect each registered domain to Zapmail. DNS still needs to propagate
     # before mailboxes can be created — that is what "Provision inboxes" waits
@@ -416,6 +490,8 @@ def buy_domains(spec, confirm=False):
                 connect_failed.append(entry)
         else:
             connected.append(d)
+        _progress(stage=f"connecting {d}", connected=len(connected),
+                  pending=len(pending))
 
     orders = _orders()
     oid = max([o.get("id", 0) for o in orders], default=0) + 1
@@ -426,6 +502,9 @@ def buy_domains(spec, confirm=False):
         "provider": p["provider"],
         "inboxes_per_domain": p["inboxes_per_domain"],
         "domains": registered, "connected": connected, "failed": failed,
+        # Where these domains point once live. Carried on the order so the
+        # provisioning forwarding step has it without guessing.
+        "forward_to": (spec.get("forward_to") or "").strip() or None,
         "nameserver_failed": ns_failed,
         "connect_pending": [p["domain"] for p in pending],
         "connect_failed": connect_failed,
@@ -435,6 +514,8 @@ def buy_domains(spec, confirm=False):
     }
     orders.append(order)
     _save_orders(orders)
+    _progress(running=False, stage="done", order_id=oid,
+              connected=len(connected), pending=len(pending))
     note = ("Domains registered and connected to Zapmail. Wait ~15-60 min for DNS "
             "to propagate, then press 'Provision inboxes now' on the order.")
     if pending:
