@@ -226,7 +226,13 @@ def _step_mailboxes(order, j, io):
         if not res.get("ok"):
             rec["error"] = res.get("error")
             _note(j, f"{d}: create failed — {str(res.get('error'))[:80]}")
-            return False, True
+            # One domain failing must not abandon the other thirteen. Zapmail
+            # rate-limits ("Too many requests") partway through a 14-domain
+            # batch, and aborting the whole pass there meant each resume got
+            # through only one or two more domains -- 15 of 42 mailboxes after
+            # several passes. A refusal on THIS domain is per-domain; carry on
+            # and let the next pass retry it.
+            continue
         after = io.zapmail_mailboxes_on(d, rec.get("zapmail_id"))
         rec["mailboxes"] = (after or [])[:per]
         rec["mailboxes_done"] = len(rec["mailboxes"]) >= per

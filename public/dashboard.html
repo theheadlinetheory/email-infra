@@ -39,6 +39,8 @@
   td.n{text-align:right;font-variant-numeric:tabular-nums}
   tr:hover td{background:#1a212b}
   .tag{font-size:10.5px;padding:1px 6px;border-radius:10px;border:1px solid var(--line2);color:var(--dim)}
+  .steps{display:flex;flex-direction:column;gap:2px;max-width:560px}
+  .steprow{display:flex;align-items:baseline;gap:6px;line-height:1.7}
   .good{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .dim{color:var(--dim)}
   .rule{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
   .rule .st{min-width:42px;font-weight:700}
@@ -1069,6 +1071,48 @@ function renderPlan(){
   if (b) b.onclick = doBuy;
 }
 
+
+// Which domains are actually still outstanding, by name. "Stuck" is usually
+// "nine domains still owe mailboxes", and that is only actionable if you can
+// see WHICH nine.
+function pendingNote(o, j, at){
+  const doms = o.domains || [];
+  const jd = j.domains || {};
+  const per = o.inboxes_per_domain || 3;
+  const step = (j.step || '');
+  let waiting = [], what = '';
+  if (step === 'dns') {
+    waiting = doms.filter(d => !(jd[d] || {}).dns_ready);
+    what = 'waiting on DNS';
+  } else if (step === 'mailboxes') {
+    waiting = doms.filter(d => (jd[d] || {}).dns_ready && !(jd[d] || {}).mailboxes_done);
+    what = 'still to get mailboxes';
+  } else if (step === 'forwarding') {
+    const done = new Set(j.forwarded || []);
+    waiting = doms.filter(d => !done.has(d));
+    what = 'still to be forwarded';
+  }
+  const errs = doms.filter(d => (jd[d] || {}).error)
+                   .map(d => `${d}: ${(jd[d] || {}).error}`);
+  let html = '';
+  if (waiting.length) {
+    html += `<div class="dim" style="margin-top:6px;font-size:11.5px">
+      <b>${waiting.length} of ${doms.length}</b> ${esc(what)} —
+      ${waiting.map(esc).join(', ')}</div>`;
+  }
+  if (errs.length) {
+    html += `<div class="viol" style="margin-left:0">${errs.slice(0,6).map(esc).join('<br>')}
+      <br><span class="dim">Zapmail rate-limits a long batch. These retry on the
+      next pass — keep Provision running.</span></div>`;
+  }
+  if (step === 'done') {
+    html += `<div class="good" style="margin-top:6px;font-size:11.5px">
+      All ${doms.length * per} mailboxes are in SmartLead and warming. They are
+      sendable 14 days after warm-up started.</div>`;
+  }
+  return html;
+}
+
 function renderOrders(){
   const d = document.getElementById('b-orders'); if (!d) return;
   if (!BUY.orders.length) { d.innerHTML = '<div class="empty">No orders yet.</div>'; return; }
@@ -1097,17 +1141,46 @@ function renderOrders(){
   BUY.orders = live;
   // The pipeline, named, so an order in flight says WHERE it is rather than
   // showing a bare status nobody can act on.
+  // These MUST match buy_provision.STEPS in order. `forwarding` was missing
+  // here, so every step after it drew one place to the left — an order sending
+  // to SmartLead rendered as "Creating mailboxes".
   const STEPS = [
-    ['bought', 'Domains bought'],
-    ['dns', 'Waiting for DNS'],
-    ['slots', 'Buying mailbox slots'],
-    ['mailboxes', 'Creating mailboxes'],
-    ['export', 'Sending to SmartLead'],
-    ['find', 'Waiting for SmartLead'],
-    ['tag', 'Tagging'],
-    ['warmup', 'Starting warm-up'],
-    ['done', 'Live'],
+    ['bought',     'Domains bought'],
+    ['dns',        'DNS resolving'],
+    ['slots',      'Mailbox slots bought'],
+    ['mailboxes',  'Mailboxes created on Zapmail'],
+    ['forwarding', 'Domain forwarding set'],
+    ['export',     'Handed to SmartLead'],
+    ['find',       'Confirmed in SmartLead'],
+    ['tag',        'Tagged'],
+    ['warmup',     'Warm-up started'],
+    ['done',       'Live — warming for 14 days'],
   ];
+
+  // What each step has actually achieved, so a stalled order says 15/42 rather
+  // than showing a dot and leaving you to guess.
+  function progressOf(o, j, key){
+    const doms = o.domains || [];
+    const per  = o.inboxes_per_domain || 3;
+    const jd   = j.domains || {};
+    const n    = k => doms.filter(d => (jd[d] || {})[k]).length;
+    const mailboxes = doms.reduce(
+      (t, d) => t + (((jd[d] || {}).mailboxes || []).length), 0);
+    switch (key) {
+      case 'bought':     return {have: doms.length, want: doms.length, unit: 'domains'};
+      case 'dns':        return {have: n('dns_ready'), want: doms.length, unit: 'domains'};
+      case 'slots':      return {have: null, want: null,
+                                 note: j.slots_needed ? `${j.slots_needed} still to cover` : ''};
+      case 'mailboxes':  return {have: mailboxes, want: doms.length * per, unit: 'mailboxes'};
+      case 'forwarding': return {have: (j.forwarded || []).length, want: doms.length, unit: 'domains'};
+      case 'export':
+      case 'find':       return {have: Object.keys(j.smartlead || {}).length,
+                                 want: doms.length * per, unit: 'mailboxes'};
+      case 'tag':        return {have: (j.tagged || []).length, want: doms.length * per, unit: 'mailboxes'};
+      case 'warmup':     return {have: (j.warmed || []).length, want: doms.length * per, unit: 'mailboxes'};
+      default:           return {have: null, want: null};
+    }
+  }
   d.innerHTML = BUY.orders.map(o => {
     const j = o.journal || {};
     const step = j.step || (o.status === 'live' ? 'done' : 'bought');
@@ -1115,11 +1188,27 @@ function renderOrders(){
     const r = o.readiness || {};
     const nd = (o.domains || []).length;
     const ready = r.ready_count != null ? `${r.ready_count}/${nd} DNS ready` : '';
-    const track = STEPS.map(([k, label], i) => {
-      const cls = i < at ? 'good' : i === at ? 'warn' : 'dim';
-      const mark = i < at ? '✓' : i === at ? '●' : '○';
-      return `<span class="${cls}" title="${esc(label)}">${mark}</span>`;
-    }).join(' ');
+    // A labelled checklist, not a row of dots. "When does warm-up start" and
+    // "when do these reach SmartLead" are answerable by reading down it.
+    const track = '<div class="steps">' + STEPS.map(([k, label], i) => {
+      const done = i < at, now = i === at;
+      const cls  = done ? 'good' : now ? 'warn' : 'dim';
+      const mark = done ? '✓' : now ? '●' : '○';
+      const p    = progressOf(o, j, k);
+      let count  = '';
+      if (p.have != null && p.want) {
+        const short = p.have < p.want;
+        count = `<span class="${short && (done || now) ? 'warn' : 'dim'}">`
+              + `${p.have} / ${p.want} ${esc(p.unit || '')}</span>`;
+      } else if (p.note) {
+        count = `<span class="dim">${esc(p.note)}</span>`;
+      }
+      return `<div class="steprow">
+        <span class="${cls}" style="width:1.2em;display:inline-block">${mark}</span>
+        <span class="${now ? '' : cls}">${esc(label)}</span>
+        <span style="flex:1"></span>${count}
+      </div>`;
+    }).join('') + '</div>';
     return `<div class="c" style="margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
         <b>Order ${o.id}</b>
@@ -1132,10 +1221,8 @@ function renderOrders(){
         ${step === 'done' ? '<span class="chip ok">live</span>' :
           `<button class="act" data-prov="${o.id}">Provision now</button>`}
       </div>
-      <div style="margin-top:7px;font-size:12px">
-        ${track} <span class="dim" style="margin-left:8px">${
-          esc((STEPS[at] || ['', ''])[1])}</span>
-      </div>
+      <div style="margin-top:7px;font-size:12px">${track}</div>
+      ${pendingNote(o, j, at)}
       ${(o.failed || []).length
         ? `<div class="viol" style="margin-left:0">${o.failed.length} domain(s) failed to register:
              ${o.failed.slice(0, 4).map(f => esc(f.domain || f)).join(', ')}</div>` : ''}
