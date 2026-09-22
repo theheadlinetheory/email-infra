@@ -163,8 +163,23 @@ def _step_dns(order, j, io):
 
 def _step_slots(order, j, io):
     per = per_domain(order)
-    want = sum(per - min(per, (_dom(j, d).get("existing_mailboxes") or 0))
-               for d in order.get("domains") or [] if _dom(j, d).get("dns_ready"))
+    # Count what EXISTS right now, not what the journal remembers. The journal's
+    # `existing_mailboxes` is written by the DNS step, which runs once and is
+    # then behind us — so on any re-entry it still reads zero for domains that
+    # have since been filled, and this step would buy a second set of slots for
+    # mailboxes that already exist. The mailbox step re-reads live for exactly
+    # this reason; the step that SPENDS THE MONEY should not be the laxer one.
+    want = 0
+    for d in order.get("domains") or []:
+        rec = _dom(j, d)
+        if not rec.get("dns_ready"):
+            continue
+        live = io.zapmail_mailboxes_on(d, rec.get("zapmail_id"))
+        if live is None:
+            _note(j, f"slots: could not read {d}; not buying blind")
+            return False, True
+        rec["existing_mailboxes"] = len(live)
+        want += per - min(per, len(live))
     j["slots_needed"] = want
     if want <= 0:
         return True, False
