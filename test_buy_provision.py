@@ -390,3 +390,46 @@ def test_only_dns_ready_domains_are_forwarded():
     o = order(domains=["fast.co", "slow.co"])
     bp.advance(o, io)
     assert list(io.forwarded) == ["fast.co"]
+
+
+def test_one_rate_limited_domain_does_not_abandon_the_others():
+    """Zapmail 429s partway through a 14-domain batch. Aborting the pass there
+    meant each resume got through one or two more domains -- 15 of 42 mailboxes
+    after several passes, which read as 'stuck'."""
+    io = FakeIO(["a.co", "b.co", "c.co"])
+    calls = []
+    real = io.zapmail_create_mailboxes
+
+    def flaky(zid, d, specs):
+        calls.append(d)
+        if d == "b.co":
+            return {"ok": False, "error": "Too many requests"}
+        return real(zid, d, specs)
+
+    io.zapmail_create_mailboxes = flaky
+    o = order(domains=["a.co", "b.co", "c.co"])
+    bp.advance(o, io)
+    assert calls == ["a.co", "b.co", "c.co"], f"stopped early: {calls}"
+    j = o["journal"]
+    assert j["domains"]["a.co"]["mailboxes_done"] is True
+    assert j["domains"]["c.co"]["mailboxes_done"] is True
+    assert not j["domains"]["b.co"].get("mailboxes_done")
+
+
+def test_the_failed_domain_is_retried_on_the_next_pass():
+    io = FakeIO(["a.co", "b.co"])
+    real = io.zapmail_create_mailboxes
+    fail = {"on": True}
+
+    def flaky(zid, d, specs):
+        if d == "b.co" and fail["on"]:
+            return {"ok": False, "error": "Too many requests"}
+        return real(zid, d, specs)
+
+    io.zapmail_create_mailboxes = flaky
+    o = order(domains=["a.co", "b.co"])
+    bp.advance(o, io)
+    assert not o["journal"]["domains"]["b.co"].get("mailboxes_done")
+    fail["on"] = False
+    bp.advance(o, io)                      # the rate limit has passed
+    assert o["journal"]["domains"]["b.co"]["mailboxes_done"] is True
