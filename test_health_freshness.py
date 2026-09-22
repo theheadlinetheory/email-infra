@@ -22,13 +22,40 @@ def test_an_empty_object_shape_is_a_legitimate_zero():
     assert hd._rows_from(payload, "2026-09-01", "2026-09-02") == []
 
 
-def test_the_new_empty_list_shape_raises():
-    """This is the regression. SmartLead now answers {"ok":true,"data":[]} for
-    every path, including ones that never existed, so an empty list is a
-    catch-all -- not a report that no inbox bounced."""
-    with pytest.raises(hd.MetricsShapeChanged) as e:
-        hd._rows_from({"ok": True, "data": []}, "2026-09-19", "2026-09-21")
-    assert "catch-all" in str(e.value)
+def test_an_empty_list_is_not_a_shape_change():
+    """An empty list was briefly raised here, on the theory that the endpoint
+    had become a catch-all. It had not -- stale credentials return an empty
+    list instead of a 401, and the endpoint came straight back when the
+    password was fixed. Raising on empty would fail the nightly EVERY Saturday,
+    when the fleet genuinely sends nothing. Whether emptiness is a fault is the
+    caller's question, and min_records already encodes it."""
+    assert hd._rows_from({"ok": True, "data": []}, "2026-09-19", "2026-09-21") == []
+
+
+def test_an_empty_window_still_fails_when_records_were_required(monkeypatch):
+    """The guard that actually matters: a multi-day window passing MIN_RECORDS
+    must still refuse an empty answer, and say why."""
+    class R:
+        status_code = 200
+        def json(self): return {"ok": True, "data": []}
+    monkeypatch.setattr(hd, "_headers", lambda: {})
+    monkeypatch.setattr(hd.time, "sleep", lambda *_: None)
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: R())
+    with pytest.raises(RuntimeError) as e:
+        hd.fetch_window("2026-09-19", "2026-09-21", retries=1, min_records=50)
+    assert "SMARTLEAD_LOGIN_PASSWORD" in str(e.value)
+
+
+def test_a_single_empty_day_is_accepted(monkeypatch):
+    """Saturday. min_records defaults to 0, so a true zero is recorded."""
+    class R:
+        status_code = 200
+        def json(self): return {"ok": True, "data": []}
+    monkeypatch.setattr(hd, "_headers", lambda: {})
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: R())
+    assert hd.fetch_window("2026-09-19", "2026-09-19", retries=1) == {}
 
 
 def test_a_populated_list_shape_is_accepted():
