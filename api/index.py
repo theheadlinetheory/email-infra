@@ -1078,6 +1078,72 @@ def buy_orders_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/buy-fix-nameservers", methods=["POST", "OPTIONS"])
+def buy_fix_nameservers():
+    """Re-point an order's domains at ClouDNS. Body {order_id}.
+
+    Nameservers are the step that fails silently. A domain registers fine, the
+    NS update is refused, and nothing downstream says so: Zapmail simply never
+    reports DNS ready, so provisioning sits at the `dns` step for ever looking
+    like slow propagation. On 2026-09-21 fourteen domains sat on the
+    registrar's own nameservers for a day that way.
+
+    Idempotent -- setting the same nameservers twice is a no-op -- so this is
+    safe to press whenever an order is stuck at DNS.
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    body = request.get_json(silent=True) or {}
+    try:
+        oid = int(body.get("order_id"))
+    except (TypeError, ValueError):
+        return _cors(jsonify({"error": "order_id (number) required"})), 400
+    try:
+        import buy_inboxes as bi
+        import setup as S
+        orders = bi._orders()
+        order = next((o for o in orders if o.get("id") == oid), None)
+        if not order:
+            return _cors(jsonify({"error": "order not found"})), 400
+
+        # Only domains that are not already resolving. Re-setting nameservers on
+        # a working domain is harmless but pointless, and it burns registrar
+        # calls on a batch of 14.
+        j = order.get("journal") or {}
+        targets = [d for d in (order.get("domains") or [])
+                   if not ((j.get("domains") or {}).get(d) or {}).get("dns_ready")]
+        if not targets:
+            return _cors(jsonify({"ok": True, "fixed": [], "failed": [],
+                                  "note": "every domain already resolves — nothing to fix"}))
+        fixed, failed = [], []
+        for d in targets:
+            try:
+                r = S.Spaceship.set_nameservers(d)
+                if isinstance(r, dict) and not r.get("success", True):
+                    failed.append({"domain": d, "error": str(r.get("error") or r)[:140]})
+                else:
+                    fixed.append(d)
+            except Exception as e:                   # noqa: BLE001
+                failed.append({"domain": d, "error": str(e)[:140]})
+        # Record it, so the order stops claiming a failure that has been fixed.
+        remaining = {f["domain"] for f in failed}
+        order["nameserver_failed"] = [x for x in (order.get("nameserver_failed") or [])
+                                      if (x.get("domain") if isinstance(x, dict) else x) in remaining]
+        bi._save_orders(orders)
+        return _cors(jsonify({
+            "ok": not failed, "fixed": fixed, "failed": failed,
+            "note": f"{len(fixed)} domain(s) re-pointed at ClouDNS. Registry "
+                    f"delegation can take up to an hour — press Provision again "
+                    f"once they resolve."}))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/buy-provision", methods=["POST", "OPTIONS"])
 def buy_provision_route():
     """PHASE 2 — push an order as far towards live as it will go right now.
