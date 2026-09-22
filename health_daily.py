@@ -159,6 +159,10 @@ def _headers() -> dict:
 class MetricsShapeChanged(RuntimeError):
     """The metrics feed answered in a shape this parser does not understand.
 
+    NOTE: an empty list is not a shape change and is not raised here -- see
+    _rows_from. It is usually stale credentials, and `min_records` is what
+    decides whether emptiness is acceptable for a given window.
+
     This is its own error because the failure it replaces was silent. The code
     used to read `(payload.get("data") or {}).get("email_health_metrics", [])`.
     When SmartLead changed `data` from an object to a LIST, `[] or {}` became
@@ -183,15 +187,12 @@ def _rows_from(payload, start: str, end: str) -> list:
                 f"(keys: {sorted(data)[:8]})")
         return rows
     if isinstance(data, list):
-        # The shape SmartLead started returning. An empty list here is the
-        # catch-all this endpoint now serves for EVERY path, including ones
-        # that never existed, so it cannot be read as "no inboxes bounced".
-        if not data:
-            raise MetricsShapeChanged(
-                f"metrics for {start}..{end}: 'data' is an empty list. This "
-                f"endpoint returns {{'ok': true, 'data': []}} for every path "
-                f"tried, including invented ones, so it is answering as a "
-                f"catch-all rather than reporting zero activity.")
+        # SmartLead also answers in this shape. An empty list is NOT decided
+        # here: Saturday is genuinely empty fleet-wide, and raising on that
+        # would fail the nightly every weekend. Whether emptiness is a fault is
+        # the CALLER's question, and `min_records` already encodes it -- a
+        # single day passes 0 and accepts the zero, a multi-day window passes
+        # MIN_RECORDS and rejects it.
         return data
     raise MetricsShapeChanged(
         f"metrics for {start}..{end}: 'data' is {type(data).__name__}, "
@@ -246,7 +247,13 @@ def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -
             rec["open_rate"] = _pct(x.get("open_rate"))
             out[email] = rec
         if len(out) < min_records:
-            last = f"only {len(out)} records"
+            # An empty answer here is almost never "nothing happened". Stale
+            # Smartlead credentials mint a token that LOOKS valid and then get
+            # an empty list instead of a 401 -- which is exactly how this read
+            # as a dead endpoint for a day. Say so in the error.
+            last = (f"only {len(out)} records (an empty answer here usually "
+                    f"means stale SMARTLEAD_LOGIN_PASSWORD -- bad credentials "
+                    f"return an empty list, not a 401)")
             time.sleep(5 * (attempt + 1))
             continue
         return out
