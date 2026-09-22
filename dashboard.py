@@ -478,7 +478,10 @@ def get_health_metrics(days=7):
         if r.status_code != 200:
             return _health_cache["data"] or {}
         data = r.json()
-        metrics = data.get("data", {}).get("email_health_metrics", [])
+        # Same two shapes as sync.py. On the list shape this raised
+        # AttributeError (list has no .get) rather than returning anything.
+        import health_daily as _hd
+        metrics = _hd._rows_from(data, "", "")
         result = {m["from_email"]: m for m in metrics}
         _health_cache["data"] = result
         _health_cache["time"] = now
