@@ -39,6 +39,9 @@
   td.n{text-align:right;font-variant-numeric:tabular-nums}
   tr:hover td{background:#1a212b}
   .tag{font-size:10.5px;padding:1px 6px;border-radius:10px;border:1px solid var(--line2);color:var(--dim)}
+  .buytbl{border-collapse:collapse;margin-top:8px;font-size:12px;width:100%}
+  .buytbl th{text-align:left;color:var(--dim);font-weight:400;padding:2px 10px 2px 0}
+  .buytbl td{padding:2px 10px 2px 0;white-space:nowrap}
   .steps{display:flex;flex-direction:column;gap:2px;max-width:560px}
   .steprow{display:flex;align-items:baseline;gap:6px;line-height:1.7}
   .good{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .dim{color:var(--dim)}
@@ -1037,7 +1040,7 @@ function buyChrome(){
 function renderBuy(){
   const el = document.getElementById('buy');
   if (!el.dataset.built) { el.innerHTML = buyChrome(); el.dataset.built = '1'; wireBuy(); }
-  renderSuggestions(); renderPlan(); renderOrders();
+  renderSuggestions(); renderPlan(); renderOrders(); restoreBuyProgress();
 }
 
 function renderSuggestions(){
@@ -1299,6 +1302,47 @@ async function doPlan(){
   renderPlan();
 }
 
+// A batch that reports only "9 of 14 registered" cannot tell you WHICH five
+// failed or why — and the nameserver half is where the silent failures live:
+// 14 domains were once bought, left on the registrar's own nameservers, and
+// recorded as connected. So every domain gets a row and every stage a column.
+function buyProgressHtml(pr){
+  const rows = pr.rows || [];
+  const mark = v => v === true ? '<span class="good">✓</span>'
+              : v === false ? '<span class="bad">✗</span>'
+              : v === 'working' ? '<span class="warn">●</span>'
+              : v === 'pending' ? '<span class="warn">DNS</span>'
+              : '<span class="dim">·</span>';
+  let h = `<b>${pr.done ?? 0} of ${pr.total ?? '?'}</b> registered`
+        + (pr.stage ? ` — ${esc(pr.stage)}` : '')
+        + (pr.running ? '<br><span class="dim">Do not press Register again — '
+                      + 'domains are not refundable.</span>' : '');
+  if (rows.length) {
+    h += `<table class="buytbl"><tr><th>Domain</th><th>Registered</th><th>NS</th>
+          <th>Zapmail</th><th></th></tr>`
+      + rows.map(r => `<tr>
+          <td>${esc(r.domain)}</td>
+          <td>${mark(r.registered)}</td>
+          <td>${mark(r.ns)}</td>
+          <td>${mark(r.zapmail)}</td>
+          <td class="bad">${esc(r.error || '')}</td>
+        </tr>`).join('')
+      + '</table>';
+  }
+  return h;
+}
+
+// A purchase outlives the page. Reloading mid-batch used to lose every trace of
+// what had already been bought, which is the worst moment to show someone an
+// empty screen and a Register button.
+function restoreBuyProgress(){
+  let pr = null;
+  try { pr = JSON.parse(localStorage.getItem('buyProgress') || 'null'); } catch (e) {}
+  if (!pr || !(pr.rows || []).length) return;
+  rpBuyNote(buyProgressHtml(pr)
+    + '<div class="dim">Restored from this browser — reload the tab for live state.</div>');
+}
+
 async function doBuy(){
   const p = BUY.plan || {}, c = p.cost || {}, n = p.counts || {};
   const fwd = (document.getElementById('b-fwd').value || '').trim();
@@ -1317,11 +1361,9 @@ async function doBuy(){
   const tick = async () => {
     while (polling) {
       const pr = await get('/api/buy-progress');
-      if (pr && pr.running) {
-        rpBuyNote(`<b>${pr.done ?? 0} of ${pr.total ?? '?'}</b> registered`
-          + (pr.stage ? ` — ${esc(pr.stage)}` : '')
-          + (pr.connected != null ? ` · ${pr.connected} connected to Zapmail` : '')
-          + '<br><span class="dim">Do not press Register again — domains are not refundable.</span>');
+      if (pr && (pr.running || (pr.rows || []).length)) {
+        rpBuyNote(buyProgressHtml(pr));
+        try { localStorage.setItem('buyProgress', JSON.stringify(pr)); } catch (e) {}
       }
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -1337,8 +1379,13 @@ async function doBuy(){
                 `${(r.connected || []).length} connected to Zapmail`];
   if ((r.connect_pending || []).length) bits.push(`${r.connect_pending.length} awaiting DNS`);
   if ((r.failed || []).length) bits.push(`${r.failed.length} FAILED`);
+  // Keep the per-domain table on screen after the batch ends — the summary
+  // counts are what you check, the table is what you act on.
+  const final = await get('/api/buy-progress');
   rpBuyNote(`<span class="good">${bits.join(' · ')}</span><br>
-    <span class="dim">${esc(r.note || '')}</span>`);
+    <span class="dim">${esc(r.note || '')}</span>`
+    + ((final && (final.rows || []).length) ? buyProgressHtml({...final, running: false}) : ''));
+  try { localStorage.removeItem('buyProgress'); } catch (e) {}
   BUY.chosen.clear(); BUY.plan = null;
   await loadOrders(); renderBuy();
 }
