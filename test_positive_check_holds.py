@@ -67,3 +67,40 @@ def test_the_old_javascript_default_would_have_cleared_it():
     r = summarise([{"campaign": "a", "positive_count": None, "error": "429"}])
     assert (r["positive_total"] if r["positive_total"] is not None else 0) == 0
     assert r["unknown"] is True, "the flag is the only thing that saves it"
+
+
+# ── the same false negative, one level up ────────────────────────────────
+
+def summarise_route(status_map: dict, emails: list) -> dict:
+    """The route's outer guard. campaign_index() returns {} only when the live
+    fetch failed AND there is no last-good cache. With an empty map nothing
+    matches ACTIVE, so no lookup runs, nothing raises, and every inbox reports
+    a clean zero — a false negative produced by the ABSENCE of work."""
+    if not status_map:
+        return {"results": [{"email": e, "positive_total": None, "unknown": True}
+                            for e in emails],
+                "unknown_count": len(emails)}
+    return {"results": [{"email": e, "positive_total": 0, "unknown": False}
+                        for e in emails], "unknown_count": 0}
+
+
+def test_an_unreadable_campaign_list_makes_every_inbox_unknown():
+    r = summarise_route({}, ["a@x.co", "b@x.co"])
+    assert r["unknown_count"] == 2
+    assert all(x["unknown"] and x["positive_total"] is None for x in r["results"])
+
+
+def test_a_readable_campaign_list_still_clears_clean_inboxes():
+    """The guard must not become a reason nothing can ever be reallocated."""
+    r = summarise_route({"Campaign A": "ACTIVE"}, ["a@x.co"])
+    assert r["unknown_count"] == 0 and r["results"][0]["positive_total"] == 0
+
+
+def test_no_campaigns_is_different_from_no_campaign_list():
+    """An inbox genuinely on zero active campaigns is clear. A campaign list we
+    could not read is not. These must not produce the same answer."""
+    unreadable = summarise_route({}, ["a@x.co"])["results"][0]
+    readable = summarise_route({"C": "ACTIVE"}, ["a@x.co"])["results"][0]
+    assert unreadable["unknown"] is True
+    assert readable["unknown"] is False
+    assert unreadable["positive_total"] != readable["positive_total"]

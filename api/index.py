@@ -2011,6 +2011,21 @@ def health_positive_check():
         import health_positive as hp
         status_by = {r["email"]: r for r in store.get_health_status_all()}
         status_map = hr.campaign_status_map()
+        # campaign_index() returns {} only when the live fetch failed AND there
+        # is no last-good cache to fall back on. With an empty map nothing
+        # matches ACTIVE, so no lookup runs, nothing raises, and every inbox
+        # reports a clean zero -- the same false-negative as a failed lookup,
+        # one level up. An unknown campaign list means unknown replies.
+        if not status_map:
+            return _cors(jsonify({
+                "results": [{"email": e, "campaigns": [], "positive_total": None,
+                             "unknown": True, "known_positive_count": 0}
+                            for e in emails],
+                "positive_total": 0,
+                "unknown_count": len(emails),
+                "error": "could not read the Smartlead campaign list — reply "
+                         "state is unknown for every inbox, so nothing is "
+                         "cleared for reallocation."}))
         out = []
         for e in emails:
             names = [c for c in (status_by.get(e, {}).get("campaigns") or [])
