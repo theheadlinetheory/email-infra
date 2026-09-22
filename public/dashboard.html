@@ -724,7 +724,19 @@ function renderInboxes(){
     html += '<h2>Burned domains</h2><div class="empty">No burned domains.</div>';
   }
 
-  html += `<h2>Burned on a live client — ${act.length}</h2>`;
+  // A frozen burned list looks exactly like a quiet week. If the health feed
+  // has stopped, say so ABOVE the list, because the number below it is the
+  // thing that will otherwise be trusted.
+  const fr = d.freshness || {};
+  if (fr.stale) {
+    html += `<div class="banner bad">⚠ This list may be incomplete —
+      ${esc(fr.reason || 'health data freshness could not be established')}
+      ${fr.latest ? `<span class="dim">Newest health data: ${esc(fr.latest)}.</span>` : ''}
+      </div>`;
+  }
+  html += `<h2>Burned on a live client — ${act.length}${
+    fr.stale ? ' <span class="warn" style="font-size:.8em">(as of '
+             + esc(fr.latest || 'unknown') + ')</span>' : ''}</h2>`;
   if (!act.length) {
     html += '<div class="empty">Nothing burned on a live client.</div>';
   } else {
