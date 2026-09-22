@@ -184,10 +184,15 @@ async function post(path, body){
   } catch (e) {
     // A POST that times out may still have LANDED — say so rather than implying
     // nothing happened, because the next click could repeat a paid action.
-    return {error: e.name === 'AbortError'
-      ? `${path} took longer than ${FETCH_TIMEOUT_MS / 1000}s. It may still have `
-        + `gone through — reload and check before trying again.`
-      : `${path} failed: ${e.message}`};
+    // A timeout is NOT a failure verdict — the work may be mid-flight on the
+    // server. Flag it so callers that poll a resumable job can keep waiting
+    // instead of reporting an error the server never gave.
+    if (e.name === 'AbortError') {
+      return {timedOut: true,
+              error: `${path} took longer than ${FETCH_TIMEOUT_MS / 1000}s. It may still have `
+                   + `gone through — reload and check before trying again.`};
+    }
+    return {error: `${path} failed: ${e.message}`};
   } finally {
     clearTimeout(timer);
   }
@@ -1251,6 +1256,11 @@ async function doProvision(id, btn){
     btn.textContent = `working… (${++tries})`;
     const r = await post('/api/buy-provision', {order_id: +id, confirm: true});
     await loadOrders(); renderOrders();
+    // The server keeps going after we stop listening — mailbox creation on 14
+    // domains outruns the browser's 120s long before it outruns Vercel's 300s.
+    // Treating that as an error stopped the poll AND told the user it had
+    // failed, while slots were being bought behind the alert.
+    if (r.timedOut) { btn.textContent = 'still working…'; setTimeout(tick, 15000); return; }
     if (r.error) { alert(r.error); BUY.busy = false; return; }
     if (r.done) { BUY.busy = false; return; }
     if (!r.resume) { BUY.busy = false; return; }   // blocked; the reason is on the order
