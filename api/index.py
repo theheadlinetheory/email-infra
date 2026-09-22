@@ -200,6 +200,17 @@ def overview():
     if data and data.get("clients"):
         data["_cached"] = True
         data["_synced_at"] = ts
+        # This cache goes stale silently, and a stale one reads as a SMALLER
+        # fleet rather than as an error -- inboxes simply go missing. Say how
+        # old it is so the page can, rather than presenting it as today's.
+        try:
+            import health_daily as _hd
+            _age = _hd._cache_age_hours(ts)
+            data["_stale"] = _age is None or _age > _hd.CACHE_STALE_AFTER_HOURS
+            data["_age_hours"] = None if _age is None else round(_age, 1)
+        except Exception:                            # noqa: BLE001
+            data["_stale"] = True
+            data["_age_hours"] = None
         try:
             import re
             import requests as _req
@@ -514,7 +525,10 @@ def inboxes_route():
         # quiet week rather than as no data. Say which it is.
         try:
             import health_daily as _hd
-            freshness = _hd.health_freshness()
+            # `ts` is when health_fleet was built. The burned list is rendered
+            # from THAT, so a current table behind a stale cache must still
+            # read as stale.
+            freshness = _hd.health_freshness(built_at=ts)
         except Exception as _e:                      # noqa: BLE001
             freshness = {"stale": True, "latest": None, "age_days": None,
                          "reason": f"freshness check failed: {str(_e)[:120]}"}
