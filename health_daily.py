@@ -156,6 +156,48 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
 
 
+class MetricsShapeChanged(RuntimeError):
+    """The metrics feed answered in a shape this parser does not understand.
+
+    This is its own error because the failure it replaces was silent. The code
+    used to read `(payload.get("data") or {}).get("email_health_metrics", [])`.
+    When SmartLead changed `data` from an object to a LIST, `[] or {}` became
+    `{}` and the lookup returned `[]` — zero inboxes, HTTP 200, no exception.
+    "Nothing came back" and "nothing is wrong" became the same answer, in the
+    one feed that decides which inboxes are burning.
+    """
+
+
+def _rows_from(payload, start: str, end: str) -> list:
+    """The per-inbox rows, or an exception. Never an empty list by default."""
+    if not isinstance(payload, dict):
+        raise MetricsShapeChanged(
+            f"metrics for {start}..{end}: expected a JSON object, got "
+            f"{type(payload).__name__}")
+    data = payload.get("data")
+    if isinstance(data, dict):
+        rows = data.get("email_health_metrics")
+        if rows is None:
+            raise MetricsShapeChanged(
+                f"metrics for {start}..{end}: 'data' has no 'email_health_metrics' "
+                f"(keys: {sorted(data)[:8]})")
+        return rows
+    if isinstance(data, list):
+        # The shape SmartLead started returning. An empty list here is the
+        # catch-all this endpoint now serves for EVERY path, including ones
+        # that never existed, so it cannot be read as "no inboxes bounced".
+        if not data:
+            raise MetricsShapeChanged(
+                f"metrics for {start}..{end}: 'data' is an empty list. This "
+                f"endpoint returns {{'ok': true, 'data': []}} for every path "
+                f"tried, including invented ones, so it is answering as a "
+                f"catch-all rather than reporting zero activity.")
+        return data
+    raise MetricsShapeChanged(
+        f"metrics for {start}..{end}: 'data' is {type(data).__name__}, "
+        f"expected an object or a list")
+
+
 def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -> dict:
     """Per-inbox metrics for the inclusive date range [start, end].
 
@@ -192,7 +234,7 @@ def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -
             last = f"HTTP {r.status_code}"
             time.sleep(5 * (attempt + 1))
             continue
-        rows = (r.json().get("data") or {}).get("email_health_metrics", [])
+        rows = _rows_from(r.json(), start, end)
         out = {}
         for x in rows:
             email = x.get("from_email")
@@ -495,3 +537,67 @@ if __name__ == "__main__":
     for d in complete_days(5):
         w = fetch_window(d, d)
         print("  %s  inboxes=%-5d sent=%d" % (d, len(w), sum(x["sent"] for x in w.values())))
+
+
+# ── is the burned list actually current? ─────────────────────────────────
+# The burned list is only as fresh as inbox_health_daily. When the metrics feed
+# breaks, the table simply stops gaining rows — and every consumer keeps
+# rendering the last good day as though it were today. A stale burned list does
+# not look stale: it looks like a quiet week.
+
+# Three, not two. THT sends weekdays only, so Friday's data read on Monday
+# morning is legitimately 3 days old and must not cry wolf. Four days means a
+# weekday was missed, which is a real break.
+STALE_AFTER_DAYS = 3
+
+
+def latest_health_date() -> str | None:
+    """The most recent date with rows in inbox_health_daily, or None if that
+    cannot be established. None means UNKNOWN, never 'today'."""
+    import os
+    import requests
+    url = (os.environ.get("SUPABASE_URL") or "").strip()
+    key = (os.environ.get("SUPABASE_SERVICE_KEY")
+           or os.environ.get("SUPABASE_KEY") or "").strip()
+    if not url or not key:
+        return None
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/inbox_health_daily",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            params={"select": "date", "order": "date.desc", "limit": 1},
+            timeout=20)
+        if r.status_code != 200:
+            return None
+        rows = r.json() or []
+        return rows[0]["date"] if rows else None
+    except Exception:
+        return None
+
+
+def health_freshness(today: str | None = None) -> dict:
+    """How old the data behind the burned list is.
+
+    `stale` is True when the newest row is older than STALE_AFTER_DAYS, AND
+    when the age cannot be determined at all — an unknown age is not a fresh
+    one. Consumers show the warning rather than presenting a short list as a
+    complete one.
+    """
+    from datetime import date as _date
+    latest = latest_health_date()
+    if not latest:
+        return {"stale": True, "latest": None, "age_days": None,
+                "reason": "could not read inbox_health_daily — age unknown"}
+    try:
+        y, m, d = (int(x) for x in latest.split("-"))
+        ref = _date.fromisoformat(today) if today else _date.today()
+        age = (ref - _date(y, m, d)).days
+    except Exception:
+        return {"stale": True, "latest": latest, "age_days": None,
+                "reason": f"unreadable date {latest!r}"}
+    if age > STALE_AFTER_DAYS:
+        return {"stale": True, "latest": latest, "age_days": age,
+                "reason": f"newest health data is {age} days old ({latest}). "
+                          f"Inboxes that started burning since then are not in "
+                          f"this list."}
+    return {"stale": False, "latest": latest, "age_days": age}

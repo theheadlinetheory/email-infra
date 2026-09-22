@@ -508,6 +508,17 @@ def inboxes_route():
         burned.sort(key=lambda b: (not b["actionable"], b["client"] or "", b["email"] or ""))
         act = [b for b in burned if b["actionable"]]
 
+        # A short burned list and a stale one look identical on screen. When the
+        # metrics feed breaks, inbox_health_daily simply stops gaining rows and
+        # this list quietly freezes at the last good day — which reads as a
+        # quiet week rather than as no data. Say which it is.
+        try:
+            import health_daily as _hd
+            freshness = _hd.health_freshness()
+        except Exception as _e:                      # noqa: BLE001
+            freshness = {"stale": True, "latest": None, "age_days": None,
+                         "reason": f"freshness check failed: {str(_e)[:120]}"}
+
         reserve = sum(n for k, n in pools.items()
                       if "generic" in k.lower() or "reserve" in k.lower())
         replacement = sum(n for k, n in pools.items() if "replacement" in k.lower())
@@ -611,6 +622,7 @@ def inboxes_route():
             "counts": fleet.get("counts") or {},
             "alerts": fleet.get("alert_summary") or {},
             "burned": burned,
+            "freshness": freshness,
             "burn_rate": burn,
             "holds": holds,
             "jobs": jobs,
