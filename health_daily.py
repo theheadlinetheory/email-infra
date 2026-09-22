@@ -582,7 +582,15 @@ def latest_health_date() -> str | None:
         return None
 
 
-def health_freshness(today: str | None = None) -> dict:
+# The burned list is rendered from the `health_fleet` CACHE, not from
+# inbox_health_daily directly. Those two can disagree: the table can be current
+# while the cache that was built from it is days old, and the banner then calls
+# a frozen list fresh. Written by the nightly, so a day and a half covers one
+# missed run.
+CACHE_STALE_AFTER_HOURS = 36
+
+
+def health_freshness(today: str | None = None, built_at: str | None = None) -> dict:
     """How old the data behind the burned list is.
 
     `stale` is True when the newest row is older than STALE_AFTER_DAYS, AND
@@ -607,4 +615,35 @@ def health_freshness(today: str | None = None) -> dict:
                 "reason": f"newest health data is {age} days old ({latest}). "
                           f"Inboxes that started burning since then are not in "
                           f"this list."}
-    return {"stale": False, "latest": latest, "age_days": age}
+
+    # The table being current is not enough. Judge the thing actually rendered.
+    cache_age = _cache_age_hours(built_at)
+    if built_at is not None and cache_age is None:
+        return {"stale": True, "latest": latest, "age_days": age,
+                "built_at": built_at,
+                "reason": "could not read when this list was built — age unknown"}
+    if cache_age is not None and cache_age > CACHE_STALE_AFTER_HOURS:
+        return {"stale": True, "latest": latest, "age_days": age,
+                "built_at": built_at, "built_hours_ago": round(cache_age, 1),
+                "reason": f"the health data is current, but this list was built "
+                          f"{cache_age / 24:.1f} days ago and has not been "
+                          f"rebuilt since."}
+    out = {"stale": False, "latest": latest, "age_days": age}
+    if cache_age is not None:
+        out["built_hours_ago"] = round(cache_age, 1)
+    return out
+
+
+def _cache_age_hours(built_at: str | None) -> float | None:
+    """Hours since the cache was written, or None if that cannot be read.
+    None from a GIVEN timestamp means unknown, which callers treat as stale."""
+    if not built_at:
+        return None
+    from datetime import datetime, timezone
+    try:
+        ts = datetime.fromisoformat(str(built_at).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+    except Exception:
+        return None

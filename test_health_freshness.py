@@ -126,3 +126,56 @@ def test_latest_health_date_returns_none_rather_than_guessing(monkeypatch):
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "")
     monkeypatch.setenv("SUPABASE_KEY", "")
     assert hd.latest_health_date() is None
+
+
+# ── the cache the list is actually built from ────────────────────────────
+# The banner measured inbox_health_daily while the burned list was rendered
+# from the health_fleet CACHE. Those disagree exactly when it matters: the
+# table current, the cache days old, and a frozen list calling itself fresh.
+
+from datetime import datetime, timedelta, timezone
+
+
+def _hours_ago(h):
+    return (datetime.now(timezone.utc) - timedelta(hours=h)).isoformat()
+
+
+def test_a_stale_cache_is_stale_even_when_the_table_is_current(monkeypatch):
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-22")
+    f = hd.health_freshness(today="2026-09-22", built_at=_hours_ago(24 * 6))
+    assert f["stale"] is True
+    assert "built" in f["reason"] and "rebuilt" in f["reason"]
+
+
+def test_a_fresh_cache_and_fresh_table_is_fresh(monkeypatch):
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-22")
+    f = hd.health_freshness(today="2026-09-22", built_at=_hours_ago(3))
+    assert f["stale"] is False and f["built_hours_ago"] == 3.0
+
+
+def test_one_missed_nightly_does_not_cry_wolf(monkeypatch):
+    """36h covers a single skipped run; firing on every hiccup trains people
+    to ignore the banner."""
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-22")
+    assert hd.health_freshness(today="2026-09-22", built_at=_hours_ago(30))["stale"] is False
+
+
+def test_an_unreadable_build_time_is_stale(monkeypatch):
+    """A timestamp we were given but cannot parse is unknown age, not fresh."""
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-22")
+    f = hd.health_freshness(today="2026-09-22", built_at="not-a-timestamp")
+    assert f["stale"] is True and "age unknown" in f["reason"]
+
+
+def test_no_build_time_falls_back_to_the_table(monkeypatch):
+    """Callers that have no cache timestamp keep the old behaviour rather than
+    being told everything is stale."""
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-22")
+    assert hd.health_freshness(today="2026-09-22")["stale"] is False
+
+
+def test_a_stale_table_still_wins(monkeypatch):
+    """A fresh rebuild of old data is still old data."""
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-10")
+    f = hd.health_freshness(today="2026-09-22", built_at=_hours_ago(1))
+    assert f["stale"] is True and "12 days old" in f["reason"]

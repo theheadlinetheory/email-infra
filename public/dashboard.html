@@ -233,7 +233,17 @@ function renderOverview(){
   const el = document.getElementById('overview');
   if (inv.error && cl.error) { el.innerHTML = `<div class="empty">Both feeds failed: ${esc(inv.error)}</div>`; return; }
 
-  let html = '<div class="cards">'
+  // A stale overview_v2 reads as a SMALLER fleet, not as an error — inboxes
+  // simply go missing and every number below is quietly low. Say so first.
+  let html = '';
+  if (cl._stale) {
+    html += `<div class="banner bad">⚠ These figures were last rebuilt
+      ${cl._age_hours != null ? esc((cl._age_hours / 24).toFixed(1)) + ' days ago'
+                              : 'at an unknown time'}.
+      A stale sync reads as a smaller fleet, so treat every count below as a
+      floor, not a total.</div>`;
+  }
+  html += '<div class="cards">'
     + card('Rules failing', c.FAIL ?? '–', c.FAIL ? 'bad' : 'ok')
     + card('Active clients', s.active_clients ?? '–')
     + card('Client inboxes', s.inboxes ?? '–')
