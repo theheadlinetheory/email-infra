@@ -1093,10 +1093,26 @@ def buy_provision_route():
                              "been spent.")
             return _cors(jsonify(ready))
 
-        res = bp.advance(order, bp.LiveIO())
-        # Save before answering: a response the caller never receives must not
-        # cost us the record of what was already created.
-        bi._save_orders(orders)
+        # One advance at a time. A step can outrun the browser's 120s while
+        # this function keeps working to 300s — and a timeout is precisely when
+        # someone clicks again. Without this, both calls read the same journal
+        # step and both buy mailbox slots for it.
+        lock = bi.provision_lock_acquire(int(oid))
+        if not lock.get("ok"):
+            return _cors(jsonify({
+                "resume": True,
+                "locked": True,
+                "note": f"already provisioning (started {lock.get('age_seconds', 0)}s "
+                        f"ago) — leaving it to finish rather than buying the same "
+                        f"slots twice.",
+            }))
+        try:
+            res = bp.advance(order, bp.LiveIO())
+        finally:
+            # Save before answering: a response the caller never receives must
+            # not cost us the record of what was already created.
+            bi._save_orders(orders)
+            bi.provision_lock_release(int(oid))
         return _cors(jsonify(res))
     except Exception as e:
         import traceback

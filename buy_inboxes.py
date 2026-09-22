@@ -62,6 +62,49 @@ def _progress(**kw) -> None:
         pass                                   # progress is cosmetic, never fatal
 
 
+PROVISION_LOCK_KEY = "buy_provision_lock"   # {order_id: {at, holder}}
+
+# Provisioning buys mailbox slots — real money, per mailbox. A step can outrun
+# the browser's 120s while Vercel keeps working to 300s, and a timeout is
+# exactly the moment someone clicks again. Two concurrent advances would both
+# read the same journal step and both buy slots for it.
+PROVISION_LOCK_STALE_SECONDS = 6 * 60
+
+
+def provision_lock_acquire(order_id) -> dict:
+    """Claim the right to advance this order. {ok: False, age_seconds} if another
+    call already holds it. Stale locks (a crashed run) expire on their own."""
+    import datetime as _dt
+    now = _dt.datetime.now(timezone.utc)
+    try:
+        locks = store.get_state(PROVISION_LOCK_KEY) or {}
+    except Exception:
+        return {"ok": True, "unverified": True}   # never block on a read failure
+    cur = locks.get(str(order_id))
+    if cur and cur.get("at"):
+        try:
+            age = (now - _dt.datetime.fromisoformat(cur["at"])).total_seconds()
+            if age < PROVISION_LOCK_STALE_SECONDS:
+                return {"ok": False, "age_seconds": int(age)}
+        except ValueError:
+            pass
+    locks[str(order_id)] = {"at": now.isoformat()}
+    try:
+        store.set_state(PROVISION_LOCK_KEY, locks)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+def provision_lock_release(order_id) -> None:
+    try:
+        locks = store.get_state(PROVISION_LOCK_KEY) or {}
+        locks.pop(str(order_id), None)
+        store.set_state(PROVISION_LOCK_KEY, locks)
+    except Exception:
+        pass
+
+
 def buy_progress() -> dict:
     """Where a running purchase has got to, for the page to poll."""
     import datetime as _dt

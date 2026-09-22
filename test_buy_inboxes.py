@@ -74,3 +74,65 @@ def test_a_fresh_lock_still_blocks(monkeypatch):
     monkeypatch.setattr(bi.store, "get_state",
                         lambda k: {"running": True, "at": now} if k == bi.BUY_PROGRESS_KEY else None)
     assert bi.buy_progress()["running"] is True
+
+
+# ── provisioning lock ────────────────────────────────────────────────────
+# Provisioning buys mailbox slots. A step can outrun the browser's 120s while
+# the server keeps working, and a timeout is exactly when someone clicks again.
+
+class _LockStore:
+    def __init__(self): self.s = {}
+    def get_state(self, k): return self.s.get(k)
+    def set_state(self, k, v): self.s[k] = v
+
+
+def _lockstore(monkeypatch):
+    st = _LockStore()
+    monkeypatch.setattr(bi, "store", st)
+    return st
+
+
+def test_provision_lock_is_free_at_first(monkeypatch):
+    _lockstore(monkeypatch)
+    assert bi.provision_lock_acquire(3)["ok"] is True
+
+
+def test_provision_lock_refuses_a_second_holder(monkeypatch):
+    _lockstore(monkeypatch)
+    bi.provision_lock_acquire(3)
+    r = bi.provision_lock_acquire(3)
+    assert r["ok"] is False and "age_seconds" in r
+
+
+def test_provision_lock_is_per_order(monkeypatch):
+    _lockstore(monkeypatch)
+    bi.provision_lock_acquire(3)
+    assert bi.provision_lock_acquire(4)["ok"] is True
+
+
+def test_provision_lock_releases(monkeypatch):
+    _lockstore(monkeypatch)
+    bi.provision_lock_acquire(3)
+    bi.provision_lock_release(3)
+    assert bi.provision_lock_acquire(3)["ok"] is True
+
+
+def test_a_stale_provision_lock_does_not_block_for_ever(monkeypatch):
+    """A crashed run must not wedge an order permanently."""
+    import datetime as dt
+    st = _lockstore(monkeypatch)
+    old = (dt.datetime.now(dt.timezone.utc)
+           - dt.timedelta(seconds=bi.PROVISION_LOCK_STALE_SECONDS + 60)).isoformat()
+    st.s[bi.PROVISION_LOCK_KEY] = {"3": {"at": old}}
+    assert bi.provision_lock_acquire(3)["ok"] is True
+
+
+def test_provision_lock_never_blocks_on_a_read_failure(monkeypatch):
+    """The lock is a guard against double-spending, not a gate on provisioning
+    at all — a broken state store must not stop work."""
+    class Broken:
+        def get_state(self, k): raise RuntimeError("store down")
+        def set_state(self, k, v): pass
+    monkeypatch.setattr(bi, "store", Broken())
+    r = bi.provision_lock_acquire(3)
+    assert r["ok"] is True and r["unverified"] is True
