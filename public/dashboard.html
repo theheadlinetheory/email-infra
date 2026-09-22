@@ -1239,6 +1239,13 @@ function renderOrders(){
       ${(o.failed || []).length
         ? `<div class="viol" style="margin-left:0">${o.failed.length} domain(s) failed to register:
              ${o.failed.slice(0, 4).map(f => esc(f.domain || f)).join(', ')}</div>` : ''}
+      ${(o.nameserver_failed || []).length ? `<div class="viol" style="margin-left:0">
+          <b>${o.nameserver_failed.length} domain(s) are still on the registrar's own
+          nameservers</b> — Zapmail will never report DNS ready for them, so this order
+          cannot leave the DNS step.
+          ${o.nameserver_failed.slice(0, 6).map(f => esc(f.domain || f)).join(', ')}
+          <button class="act" data-fixns="${o.id}" style="margin-left:8px">Re-point at ClouDNS</button>
+        </div>` : ''}
       <div class="dim" style="margin-top:6px;font-size:11.5px">${(o.domains || []).join(', ')}</div>
       ${j.blocked_reason ? `<div class="viol" style="margin-left:0">${esc(j.blocked_reason)}</div>` : ''}
       ${(j.log || []).length ? `<div class="dim" style="margin-top:6px;font-size:11px">${
@@ -1246,6 +1253,17 @@ function renderOrders(){
     </div>`;
   }).join('');
   d.querySelectorAll('button[data-prov]').forEach(b => b.onclick = () => doProvision(b.dataset.prov, b));
+  d.querySelectorAll('button[data-fixns]').forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = 'fixing…';
+    const r = await post('/api/buy-fix-nameservers', {order_id: +b.dataset.fixns});
+    b.textContent = r.error ? 'failed' : `fixed ${(r.fixed || []).length}`;
+    alert(r.error ? r.error
+      : `${(r.fixed || []).length} re-pointed at ClouDNS`
+        + ((r.failed || []).length ? `\n\n${r.failed.length} still failing:\n`
+            + r.failed.slice(0, 6).map(f => `  ${f.domain}: ${f.error}`).join('\n') : '')
+        + `\n\n${r.note || ''}`);
+    await loadOrders(); renderOrders();
+  });
 }
 
 function wireBuy(){
