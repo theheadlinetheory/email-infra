@@ -134,6 +134,48 @@ jobs:
                "campaigns=$(echo "$body" | jq -r '.campaigns_scanned // "?"')" \
                "holding replies=$(echo "$body" | jq -r '(.positives // []) | length')"
 
+      # The Overview tab reads overview_v2, which ONLY /api/sync writes -- and
+      # nothing was calling it. It sat 4 days old holding zero inboxes. A stale
+      # sync there does not read as an error: it reads as a SMALLER FLEET, so
+      # every count on the landing page is quietly low. This is the one cache
+      # whose staleness is invisible by construction, so it runs first and it
+      # is NOT continue-on-error.
+      - name: Rebuild the Overview (sync)
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS -X POST --max-time 290 \
+            "https://email-infra.vercel.app/api/sync?pw=${PW}")
+          echo "$body" | head -c 600; echo
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "::error::sync failed: $(echo "$body" | jq -r '.error')"
+            exit 1
+          fi
+          if [ "$(echo "$body" | jq -r '.ok // "false"')" != "true" ]; then
+            echo "::error::sync did not report ok: $(echo "$body" | jq -r '.message // "?"')"
+            exit 1
+          fi
+          echo "ok - $(echo "$body" | jq -r '.message')"
+
+      # Three more _slow_cache entries nobody was warming. Each is a full
+      # Zapmail or registrar walk, so the first person to open the tab was
+      # paying 13-98s for it -- and past its TTL they were paying that AND
+      # reading a stale number until the rebuild landed.
+      - name: Warm the remaining slow caches
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          for path in domain-expiry generic-capacity acq-capacity; do
+            code=$(curl -sS -o /tmp/$path.json -w '%{http_code}' --max-time 290 \
+              "https://email-infra.vercel.app/api/$path?refresh=1&pw=${PW}") || code=000
+            echo "$path -> HTTP $code $(head -c 140 /tmp/$path.json 2>/dev/null)"
+          done
+
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         env:

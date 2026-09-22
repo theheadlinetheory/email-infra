@@ -150,6 +150,7 @@ def _slow_cache(key, builder, ttl_seconds=6 * 3600):
 
     payload = builder()
     generated = _now().isoformat(timespec="seconds")
+    save_error = None
     try:
         body = dict(payload) if isinstance(payload, dict) else {"data": payload}
         body["_generated_at"] = generated
@@ -157,9 +158,16 @@ def _slow_cache(key, builder, ttl_seconds=6 * 3600):
                        json_body={"key": key, "data": json.dumps(body),
                                   "updated_at": generated},
                        headers={"Prefer": "resolution=merge-duplicates"})
-    except Exception:
-        pass
-    return _stamp(payload, False, generated)
+    except Exception as e:                           # noqa: BLE001
+        # A cache that can never be WRITTEN is indistinguishable from one that
+        # is merely cold: every request rebuilds, every request is slow, and
+        # the nightly warm reports success having stored nothing. Carry the
+        # failure on the response so it is visible instead of just expensive.
+        save_error = str(e)[:160]
+    stamped = _stamp(payload, False, generated)
+    if save_error:
+        stamped["_cache_write_failed"] = save_error
+    return stamped
 
 
 @app.route("/api/healthz")
