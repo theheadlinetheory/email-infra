@@ -117,6 +117,38 @@ def _subscriptions(provider: str) -> list:
             if str(s.get("subscriptionStatus", "")).upper() == "ACTIVE"]
 
 
+def slots_committed_to_unfinished_orders() -> int:
+    """Mailbox slots already bought for orders that have not finished creating
+    their mailboxes.
+
+    These look exactly like phantom slots -- billed, with no mailbox behind
+    them -- and they are the opposite: they are paid-for capacity that the next
+    provisioning pass is about to fill. Asking Zapmail to release them means
+    buying them again a few minutes later.
+
+    Counted from the journal each order keeps, so it needs no extra API call
+    and cannot disagree with what provisioning thinks it owes.
+    """
+    try:
+        import buy_inboxes as bi
+        orders = bi._orders()
+    except Exception:
+        return 0                       # never inflate the gap on a read failure
+    owed = 0
+    for o in orders:
+        j = o.get("journal") or {}
+        if j.get("step") in (None, "done"):
+            continue
+        per = o.get("inboxes_per_domain") or 3
+        for d in o.get("domains") or []:
+            rec = (j.get("domains") or {}).get(d) or {}
+            if not rec.get("dns_ready"):
+                continue               # no slot is held for a domain not resolving
+            have = len(rec.get("mailboxes") or [])
+            owed += max(0, per - have)
+    return owed
+
+
 def reconcile() -> dict:
     """Billed mailbox quantity vs mailboxes that actually exist, per provider."""
     import infra_lifecycle as il
@@ -126,15 +158,28 @@ def reconcile() -> dict:
     for m in inv["mailboxes"].values():
         actual[m.get("provider") or "GOOGLE"] += 1
 
+    # Slots bought for an order still creating its mailboxes are NOT phantom.
+    # Tim was one click from asking Zapmail to release 12 slots that were the
+    # 12 mailboxes his in-flight order was about to create.
+    committed = slots_committed_to_unfinished_orders()
+
     per, total_gap = [], 0
     for prov in PROVIDERS:
         live = _subscriptions(prov)
         billed = sum(int(s.get("totalMailboxQuantity") or 0) for s in live)
         have = actual.get(prov, 0)
-        gap = billed - have
+        raw_gap = billed - have
+        # Provisioning only ever buys GOOGLE slots, so only that plan can be
+        # holding capacity for an unfinished order.
+        held = committed if prov == "GOOGLE" else 0
+        gap = raw_gap - min(held, max(raw_gap, 0))
         total_gap += max(gap, 0)
-        per.append({"provider": prov, "billed": billed, "actual": have,
-                    "gap": gap, "subscriptions": len(live)})
+        row = {"provider": prov, "billed": billed, "actual": have,
+               "gap": gap, "subscriptions": len(live)}
+        if held:
+            row["raw_gap"] = raw_gap
+            row["committed_to_orders"] = held
+        per.append(row)
 
     # Name the mailboxes most likely behind a gap, newest removal first, so the
     # message to Zapmail can be specific rather than "please check our billing".
@@ -156,6 +201,7 @@ def reconcile() -> dict:
         "monthly_cost": total_gap * COST_PER_MAILBOX,
         "annual_cost": total_gap * COST_PER_MAILBOX * 12,
         "suspects": suspects[:total_gap * 2] if total_gap else [],
+        "committed_to_orders": committed,
         "reconciled": total_gap <= 0,
     }
 
