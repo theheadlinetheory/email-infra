@@ -480,15 +480,29 @@ def buy_domains(spec, confirm=False):
         return {"dry_run": True, "would_register": available,
                 "cost": p["cost"], "plan": p}
 
-    _progress(running=True, done=0, total=len(available), stage="starting",
-              domains=available, registered=[], failed=[], order_id=None)
+    # Per-domain state, published on every step. A batch reporting only
+    # "9 of 14 registered" cannot tell you WHICH five failed or why, and the
+    # registrar half of this loop (nameservers) is where the silent failures
+    # live -- 14 domains were once bought, left on the registrar's own
+    # nameservers, and recorded as connected.
+    rows = {d: {"domain": d, "registered": None, "ns": None,
+                "zapmail": None, "error": None} for d in available}
+
+    def _publish(**kw):
+        _progress(rows=[rows[d] for d in available], **kw)
+
+    _publish(running=True, done=0, total=len(available), stage="starting",
+             domains=available, registered=[], failed=[], order_id=None)
 
     registered, failed, ns_failed = [], [], []
     for d in available:
+        rows[d]["registered"] = "working"
+        _publish(stage=f"registering {d}")
         try:
             res = S.Spaceship.purchase_domain(d)
             if res.get("success"):
                 registered.append(d)
+                rows[d]["registered"] = True
                 # NAMESERVERS ARE NOT OPTIONAL. Zapmail refuses to connect a
                 # domain whose nameservers still point at the registrar, so a
                 # silent failure here guarantees the connect below fails too.
@@ -499,14 +513,23 @@ def buy_domains(spec, confirm=False):
                     if isinstance(nr, dict) and not nr.get("success", True):
                         ns_failed.append({"domain": d,
                                           "error": str(nr.get("error") or nr)[:140]})
+                        rows[d]["ns"] = False
+                    else:
+                        rows[d]["ns"] = True
                 except Exception as e:
                     ns_failed.append({"domain": d, "error": str(e)[:140]})
+                    rows[d]["ns"] = False
+                    rows[d]["error"] = str(e)[:140]
             else:
                 failed.append({"domain": d, "error": str(res.get("error"))[:140]})
+                rows[d]["registered"] = False
+                rows[d]["error"] = str(res.get("error"))[:140]
         except Exception as e:
             failed.append({"domain": d, "error": str(e)[:140]})
-        _progress(done=len(registered) + len(failed), stage=f"registering {d}",
-                  registered=list(registered), failed=[f["domain"] for f in failed])
+            rows[d]["registered"] = False
+            rows[d]["error"] = str(e)[:140]
+        _publish(done=len(registered) + len(failed), stage=f"registering {d}",
+                 registered=list(registered), failed=[f["domain"] for f in failed])
 
     # Connect each registered domain to Zapmail. DNS still needs to propagate
     # before mailboxes can be created — that is what "Provision inboxes" waits
@@ -533,8 +556,11 @@ def buy_domains(spec, confirm=False):
                 connect_failed.append(entry)
         else:
             connected.append(d)
-        _progress(stage=f"connecting {d}", connected=len(connected),
-                  pending=len(pending))
+            rows[d]["zapmail"] = True
+        if rows[d]["zapmail"] is None:
+            rows[d]["zapmail"] = "pending" if any(x["domain"] == d for x in pending) else False
+        _publish(stage=f"connecting {d}", connected=len(connected),
+                 pending=len(pending))
 
     orders = _orders()
     oid = max([o.get("id", 0) for o in orders], default=0) + 1
@@ -557,7 +583,8 @@ def buy_domains(spec, confirm=False):
     }
     orders.append(order)
     _save_orders(orders)
-    _progress(running=False, stage="done", order_id=oid,
+    _progress(rows=[rows[d] for d in available],
+              running=False, stage="done", order_id=oid,
               connected=len(connected), pending=len(pending))
     note = ("Domains registered and connected to Zapmail. Wait ~15-60 min for DNS "
             "to propagate, then press 'Provision inboxes now' on the order.")

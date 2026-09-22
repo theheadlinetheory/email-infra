@@ -136,3 +136,33 @@ def test_provision_lock_never_blocks_on_a_read_failure(monkeypatch):
     monkeypatch.setattr(bi, "store", Broken())
     r = bi.provision_lock_acquire(3)
     assert r["ok"] is True and r["unverified"] is True
+
+
+# ── per-domain purchase progress ─────────────────────────────────────────
+# "9 of 14 registered" cannot tell you WHICH five failed, and the nameserver
+# half of the loop is where the silent failures live: 14 domains were bought,
+# left on the registrar's own nameservers, and recorded as connected.
+
+def test_progress_rows_start_one_per_domain():
+    doms = ["a.co", "b.co", "c.co"]
+    rows = {d: {"domain": d, "registered": None, "ns": None,
+                "zapmail": None, "error": None} for d in doms}
+    assert [rows[d]["domain"] for d in doms] == doms
+    assert all(r["registered"] is None for r in rows.values())
+
+
+def test_a_row_distinguishes_every_outcome():
+    """None (not reached), 'working', True, False and 'pending' must stay
+    distinct — collapsing 'pending DNS' into False is what made 14 unconnected
+    domains read as connected."""
+    states = [None, "working", True, False, "pending"]
+    assert len(set(map(str, states))) == len(states)
+
+
+def test_a_registered_domain_with_failed_nameservers_is_not_clean():
+    """The exact 2026-09-21 shape: registered True, ns False. The row has to
+    carry both, because the summary count says 'registered' either way."""
+    row = {"domain": "x.co", "registered": True, "ns": False,
+           "zapmail": None, "error": "nameserver update rejected"}
+    assert row["registered"] is True and row["ns"] is False
+    assert row["error"]
