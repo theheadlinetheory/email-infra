@@ -102,8 +102,14 @@ def fetch_health_metrics(start_date=None, end_date=None):
         )
         if not r or r.status_code != 200:
             return {}
-        metrics = (r.json().get("data") or {}).get("email_health_metrics", [])
-        return {m["from_email"]: m for m in metrics}
+        # Smartlead answers this in TWO shapes: {"data": {"email_health_metrics":
+        # [...]}} and {"data": [...]}. This read only the first, so on the list
+        # shape it silently produced zero records -- and sync's own guard then
+        # aborted with "only 0 health records", freezing overview_v2 (and with
+        # it the whole Overview tab) for five days. One parser, in health_daily.
+        import health_daily as _hd
+        metrics = _hd._rows_from(r.json(), start, end)
+        return {m["from_email"]: m for m in metrics if m.get("from_email")}
     except Exception as e:
         print(f"  Health metrics error: {e}")
         return {}

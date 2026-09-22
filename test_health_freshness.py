@@ -179,3 +179,24 @@ def test_a_stale_table_still_wins(monkeypatch):
     monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-10")
     f = hd.health_freshness(today="2026-09-22", built_at=_hours_ago(1))
     assert f["stale"] is True and "12 days old" in f["reason"]
+
+
+# ── one parser, not three ────────────────────────────────────────────────
+# The same read was copy-pasted into sync.py and dashboard.py. Fixing
+# health_daily left both broken, and sync's failure took the whole Overview
+# tab down for five days: zero health records -> its own guard aborts ->
+# overview_v2 never rewritten -> the landing page silently shows a smaller
+# fleet. These pin the shapes every caller must survive.
+
+def test_both_wire_shapes_parse_to_the_same_rows():
+    rows = [{"from_email": "a@x.co", "bounce_rate": "4"}]
+    as_object = {"data": {"email_health_metrics": rows}}
+    as_list = {"data": rows}
+    assert hd._rows_from(as_object, "s", "e") == hd._rows_from(as_list, "s", "e") == rows
+
+
+def test_the_list_shape_no_longer_yields_zero_records():
+    """The exact failure: the old `(data or {}).get("email_health_metrics", [])`
+    returned [] for this payload, and sync aborted on `len(health) < 50`."""
+    rows = [{"from_email": f"m{i}@x.co"} for i in range(60)]
+    assert len(hd._rows_from({"data": rows}, "s", "e")) == 60

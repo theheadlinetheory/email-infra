@@ -2169,7 +2169,14 @@ def trigger_sync():
     import time as _time
     store._CACHE_WRITE_ENABLED = True
 
+    # sync() reports its own abort reason through this callback -- "Aborted:
+    # only 12 accounts (rate limited?)" or "only 3 health records". The failure
+    # path below then overwrote it with a generic "insufficient data", throwing
+    # away the one detail that says WHICH guard fired and therefore what to fix.
+    last = {"msg": None}
+
     def progress_cb(pct, msg):
+        last["msg"] = msg
         try:
             store.cache_set("sync_progress", {
                 "pct": pct, "msg": msg, "ts": _time.time(), "status": "running"
@@ -2183,7 +2190,13 @@ def trigger_sync():
         sync.store._CACHE_WRITE_ENABLED = True
         ok = sync.sync(progress_cb=progress_cb)
         status = "done" if ok else "error"
-        msg = "Sync complete" if ok else "Sync aborted (insufficient data)"
+        if ok:
+            msg = "Sync complete"
+        else:
+            # Keep sync's own words. It names the count and the guard.
+            reported = (last["msg"] or "").strip()
+            msg = reported if reported.lower().startswith("aborted") \
+                else f"Sync aborted (insufficient data) — last step: {reported or 'unknown'}"
         store.cache_set("sync_progress", {"pct": 100 if ok else 0, "msg": msg, "ts": _time.time(), "status": status})
         if ok:
             return _cors(jsonify({"ok": True, "message": msg}))
