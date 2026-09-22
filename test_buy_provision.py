@@ -211,11 +211,43 @@ def test_an_unreadable_smartlead_roster_is_not_an_empty_one():
 
 
 def test_a_domain_whose_mailboxes_cannot_be_read_is_never_created_into():
+    """Stops at `slots`, one step earlier than it used to: the slot step now
+    reads the same live count, so an unreadable domain is refused before any
+    money is spent rather than just before mailboxes are made."""
     io = FakeIO(["x.co"])
     io.zapmail_mailboxes_on = lambda d, z: None
     o = order()
     r = bp.advance(o, io)
-    assert r["step"] == "mailboxes" and io.created_calls == 0
+    assert r["step"] == "slots"
+    assert io.created_calls == 0
+    assert io.bought == 0
+
+
+def test_slots_are_not_bought_again_for_mailboxes_that_already_exist():
+    """The double-spend this guards against: the DNS step records
+    `existing_mailboxes` once and is then behind us, so on any re-entry it
+    still reads zero for domains that have since been filled. Counting from
+    the journal would buy a second full set of slots for mailboxes that are
+    already there — and slots are billed per mailbox."""
+    io = FakeIO(["x.co"])
+    o = order()
+    bp.advance(o, io)                              # first pass fills x.co
+    j = o["journal"]
+    j["step"] = "slots"                            # re-enter the spending step
+    j["domains"]["x.co"]["existing_mailboxes"] = 0  # stale journal value
+    io.bought = 0
+    io.free_slots = 0                              # nothing spare: it WOULD buy
+    bp.advance(o, io)
+    assert io.bought == 0, "bought slots for mailboxes that already exist"
+
+
+def test_slots_are_still_bought_when_mailboxes_are_genuinely_missing():
+    """The guard must not become a reason never to buy slots at all."""
+    io = FakeIO(["x.co"])
+    io.free_slots = 0
+    o = order()
+    bp.advance(o, io)
+    assert io.bought > 0, "refused to buy slots that were actually needed"
 
 
 def test_one_slow_domain_does_not_hold_up_the_one_that_resolved():
