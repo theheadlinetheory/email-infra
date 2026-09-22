@@ -1405,7 +1405,19 @@ function wireDomainCards(){
     // Positive-reply pre-flight first, same order as every other path here:
     // a reply is welded to the mailbox that sent it.
     const pre = await post('/api/health-positive-check', {emails});
-    const held = (pre.results || []).filter(r => (r.positive_total ?? 0) > 0).length;
+    if (pre.error) { dmsg(dom, `<span class="bad">${esc(pre.error)}</span>`); return; }
+    // positive_total === null means the reply check could not complete. That is
+    // NOT zero: detaching an inbox that owns a live thread freezes the
+    // conversation, so an unknown answer holds.
+    const res1 = pre.results || [];
+    const held = res1.filter(r => r.positive_total > 0).length;
+    const unsure = res1.filter(r => r.unknown).length;
+    if (unsure) {
+      dmsg(dom, `<span class="bad">Reply check could not complete for ${unsure}
+        inbox(es), so nothing was reallocated. An unknown reply state is treated
+        as "owns a reply" — retry once Smartlead responds.</span>`);
+      return;
+    }
     if (!confirm(`Reallocate ${emails.length} burned inbox(es) on ${dom}?\n\n`
                + (held ? `${held} own a positive reply and will be HELD in their campaign — `
                        + `the replacement still goes in.\n\n` : '')
@@ -1472,18 +1484,29 @@ function wireReplace(act){
     rpNote('<div class="meta">checking replies…</div>');
     const r = await post('/api/health-positive-check', {emails});
     if (r.error) return rpNote(`<div class="banner">${esc(r.error)}</div>`);
-    let held = 0;
+    let held = 0, unsure = 0;
     (r.results || []).forEach(x => {
       const cell = document.getElementById('pos-' + x.email);
-      const n = x.positive_total ?? 0;
+      if (x.unknown) {
+        unsure++;
+        if (cell) cell.innerHTML = '<span class="bad" title="reply check failed">?</span>';
+        return;
+      }
+      const n = x.positive_total || 0;
       if (n) held++;
       if (cell) cell.innerHTML = n ? `<span class="bad">${n}</span>` : '<span class="good">0</span>';
     });
-    RP_CHECKED = true; sync();
-    rpNote(`<div class="banner">${held ? held + ' of ' + emails.length +
+    // A check that did not complete must not unlock the buttons. RP_CHECKED is
+    // the gate on reallocating, and "?" is not a clean bill of health.
+    RP_CHECKED = unsure === 0; sync();
+    rpNote(`<div class="banner">${unsure
+      ? '<b>' + unsure + ' of ' + emails.length + ' could not be checked</b> — Smartlead did not '
+        + 'answer for them. An unknown reply state counts as "owns a reply", so reallocation stays '
+        + 'locked until a check completes. Try again in a minute.'
+      : (held ? held + ' of ' + emails.length +
       ' own a positive reply and will be HELD in their campaign — the replacement still goes in, '
       + 'so capacity comes back. The rest can be swapped out.'
-      : 'None own a positive reply. All ' + emails.length + ' can be swapped out.'}</div>`);
+      : 'None own a positive reply. All ' + emails.length + ' can be swapped out.')}</div>`);
   };
 
   document.getElementById('rp-realloc').onclick = async () => {

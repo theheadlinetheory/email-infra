@@ -2017,10 +2017,18 @@ def health_positive_check():
                      if status_map.get(c) == "ACTIVE"]
             cids = hr._resolve_campaign_ids(names)
             per = []
+            unknown = False
             for name, cid in cids.items():
                 try:
                     th = hp.owned_positive_threads(e, cid)
                 except Exception as exc:
+                    # owned_positive_threads' contract: "Raises on an
+                    # inconclusive lookup — callers MUST treat that as hold,
+                    # never as no replies." This used to record None and then
+                    # `sum(... or 0)` turned it into 0, so a rate-limited
+                    # leads-export made an inbox read as CLEAR and it would be
+                    # detached from a conversation it still owns.
+                    unknown = True
                     per.append({"campaign": name, "campaign_id": cid,
                                 "positive_count": None, "threads": [],
                                 "error": str(exc)})
@@ -2028,11 +2036,17 @@ def health_positive_check():
                 if th:
                     per.append({"campaign": name, "campaign_id": cid,
                                 "positive_count": len(th), "threads": th})
+            known = sum(c.get("positive_count") or 0 for c in per)
             out.append({"email": e, "campaigns": per,
-                        "positive_total": sum(c.get("positive_count") or 0 for c in per)})
+                        # None means UNKNOWN, and the caller must hold. It is
+                        # deliberately not 0.
+                        "positive_total": None if unknown else known,
+                        "unknown": unknown,
+                        "known_positive_count": known})
         return _cors(jsonify({"results": out,
                               "inboxes_with_positives": sum(1 for r in out if r["positive_total"]),
-                              "positive_total": sum(r["positive_total"] for r in out)}))
+                              "positive_total": sum(r["known_positive_count"] for r in out),
+                              "unknown_count": sum(1 for r in out if r["unknown"])}))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
