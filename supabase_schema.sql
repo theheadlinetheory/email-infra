@@ -132,3 +132,24 @@ alter table client_rotations disable row level security;
 alter table setup_pipelines disable row level security;
 alter table inbox_groups disable row level security;
 alter table inbox_group_history disable row level security;
+-- ── Data API grants ──────────────────────────────────────────────────────
+-- Added 2026-09-23. Supabase stopped granting new public tables to the Data API
+-- automatically on 2026-10-30, so a fresh run of this file would otherwise
+-- produce tables that exist in SQL but 42501 on every PostgREST call.
+--
+-- service_role only: db.py authenticates with an `sb_secret_…` key and the
+-- browser side never touches supabase.co. RLS is disabled on everything here
+-- (see above), which means the grant IS the access control — an anon grant
+-- would publish these tables for unauthenticated read AND write.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on
+  pipelines, pending_deletions, client_rotations, client_configs, monitor_log,
+  state, setup_pipelines, inbox_groups, inbox_group_history
+  to service_role;
+
+-- inbox_groups / inbox_group_history use SERIAL ids; the INSERT needs USAGE on
+-- the sequence even with the table grant in place. pending_deletions and
+-- monitor_log use identity columns, which Postgres handles internally.
+grant usage, select on sequence
+  inbox_groups_id_seq, inbox_group_history_id_seq
+  to service_role;
