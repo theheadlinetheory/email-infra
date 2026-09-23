@@ -104,3 +104,56 @@ def test_no_campaigns_is_different_from_no_campaign_list():
     assert unreadable["unknown"] is True
     assert readable["unknown"] is False
     assert unreadable["positive_total"] != readable["positive_total"]
+
+
+# ── the gate was resolving zero campaigns for every inbox ────────────────
+# get_health_status_all de-serialised `reasons` and `subscores` but not
+# `campaigns`, so it stayed a JSON STRING. Iterating a string walks characters.
+
+import json
+
+
+def camps_of(row) -> list:
+    """health_replace._camps_of, mirrored so this file stays import-light."""
+    c = row.get("campaigns")
+    if isinstance(c, str):
+        try:
+            c = json.loads(c)
+        except Exception:
+            c = [c] if c.strip() else []
+    return c if isinstance(c, list) else []
+
+
+def test_iterating_the_raw_string_walks_characters():
+    """The bug, pinned. Every 'campaign' here is one character, so it matches
+    no campaign name and the inbox reads as being in none."""
+    row = {"campaigns": json.dumps(["Timesavers #1 - DM Matches - client"])}
+    walked = list(row["campaigns"])
+    assert all(len(x) == 1 for x in walked)
+    assert "Timesavers #1 - DM Matches - client" not in walked
+
+
+def test_camps_of_recovers_the_real_names():
+    names = ["Timesavers #1 - DM Matches - client", "Timesavers #2"]
+    assert camps_of({"campaigns": json.dumps(names)}) == names
+
+
+def test_a_decoded_list_passes_through_unchanged():
+    """db now decodes centrally, so the helper must be idempotent."""
+    names = ["A", "B"]
+    assert camps_of({"campaigns": names}) == names
+
+
+def test_an_empty_string_is_no_campaigns_not_one_blank():
+    assert camps_of({"campaigns": ""}) == []
+    assert camps_of({"campaigns": "[]"}) == []
+
+
+def test_a_missing_field_is_no_campaigns():
+    assert camps_of({}) == []
+
+
+def test_unparseable_text_is_kept_as_one_name_not_shredded():
+    """A bare campaign name that was never JSON must survive as ONE entry
+    rather than becoming a list of letters."""
+    assert camps_of({"campaigns": "Some Campaign"}) == ["Some Campaign"]

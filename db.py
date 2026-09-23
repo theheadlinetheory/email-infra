@@ -772,8 +772,20 @@ def get_health_status_all() -> list[dict]:
         if len(page) < 1000:
             break
         offset += 1000
+    # `campaigns` belongs here too. Leaving it a JSON STRING means every caller
+    # that iterates it walks CHARACTERS -- 'g', ' ', '-' -- so an inbox matches
+    # no campaign name and reads as "in no active campaign". All 1,935 rows are
+    # strings and 1,410 of them carry real campaign lists, so this was not an
+    # edge case: it was every row, always.
+    #
+    # It has bitten twice. On 2026-08-28 it silently turned acquisition
+    # reallocation into a no-op ("no active campaign to reallocate" for every
+    # burnt domain). health_replace._camps_of was written to work around it
+    # locally, but /api/health-positive-check -- the reply safety gate -- did
+    # not use it, so the gate resolved ZERO campaigns for every inbox and
+    # therefore cleared every one of them without checking anything.
     for r in rows:
-        for col in ("reasons", "subscores"):
+        for col in ("reasons", "subscores", "campaigns"):
             if isinstance(r.get(col), str):
                 try:
                     r[col] = json.loads(r[col])

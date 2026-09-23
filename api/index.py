@@ -2094,7 +2094,11 @@ def health_positive_check():
                          "cleared for reallocation."}))
         out = []
         for e in emails:
-            names = [c for c in (status_by.get(e, {}).get("campaigns") or [])
+            # _camps_of, not a raw iterate. db now decodes `campaigns`, but
+            # this gate is the last thing between a burned-inbox sweep and a
+            # frozen client conversation, so it does not depend on an upstream
+            # decode staying in place.
+            names = [c for c in hr._camps_of(status_by.get(e) or {})
                      if status_map.get(c) == "ACTIVE"]
             cids = hr._resolve_campaign_ids(names)
             per = []
