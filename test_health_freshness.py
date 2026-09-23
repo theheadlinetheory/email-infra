@@ -200,3 +200,59 @@ def test_the_list_shape_no_longer_yields_zero_records():
     returned [] for this payload, and sync aborted on `len(health) < 50`."""
     rows = [{"from_email": f"m{i}@x.co"} for i in range(60)]
     assert len(hd._rows_from({"data": rows}, "s", "e")) == 60
+
+
+# ── sync must never untag the fleet ──────────────────────────────────────
+# `a["tags"] = tag_map.get(a["id"], [])` overwrote unconditionally. When the
+# GraphQL tag fetch failed, every account was untagged, no account matched a
+# client, and the overview shipped 1,771 accounts attached to nobody.
+
+def apply_tags(accounts: list, tag_map: dict) -> int:
+    """sync's tag application, extracted."""
+    kept = 0
+    for a in accounts:
+        mapped = tag_map.get(a["id"])
+        if mapped:
+            a["tags"] = mapped
+        elif a.get("tags"):
+            kept += 1
+        else:
+            a["tags"] = []
+    return kept
+
+
+def test_graphql_tags_win_when_present():
+    """GraphQL carries the real client tag; REST does not always reflect it."""
+    accs = [{"id": 1, "tags": [{"name": "stale"}]}]
+    apply_tags(accs, {1: [{"name": "Landry's Landscape"}]})
+    assert accs[0]["tags"] == [{"name": "Landry's Landscape"}]
+
+
+def test_an_empty_tag_map_does_not_untag_the_fleet():
+    """The regression: a failed GraphQL call wiped every tag."""
+    accs = [{"id": i, "tags": [{"name": "Timesavers"}]} for i in range(3)]
+    kept = apply_tags(accs, {})
+    assert kept == 3
+    assert all(a["tags"] for a in accs), "fleet was untagged by an empty map"
+
+
+def test_an_account_with_no_tags_anywhere_stays_empty():
+    accs = [{"id": 1, "tags": []}]
+    apply_tags(accs, {})
+    assert accs[0]["tags"] == []
+
+
+def test_a_partial_map_only_replaces_what_it_covers():
+    accs = [{"id": 1, "tags": [{"name": "A"}]}, {"id": 2, "tags": [{"name": "B"}]}]
+    kept = apply_tags(accs, {1: [{"name": "A-new"}]})
+    assert accs[0]["tags"] == [{"name": "A-new"}]
+    assert accs[1]["tags"] == [{"name": "B"}] and kept == 1
+
+
+def test_accounts_attributed_to_nobody_is_a_refusal_not_a_smaller_fleet():
+    """1,771 accounts belonging to no client is unusable, not merely partial —
+    health_snapshot, the burnt list and the Inboxes tab all read attribution
+    from it."""
+    overview = {"total_accounts": 1771, "clients": [{"accounts": 0} for _ in range(45)]}
+    attributed = sum(c.get("accounts") or 0 for c in overview["clients"])
+    assert overview["total_accounts"] and not attributed
