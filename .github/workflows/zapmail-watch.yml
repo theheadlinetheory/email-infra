@@ -55,13 +55,39 @@ jobs:
       # FAIL on the dashboard the next morning (Tim, 2026-09-19). A stale check
       # is worse than no check: it sends someone to fix what is already fixed.
       # ORDER MATTERS, and it is a dependency order, not a preference:
-      #   health snapshot  writes inbox_health_daily + the health_fleet cache
-      #   inboxes view     is BUILT FROM health_fleet, so it must follow
-      #   sync             rebuilds the Overview and depends on neither
-      # The snapshot was last, behind a sync step that is allowed to fail the
-      # job. So a sync failure SKIPPED the burnt-inbox refresh entirely -- the
-      # one output nobody can afford to lose, gated on the one that matters
-      # least to burn detection.
+      #   sync             writes overview_v2 — the ONLY source of which client
+      #                    an inbox belongs to (health_snapshot.attrs_from_overview)
+      #   health snapshot  READS overview_v2, writes inbox_health_daily + health_fleet
+      #   inboxes view     is BUILT FROM health_fleet, so it follows the snapshot
+      #
+      # The chain is sync -> snapshot -> inboxes, and every link is real. An
+      # earlier attempt put the snapshot FIRST, on the theory that burn
+      # detection should not be gated on the Overview; it failed immediately
+      # with "no inboxes in overview", because attribution comes from exactly
+      # that cache. The dependency is the constraint, not the priority.
+      - name: Rebuild the Overview (sync)
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS -X POST --max-time 290 \
+            "https://email-infra.vercel.app/api/sync?pw=${PW}")
+          echo "$body" | head -c 600; echo
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "::error::sync failed: $(echo "$body" | jq -r '.error')"
+            exit 1
+          fi
+          if [ "$(echo "$body" | jq -r '.ok // "false"')" != "true" ]; then
+            echo "::error::sync did not report ok: $(echo "$body" | jq -r '.message // "?"')"
+            exit 1
+          fi
+          echo "ok - $(echo "$body" | jq -r '.message')"
+
+      # Three more _slow_cache entries nobody was warming. Each is a full
+      # Zapmail or registrar walk, so the first person to open the tab was
+      # paying 13-98s for it -- and past its TTL they were paying that AND
+      # reading a stale number until the rebuild landed.
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         env:
@@ -175,29 +201,6 @@ jobs:
       # every count on the landing page is quietly low. This is the one cache
       # whose staleness is invisible by construction, so it runs first and it
       # is NOT continue-on-error.
-      - name: Rebuild the Overview (sync)
-        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
-        env:
-          PW: ${{ secrets.DASHBOARD_PASSWORD }}
-        run: |
-          set -uo pipefail
-          body=$(curl -sS -X POST --max-time 290 \
-            "https://email-infra.vercel.app/api/sync?pw=${PW}")
-          echo "$body" | head -c 600; echo
-          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
-            echo "::error::sync failed: $(echo "$body" | jq -r '.error')"
-            exit 1
-          fi
-          if [ "$(echo "$body" | jq -r '.ok // "false"')" != "true" ]; then
-            echo "::error::sync did not report ok: $(echo "$body" | jq -r '.message // "?"')"
-            exit 1
-          fi
-          echo "ok - $(echo "$body" | jq -r '.message')"
-
-      # Three more _slow_cache entries nobody was warming. Each is a full
-      # Zapmail or registrar walk, so the first person to open the tab was
-      # paying 13-98s for it -- and past its TTL they were paying that AND
-      # reading a stale number until the rebuild landed.
       - name: Warm the remaining slow caches
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         continue-on-error: true

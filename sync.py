@@ -65,6 +65,9 @@ def fetch_all_accounts():
     return accounts
 
 
+_TAG_DIAG = {"why": None, "partial": False}
+
+
 def fetch_tag_mappings():
     mappings = {}
     offset = 0
@@ -75,7 +78,12 @@ def fetch_tag_mappings():
                 '{ email_account_id tag { id name } } }' % offset
             )
         except Exception as e:
+            # A partial map is worse than none: the caller used to overwrite
+            # every account's tags with it, so a failure here silently
+            # UNTAGGED the whole fleet. Say so instead of returning quietly.
             print(f"  GQL error at offset {offset}: {e}")
+            _TAG_DIAG["why"] = f"GraphQL failed at offset {offset}: {str(e)[:140]}"
+            _TAG_DIAG["partial"] = True
             break
         # GraphQL errors return {"errors":[...], "data": null} — `.get("data", {})`
         # would yield None (key present) and crash; coerce null -> {}.
@@ -613,8 +621,26 @@ def sync(progress_cb=None):
     tag_map = fetch_tag_mappings()
     _report(22, f"Got tags for {len(tag_map)} accounts")
 
+    # NEVER blank a tag we already have. The GraphQL mapping is preferred --
+    # it carries the real client tag, which REST does not always reflect -- but
+    # this line used to assign tag_map.get(id, []) unconditionally. When the
+    # GraphQL call failed or came back short, EVERY account was untagged, no
+    # account matched a client, all 45 clients rendered `accounts: 0`, and the
+    # overview went out with 1,771 accounts attached to nobody. health_snapshot
+    # then failed "no inboxes in overview" and took the whole burnt-inbox
+    # refresh with it.
+    kept_rest = 0
     for a in accounts:
-        a["tags"] = tag_map.get(a["id"], [])
+        mapped = tag_map.get(a["id"])
+        if mapped:
+            a["tags"] = mapped
+        elif a.get("tags"):
+            kept_rest += 1                  # keep what REST already gave us
+        else:
+            a["tags"] = []
+    if kept_rest:
+        _report(22, f"GraphQL had no tags for {kept_rest} account(s) — kept their "
+                    f"REST tags rather than untagging them")
 
     _report(23, "Fetching health metrics...")
     health = fetch_health_metrics()
@@ -659,6 +685,18 @@ def sync(progress_cb=None):
 
     if client_count < 8:
         _report(0, f"Aborted: only {client_count} clients (need >= 8)")
+        return False
+
+    # An overview holding 1,771 accounts that belong to NO client is not a
+    # smaller fleet -- it is an unusable one, and everything downstream
+    # (health_snapshot, the burnt list, the Inboxes tab) is built from that
+    # attribution. Refuse rather than publish it.
+    attributed = sum(c.get("accounts") or 0 for c in overview["clients"])
+    if overview.get("total_accounts") and not attributed:
+        _report(0, f"Aborted: {overview['total_accounts']} accounts but NONE "
+                   f"attributed to a client"
+                   + (f" — {_TAG_DIAG['why']}" if _TAG_DIAG.get("why")
+                      else " (tag mapping came back empty)"))
         return False
 
     # Say what the overview was built WITHOUT, so a page missing bounce/reply
