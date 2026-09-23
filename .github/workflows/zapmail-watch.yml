@@ -54,6 +54,59 @@ jobs:
       # was fixed — forwarding was corrected on 2026-09-18 and rule 4 still read
       # FAIL on the dashboard the next morning (Tim, 2026-09-19). A stale check
       # is worse than no check: it sends someone to fix what is already fixed.
+      # ORDER MATTERS, and it is a dependency order, not a preference:
+      #   health snapshot  writes inbox_health_daily + the health_fleet cache
+      #   inboxes view     is BUILT FROM health_fleet, so it must follow
+      #   sync             rebuilds the Overview and depends on neither
+      # The snapshot was last, behind a sync step that is allowed to fail the
+      # job. So a sync failure SKIPPED the burnt-inbox refresh entirely -- the
+      # one output nobody can afford to lose, gated on the one that matters
+      # least to burn detection.
+      - name: Daily health snapshot (restores the job the dead cron was meant to run)
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}")
+          echo "$body" | head -c 2000; echo
+          # This step used to pipe straight to head, so a 200 carrying
+          # {"error": "metrics fetch failed ... 401 unauthorized"} was a green
+          # tick. The health history stopped being written on 2026-09-17 and
+          # every run after it reported success — five days of silence while
+          # burn rate, capacity and every health score ran on stale data.
+          # A run that did not write history is a FAILURE now, and so is one
+          # that skipped a weekday.
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "::error::health snapshot failed: $(echo "$body" | jq -r '.error')"
+            exit 1
+          fi
+          gaps=$(echo "$body" | jq -r '(.weekday_gaps // []) | join(", ")')
+          if [ -n "$gaps" ]; then
+            echo "::error::no Smartlead data for weekday(s): $gaps — history has a hole"
+            exit 1
+          fi
+          echo "ok - daily rows written: $(echo "$body" | jq -r '.daily_rows_written // "?"')"
+
+      - name: Warm the inboxes view
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/inboxes?refresh=1&pw=${PW}" \
+            | jq -r '"inboxes cached: \(.summary.inboxes // "?") inboxes, \(.domain_view.summary.domains // 0) burned domains"'
+
+      # Rule 10's fix button deletes Smartlead accounts. It must not delete one
+      # that still owns a positive reply — and a reply can sit on a PAUSED or
+      # COMPLETED campaign just as easily as a live one, so answering that
+      # honestly means reading every campaign. That is minutes, not the ~120s a
+      # button gets. So the walk happens here and the button reads the result.
+      # NOT continue-on-error: if this stops running, the button stops deleting
+      # (by design), and a silently-red-for-weeks step is how that gets missed.
       - name: Refresh the invariants (the full run, campaigns included)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         continue-on-error: true
@@ -99,24 +152,6 @@ jobs:
       # write it must turn the workflow red, or the outage is invisible again.
       # Warm the Inboxes tab too. Its burned-domain view is a ~10s build on top
       # of five other reads; whoever opens the tab first should not pay for it.
-      - name: Warm the inboxes view
-        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
-        continue-on-error: true
-        env:
-          PW: ${{ secrets.DASHBOARD_PASSWORD }}
-        run: |
-          set -uo pipefail
-          curl -sS --max-time 290 \
-            "https://email-infra.vercel.app/api/inboxes?refresh=1&pw=${PW}" \
-            | jq -r '"inboxes cached: \(.summary.inboxes // "?") inboxes, \(.domain_view.summary.domains // 0) burned domains"'
-
-      # Rule 10's fix button deletes Smartlead accounts. It must not delete one
-      # that still owns a positive reply — and a reply can sit on a PAUSED or
-      # COMPLETED campaign just as easily as a live one, so answering that
-      # honestly means reading every campaign. That is minutes, not the ~120s a
-      # button gets. So the walk happens here and the button reads the result.
-      # NOT continue-on-error: if this stops running, the button stops deleting
-      # (by design), and a silently-red-for-weeks step is how that gets missed.
       - name: Full-campaign positive-reply scan (rule 10's safety net)
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         env:
@@ -175,30 +210,3 @@ jobs:
               "https://email-infra.vercel.app/api/$path?refresh=1&pw=${PW}") || code=000
             echo "$path -> HTTP $code $(head -c 140 /tmp/$path.json 2>/dev/null)"
           done
-
-      - name: Daily health snapshot (restores the job the dead cron was meant to run)
-        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
-        env:
-          PW: ${{ secrets.DASHBOARD_PASSWORD }}
-        run: |
-          set -uo pipefail
-          body=$(curl -sS --max-time 290 \
-            "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}")
-          echo "$body" | head -c 2000; echo
-          # This step used to pipe straight to head, so a 200 carrying
-          # {"error": "metrics fetch failed ... 401 unauthorized"} was a green
-          # tick. The health history stopped being written on 2026-09-17 and
-          # every run after it reported success — five days of silence while
-          # burn rate, capacity and every health score ran on stale data.
-          # A run that did not write history is a FAILURE now, and so is one
-          # that skipped a weekday.
-          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
-            echo "::error::health snapshot failed: $(echo "$body" | jq -r '.error')"
-            exit 1
-          fi
-          gaps=$(echo "$body" | jq -r '(.weekday_gaps // []) | join(", ")')
-          if [ -n "$gaps" ]; then
-            echo "::error::no Smartlead data for weekday(s): $gaps — history has a hole"
-            exit 1
-          fi
-          echo "ok - daily rows written: $(echo "$body" | jq -r '.daily_rows_written // "?"')"
