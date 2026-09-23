@@ -47,7 +47,20 @@ def get_group_tag_from_account(account: dict) -> str | None:
     The group tag is the one that is NOT "Zapmail" and NOT a date pattern (M/D/YY).
     """
     for t in account.get("tags", []):
-        name = t.get("name", "")
+        # Smartlead hands tags back under TWO different keys, and which one you
+        # get depends on where the account came from:
+        #   REST /email-accounts/  -> {"tag_id", "tag_name", "tag_color"}
+        #   GraphQL tag mappings   -> {"id", "name"}
+        # Reading only "name" makes every REST-sourced tag invisible. That is
+        # how sync published 1,813 accounts attributed to no client at all:
+        # the GraphQL fetch failed, the REST tags were correctly kept as a
+        # fallback, and then this function could not read them.
+        name = t.get("name") or t.get("tag_name") or ""
+        if not name:
+            # A tag under neither key is unreadable, not "the group tag". It
+            # used to fall through and be RETURNED as "", short-circuiting the
+            # loop so the real tag after it was never reached.
+            continue
         if name.lower() in ("zapmail", "premium inboxes"):
             continue
         if re.match(r'^\d{1,2}/\d{1,2}/\d{2}$', name):
