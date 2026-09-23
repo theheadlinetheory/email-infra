@@ -90,6 +90,13 @@ def fetch_tag_mappings():
     return mappings
 
 
+# Why the last health fetch came back empty. `{}` from this function is
+# indistinguishable from "no inboxes", and sync's own guard then aborts with
+# "only 0 health records (rate limited?)" -- a guess, in parentheses, that sent
+# two debugging passes after a rate limit that was never happening.
+_HEALTH_DIAG = {"why": None}
+
+
 def fetch_health_metrics(start_date=None, end_date=None):
     end = end_date or datetime.now().strftime("%Y-%m-%d")
     start = start_date or (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -100,7 +107,13 @@ def fetch_health_metrics(start_date=None, end_date=None):
             timeout=30,
             headers=sl_internal_headers(),
         )
-        if not r or r.status_code != 200:
+        if not r:
+            _HEALTH_DIAG["why"] = (f"no response after retries for {start}..{end} "
+                                   f"(timeout or connection error)")
+            return {}
+        if r.status_code != 200:
+            _HEALTH_DIAG["why"] = (f"HTTP {r.status_code} for {start}..{end}: "
+                                   f"{r.text[:160]}")
             return {}
         # Smartlead answers this in TWO shapes: {"data": {"email_health_metrics":
         # [...]}} and {"data": [...]}. This read only the first, so on the list
@@ -111,6 +124,7 @@ def fetch_health_metrics(start_date=None, end_date=None):
         metrics = _hd._rows_from(r.json(), start, end)
         return {m["from_email"]: m for m in metrics if m.get("from_email")}
     except Exception as e:
+        _HEALTH_DIAG["why"] = f"{type(e).__name__}: {str(e)[:160]}"
         print(f"  Health metrics error: {e}")
         return {}
 
@@ -594,7 +608,9 @@ def sync(progress_cb=None):
     _report(30, f"Got {len(health)} health records")
 
     if len(health) < 50:
-        _report(0, f"Aborted: only {len(health)} health records (rate limited?)")
+        _report(0, f"Aborted: only {len(health)} health records"
+                   + (f" — {_HEALTH_DIAG['why']}" if _HEALTH_DIAG.get("why")
+                      else " (the request succeeded and returned nothing)"))
         return False
 
     today_str = datetime.now().strftime("%Y-%m-%d")
