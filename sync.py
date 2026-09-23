@@ -118,8 +118,14 @@ def fetch_health_metrics(start_date=None, end_date=None):
             # which is what froze overview_v2 and the whole Overview tab.
             # health_daily queries the same endpoint at 60s over narrower
             # windows and succeeds.
-            timeout=90,
-            attempts=2,
+            # ONE attempt, and a modest timeout. This fetch is optional --
+            # a short read is no longer fatal -- but it was budgeted like a
+            # required one: 2 attempts at 90s plus backoff is ~190s of the
+            # ~290s the whole sync gets, spent waiting for something the
+            # overview can be built without. Sync then overran and was killed
+            # by curl (exit 28) having done all the work that mattered.
+            timeout=60,
+            attempts=1,
             headers=sl_internal_headers(),
         )
         if not r:
@@ -651,6 +657,10 @@ def sync(progress_cb=None):
         short_start = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
         _report(26, f"7-day metrics failed ({_HEALTH_DIAG.get('why')}) — retrying 3 days")
         health = fetch_health_metrics(start_date=short_start)
+        # Two single-attempt tries, ~120s worst case, and then we move on. The
+        # roster is what the Overview is for.
+        if len(health) < 50:
+            _report(28, "3-day metrics also unavailable — continuing without rates")
     _report(30, f"Got {len(health)} health records")
 
     # NOT fatal. Health rates are ONE input to the overview; the roster, inbox

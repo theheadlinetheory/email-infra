@@ -71,9 +71,32 @@ jobs:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
           set -uo pipefail
+          curl_rc=0
           body=$(curl -sS -X POST --max-time 290 \
-            "https://email-infra.vercel.app/api/sync?pw=${PW}")
-          echo "$body" | head -c 600; echo
+            "https://email-infra.vercel.app/api/sync?pw=${PW}") || curl_rc=$?
+          echo "${body:-<no body>}" | head -c 600; echo
+
+          # curl gives up at 290s; Vercel keeps going to 300s. A timeout here
+          # therefore says nothing about whether the sync SUCCEEDED -- it only
+          # says we stopped listening. Judge it by the artefact, not the exit
+          # code: if overview_v2 was written in the last 15 minutes, the sync
+          # did its job and the disconnect is ours.
+          if [ "${curl_rc:-0}" != "0" ]; then
+            echo "curl exited ${curl_rc} — checking whether the sync landed anyway"
+            sleep 30
+            ov=$(curl -sS --max-time 60 \
+              "https://email-infra.vercel.app/api/overview?pw=${PW}")
+            age=$(echo "$ov" | jq -r '._age_hours // 999')
+            acc=$(echo "$ov" | jq -r '.total_accounts // 0')
+            if [ "$(echo "$age < 0.25" | bc -l 2>/dev/null || echo 0)" = "1" ] \
+               && [ "$acc" != "0" ]; then
+              echo "ok - sync completed server-side (${acc} accounts, ${age}h old)"
+              exit 0
+            fi
+            echo "::error::sync timed out and overview_v2 was not refreshed (age=${age}h)"
+            exit 1
+          fi
+
           if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
             echo "::error::sync failed: $(echo "$body" | jq -r '.error')"
             exit 1
