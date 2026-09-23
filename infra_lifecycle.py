@@ -95,6 +95,17 @@ OVERRIDE_KEY = "infra_lifecycle_overrides"   # {client: {term_months, effective_
 DECISION_KEY = "infra_lifecycle_decisions"   # {client: {decision, set_at, set_by, note}}
 PENDING_MSG_KEY = "infra_lifecycle_pending_msgs"
 HEARTBEAT_KEY = "infra_lifecycle_last_run"
+UNOWNED_KEY = "infra_lifecycle_unowned_last"   # {posted_on, fingerprint}
+
+# How long an identical unowned-infrastructure report stays quiet before it is
+# said again. `run_daily` fires from /api/health-snapshot, which the
+# zapmail-watch workflow calls on its 02:00 schedule AND on every
+# workflow_dispatch — so six debugging dispatches on 2026-09-22 put the same
+# unchanged line in Slack three times. Re-posting an unchanged report teaches
+# people to scroll past it, which is the one thing an alarm cannot survive.
+# It is not silenced forever, though: silence must not become indistinguishable
+# from "fixed", so an unresolved report resurfaces on this cadence.
+UNOWNED_REPEAT_DAYS = 7
 
 # Slack. This countdown gets its OWN webhook on purpose: the shared alerts
 # channel is too busy for a message whose whole value is that it is not missed.
@@ -843,6 +854,34 @@ def fetch_smartlead_tags() -> dict:
     return out
 
 
+def _settled_untagged(by_bucket: dict, today: date) -> list[dict]:
+    """Untagged mailboxes old enough that being untagged is a real problem.
+
+    A mailbox is `(untagged)` from the moment Zapmail creates it until the
+    SmartLead export lands and someone tags it, and that gap is a normal part
+    of provisioning — the export is asynchronous and routinely needs two or
+    three rounds (a bulk call returns 200 and delivers a subset). Reporting the
+    gap as "infrastructure nobody is accountable for" fires on every batch we
+    buy: on 2026-09-23 it was 42 mailboxes on 14 service domains, every one of
+    them created the previous day.
+
+    WARMUP_DAYS is the right threshold because it is the point at which the
+    mailbox stops being inventory and starts being capacity: before it, it
+    cannot send for anyone, so nothing is being lost by it having no owner.
+    After it, an untagged mailbox is being paid for, is able to send, and
+    belongs to nobody — which is exactly the loss this report exists to catch.
+    """
+    cutoff = today - timedelta(days=WARMUP_DAYS)
+    out = []
+    for mb in (by_bucket.get("(untagged)") or []):
+        created = _parse_ts(mb.get("created_at"))
+        # No creation date means we cannot show it is new. Report it: the
+        # failure mode worth protecting against is under-reporting.
+        if created is None or created <= cutoff:
+            out.append(mb)
+    return out
+
+
 def build(today: date | None = None) -> dict:
     """The whole board: one row per client that has infrastructure."""
     today = today or date.today()
@@ -927,6 +966,7 @@ def build(today: date | None = None) -> dict:
         "orphans": orphans,
         "active_clients_without_infra": no_infra,
         "unmapped_mailboxes": len(by_bucket.get("(untagged)", [])),
+        "unmapped_settled": len(_settled_untagged(by_bucket, today)),
         "pools": pools,
         "summary": {
             "clients": len(rows),
@@ -1102,22 +1142,34 @@ def unowned_infra(board: dict) -> list[str]:
     for o in (board.get("orphans") or []):
         sizes[str(o.get("client") or "")] = (sizes.get(str(o.get("client") or "")) or 0) \
             + (o.get("mailboxes") or 0)
+    # Replacement stock is deliberately outside the ceiling (see RESERVE_CEILING)
+    # — it is held against burned inboxes, not against the next client signed.
+    # That used to be implicit in the name "Replacement Group"; once the pools
+    # are named per vertical ("Generic Service Replacement") they match on
+    # "generic" and would silently make the ceiling unenforceable.
     reserve = sum(n for k, n in sizes.items()
-                  if "reserve" in k.lower() or "generic" in k.lower())
+                  if ("reserve" in k.lower() or "generic" in k.lower())
+                  and "replacement" not in k.lower())
     if reserve > RESERVE_CEILING:
         over = reserve - RESERVE_CEILING
         out.append(f"Reserve pool is {reserve} inboxes, {over} over the {RESERVE_CEILING} "
                    f"ceiling — ${over * COST_PER_MAILBOX * 12:,}/yr of stock nobody "
                    "ordered. Cancel the excess or raise the ceiling deliberately.")
-    untagged = sum(n for k, n in sizes.items() if "untagged" in k.lower())
+    # Only mailboxes past warm-up — a batch bought yesterday is stock in
+    # transit, not a loss. See `_settled_untagged`.
+    untagged = board.get("unmapped_settled")
+    if untagged is None:   # board built before this field existed
+        untagged = sum(n for k, n in sizes.items() if "untagged" in k.lower())
     if untagged:
-        out.append(f"{cost(untagged)} carry no client tag at all — they belong to "
-                   "nobody and are invisible to every per-client rollup.")
+        out.append(f"{cost(untagged)} are past warm-up and carry no client tag at "
+                   "all — they can send, they are billing, and they belong to "
+                   "nobody. Invisible to every per-client rollup.")
     return out
 
 
 def post_unowned(board: dict, dry_run: bool = True) -> dict:
-    """Post the unowned-infrastructure report. Silent when there is nothing to say."""
+    """Post the unowned-infrastructure report. Silent when there is nothing to say,
+    and silent when it has nothing NEW to say \u2014 see UNOWNED_REPEAT_DAYS."""
     lines = unowned_infra(board)
     if not lines:
         return {"count": 0}
@@ -1125,23 +1177,47 @@ def post_unowned(board: dict, dry_run: bool = True) -> dict:
             + "\n".join(f"   \u2022 {l}" for l in lines))
     if dry_run:
         return {"dry_run": True, "count": len(lines), "text": body}
+
+    # Suppress a byte-identical repeat. The fingerprint covers the rendered
+    # lines, so any change \u2014 a bucket appearing, a count moving, a client
+    # getting its CRM row \u2014 always posts.
+    import hashlib
+    fingerprint = hashlib.sha256(body.encode()).hexdigest()[:16]
+    prev = _state(UNOWNED_KEY, {}) or {}
+    last_on = _parse(prev.get("posted_on"))
+    if (prev.get("fingerprint") == fingerprint and last_on
+            and (date.today() - last_on).days < UNOWNED_REPEAT_DAYS):
+        return {"count": len(lines), "suppressed": True,
+                "unchanged_since": prev.get("posted_on")}
     # No @-mention. Every line here is Tim's to fix — a CRM row, a tag, a pool
     # trim — and none of it is a decision Aidan makes. The countdown notices
     # still tag him, because those ARE his call and missing one costs a month.
-    return {"count": len(lines), "result": post_slack(body, mention=False)}
+    result = post_slack(body, mention=False)
+    # Recorded only after the post. Stamping it first would let a failed send
+    # buy seven days of silence, which is the failure this whole module is
+    # about: nothing on screen reads the same as nothing wrong.
+    _put_state(UNOWNED_KEY, {"posted_on": date.today().isoformat(),
+                             "fingerprint": fingerprint})
+    return {"count": len(lines), "result": result}
+
+
+def _put_state(key: str, payload: dict) -> bool:
+    """Upsert one state row. The read side is `_state`."""
+    try:
+        import db as store
+        store._request("POST", "/state",
+                       json_body={"key": key,
+                                  "data": json.dumps(payload),
+                                  "updated_at": datetime.now().isoformat()},
+                       headers={"Prefer": "resolution=merge-duplicates"})
+        return True
+    except Exception:
+        return False
 
 
 def _write_heartbeat(payload: dict) -> None:
     """Leave a trace of this run where it can be read without the dashboard password."""
-    try:
-        import db as store
-        store._request("POST", "/state",
-                       json_body={"key": HEARTBEAT_KEY,
-                                  "data": json.dumps(payload),
-                                  "updated_at": datetime.now().isoformat()},
-                       headers={"Prefer": "resolution=merge-duplicates"})
-    except Exception:
-        pass
+    _put_state(HEARTBEAT_KEY, payload)
 
 
 def last_run() -> dict:
@@ -1190,6 +1266,7 @@ def run_daily() -> dict:
                       "notices": res.get("count", 0),
                       "sent": res.get("sent", 0), "queued": res.get("queued", 0),
                       "unowned": unowned.get("count", 0),
+                      "unowned_suppressed": bool(unowned.get("suppressed")),
                       "webhooks": hooks})
     return res
 

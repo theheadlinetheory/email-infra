@@ -6,7 +6,7 @@ installing anything.
 """
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 import infra_lifecycle as il
 
@@ -446,13 +446,111 @@ class UnownedInfraTests(unittest.TestCase):
         self.assertEqual(out, [])
 
     def test_untagged_is_reported(self):
-        out = il.unowned_infra(self.board(pools={"(untagged)": {"mailboxes": 22}}))
+        out = il.unowned_infra(self.board(pools={"(untagged)": {"mailboxes": 22}},
+                                          unmapped_settled=22))
         self.assertEqual(len(out), 1)
         self.assertIn("no client tag", out[0])
+
+    def test_a_freshly_bought_batch_is_not_unowned_yet(self):
+        # 2026-09-23: 42 mailboxes on 14 service domains, all created the day
+        # before and not yet exported to Smartlead, were reported as "$1,512/yr
+        # belonging to nobody" three times in one day. They cannot send until
+        # warm-up ends, so nothing is being lost while they are untagged.
+        board = self.board(pools={"(untagged)": {"mailboxes": 42}},
+                           unmapped_mailboxes=42, unmapped_settled=0)
+        self.assertEqual([l for l in il.unowned_infra(board) if "no client tag" in l], [])
+
+    def test_replacement_stock_is_outside_the_reserve_ceiling(self):
+        # RESERVE_CEILING is two clients' worth of stock held for the next
+        # client we SIGN. Replacement stock is held against burned inboxes and
+        # was always excluded — but only accidentally, by being named
+        # "Replacement Group". Naming it per vertical must not change that.
+        board = self.board(orphans=[
+            {"client": "Generic Landscaping 1", "status": None, "mailboxes": 42},
+            {"client": "Generic Landscaping 2", "status": None, "mailboxes": 42},
+            {"client": "Generic Service Replacement", "status": None, "mailboxes": 42},
+            {"client": "Generic Landscaping Replacement", "status": None, "mailboxes": 42}])
+        self.assertEqual([l for l in il.unowned_infra(board) if "ceiling" in l], [])
 
     def test_silent_when_everything_is_owned(self):
         self.assertEqual(il.unowned_infra(self.board()), [])
         self.assertEqual(il.post_unowned(self.board(), dry_run=True)["count"], 0)
+
+
+class SettledUntaggedTests(unittest.TestCase):
+    """Which untagged mailboxes are a real problem, and which are in transit."""
+
+    TODAY = date(2026, 9, 23)
+
+    def bucket(self, *created):
+        return {"(untagged)": [{"created_at": c} for c in created]}
+
+    def test_a_mailbox_bought_yesterday_is_in_transit(self):
+        out = il._settled_untagged(self.bucket("2026-09-22T09:14:00Z"), self.TODAY)
+        self.assertEqual(out, [])
+
+    def test_a_mailbox_past_warmup_is_unowned(self):
+        # 15 days old: it can send, it is billing, and it has no owner.
+        out = il._settled_untagged(self.bucket("2026-09-08T09:14:00Z"), self.TODAY)
+        self.assertEqual(len(out), 1)
+
+    def test_the_boundary_is_the_end_of_warmup(self):
+        exactly = (self.TODAY - timedelta(days=il.WARMUP_DAYS)).isoformat()
+        self.assertEqual(len(il._settled_untagged(self.bucket(exactly), self.TODAY)), 1)
+        day_after = (self.TODAY - timedelta(days=il.WARMUP_DAYS - 1)).isoformat()
+        self.assertEqual(il._settled_untagged(self.bucket(day_after), self.TODAY), [])
+
+    def test_no_creation_date_is_reported(self):
+        # We cannot show it is new, and under-reporting is the worse failure.
+        self.assertEqual(len(il._settled_untagged(self.bucket(None), self.TODAY)), 1)
+
+
+class UnownedRepeatTests(unittest.TestCase):
+    """An unchanged report must not be said again every run."""
+
+    def setUp(self):
+        self.board = {"orphans": [{"client": "LightDMV", "status": None,
+                                   "mailboxes": 57}],
+                      "active_clients_without_infra": [], "pools": {}}
+        self.posted, self.state = [], {}
+        self._real = (il._state, il._put_state, il.post_slack)
+        il._state = lambda k, d: self.state.get(k, d)
+        il._put_state = lambda k, v: self.state.__setitem__(k, v) or True
+        il.post_slack = lambda text, mention=True: self.posted.append(text) or "webhook"
+
+    def tearDown(self):
+        il._state, il._put_state, il.post_slack = self._real
+
+    def test_the_first_report_posts(self):
+        self.assertEqual(il.post_unowned(self.board, dry_run=False)["count"], 1)
+        self.assertEqual(len(self.posted), 1)
+
+    def test_an_identical_repeat_is_suppressed(self):
+        # The three posts on 2026-09-23 were byte-identical: two debugging
+        # workflow_dispatch runs and the scheduled one.
+        for _ in range(3):
+            il.post_unowned(self.board, dry_run=False)
+        self.assertEqual(len(self.posted), 1)
+        self.assertTrue(il.post_unowned(self.board, dry_run=False)["suppressed"])
+
+    def test_a_changed_report_always_posts(self):
+        il.post_unowned(self.board, dry_run=False)
+        self.board["orphans"][0]["mailboxes"] = 60
+        il.post_unowned(self.board, dry_run=False)
+        self.assertEqual(len(self.posted), 2)
+
+    def test_an_unresolved_report_resurfaces(self):
+        il.post_unowned(self.board, dry_run=False)
+        stale = date.today() - timedelta(days=il.UNOWNED_REPEAT_DAYS)
+        self.state[il.UNOWNED_KEY]["posted_on"] = stale.isoformat()
+        il.post_unowned(self.board, dry_run=False)
+        self.assertEqual(len(self.posted), 2)
+
+    def test_a_failed_send_does_not_buy_silence(self):
+        il.post_slack = lambda text, mention=True: (_ for _ in ()).throw(RuntimeError("down"))
+        with self.assertRaises(RuntimeError):
+            il.post_unowned(self.board, dry_run=False)
+        self.assertNotIn(il.UNOWNED_KEY, self.state)
 
 class ContractedTermTests(unittest.TestCase):
     """The CRM's own contracted term beats the guess."""
