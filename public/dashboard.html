@@ -239,6 +239,11 @@ function renderOverview(){
   // A stale overview_v2 reads as a SMALLER fleet, not as an error — inboxes
   // simply go missing and every number below is quietly low. Say so first.
   let html = '';
+  if (cl.health_unavailable) {
+    html += `<div class="banner warn">⚠ Bounce and reply rates are missing from this
+      rebuild — ${esc(cl.health_unavailable)}. Everything else below is current;
+      treat blank or zero rates as "not measured", not as "healthy".</div>`;
+  }
   if (cl._stale) {
     html += `<div class="banner bad">⚠ These figures were last rebuilt
       ${cl._age_hours != null ? esc((cl._age_hours / 24).toFixed(1)) + ' days ago'

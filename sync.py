@@ -618,13 +618,27 @@ def sync(progress_cb=None):
 
     _report(23, "Fetching health metrics...")
     health = fetch_health_metrics()
+    # A 7-day full_data window over ~1,900 mailboxes times out even at 90s.
+    # health_daily queries this same endpoint successfully over ~3 days, so
+    # fall back to a shorter window before giving up on it.
+    if len(health) < 50:
+        short_start = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+        _report(26, f"7-day metrics failed ({_HEALTH_DIAG.get('why')}) — retrying 3 days")
+        health = fetch_health_metrics(start_date=short_start)
     _report(30, f"Got {len(health)} health records")
 
+    # NOT fatal. Health rates are ONE input to the overview; the roster, inbox
+    # counts, campaign mappings and costs do not depend on them. Aborting here
+    # meant a single slow endpoint froze overview_v2 entirely — and because a
+    # stale overview reads as a SMALLER FLEET rather than an error, the whole
+    # landing page silently under-reported for five days rather than showing
+    # everything it could still compute.
+    health_missing = None
     if len(health) < 50:
-        _report(0, f"Aborted: only {len(health)} health records"
-                   + (f" — {_HEALTH_DIAG['why']}" if _HEALTH_DIAG.get("why")
-                      else " (the request succeeded and returned nothing)"))
-        return False
+        health_missing = (_HEALTH_DIAG.get("why")
+                          or "the request succeeded and returned nothing")
+        _report(30, f"Health metrics unavailable ({health_missing}) — building the "
+                    f"overview without bounce/reply rates")
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     _report(31, "Fetching today's sent counts...")
@@ -646,6 +660,10 @@ def sync(progress_cb=None):
     if client_count < 8:
         _report(0, f"Aborted: only {client_count} clients (need >= 8)")
         return False
+
+    # Say what the overview was built WITHOUT, so a page missing bounce/reply
+    # can show that rather than rendering blanks as zeros.
+    overview["health_unavailable"] = health_missing
 
     _report(89, "Fetching acquisition campaign stats...")
     def _acq_progress(i, total):
