@@ -104,7 +104,14 @@ def fetch_health_metrics(start_date=None, end_date=None):
         r = _api_get(
             f"{SMARTLEAD_INTERNAL_API}/analytics/mailbox/name-wise-health-metrics",
             {"start_date": start, "end_date": end, "timezone": "America/New_York", "full_data": "true"},
-            timeout=30,
+            # 30s was not enough. This asks for SEVEN DAYS of per-inbox data
+            # across ~1,900 mailboxes with full_data=true, and it timed out
+            # every time -- reported as "0 health records (rate limited?)",
+            # which is what froze overview_v2 and the whole Overview tab.
+            # health_daily queries the same endpoint at 60s over narrower
+            # windows and succeeds.
+            timeout=90,
+            attempts=2,
             headers=sl_internal_headers(),
         )
         if not r:
@@ -129,15 +136,21 @@ def fetch_health_metrics(start_date=None, end_date=None):
         return {}
 
 
-def _api_get(url, params=None, timeout=15, headers=None):
-    """SmartLead API GET with exponential backoff on 429. Returns response or None."""
+def _api_get(url, params=None, timeout=15, headers=None, attempts=5):
+    """SmartLead API GET with exponential backoff on 429. Returns response or None.
+
+    `attempts` is capped per call because the retries have to fit inside
+    Vercel's 300s: five attempts at a 90s timeout is 450s of waiting before
+    this function even returns, which would kill the whole sync rather than
+    one fetch.
+    """
     backoff = 10
-    for attempt in range(5):
+    for attempt in range(attempts):
         _rate.wait()
         try:
             r = requests.get(url, params=params, headers=headers, timeout=timeout)
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
-            if attempt < 4:
+            if attempt < attempts - 1:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 60)
                 continue
