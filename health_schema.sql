@@ -87,3 +87,14 @@ alter table inbox_health_daily add column if not exists replied           int;
 alter table inbox_health_daily add column if not exists opened            int;
 alter table inbox_health_daily add column if not exists positive_replied  int;
 alter table inbox_health_daily add column if not exists unique_lead_count int;
+-- ── Data API grants ──────────────────────────────────────────────────────
+-- Added 2026-09-23. Supabase stopped granting new public tables to the Data API
+-- automatically on 2026-10-30. RLS is explicitly disabled on all three tables
+-- above, so the grant is the only access control — service_role only, matching
+-- the sb_secret key db.py uses. See supabase/migrations/20260923_data_api_grants.sql.
+grant select, insert, update, delete on
+  inbox_health_daily, inbox_health_status, inbox_health_config
+  to service_role;
+
+-- inbox_health_daily uses an identity column, which needs no separate sequence
+-- grant; included for the case where it is ever redefined as SERIAL.
