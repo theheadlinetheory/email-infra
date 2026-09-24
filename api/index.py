@@ -738,7 +738,15 @@ def health_snapshot():
     out, status = {}, 200
     try:
         import health_snapshot as hs
-        out = hs.snapshot_daily()
+        try:
+            out = hs.snapshot_daily()
+        except Exception as _e:                      # noqa: BLE001
+            # Record the failure BEFORE re-raising, so "the producer is
+            # broken" is visible even though no rows were written.
+            hs.record_run(False, str(_e))
+            raise
+        hs.record_run(not (isinstance(out, dict) and out.get("error")),
+                      str((out or {}).get("error") or ""))
     except Exception as e:
         out, status = {"error": str(e), "trace": traceback.format_exc()}, 500
 

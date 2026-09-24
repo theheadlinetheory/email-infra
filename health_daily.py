@@ -251,9 +251,18 @@ def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -
             # Smartlead credentials mint a token that LOOKS valid and then get
             # an empty list instead of a 401 -- which is exactly how this read
             # as a dead endpoint for a day. Say so in the error.
-            last = (f"only {len(out)} records (an empty answer here usually "
-                    f"means stale SMARTLEAD_LOGIN_PASSWORD -- bad credentials "
-                    f"return an empty list, not a 401)")
+            # Do NOT assert a cause here. This message used to blame a stale
+            # SMARTLEAD_LOGIN_PASSWORD, which was true once and is now
+            # disproven: on 2026-09-24 a freshly minted token for the correct
+            # user returned an empty list for EVERY window tried, including
+            # 2026-09-22, which had returned 1,902 records two days earlier.
+            # State what is observed and let credential_state() speak for
+            # itself -- a guessed cause in an error message cost three
+            # debugging passes on the sync timeout.
+            last = (f"only {len(out)} records — the request returned HTTP 200 "
+                    f"with an empty result. Check credential_state below: if "
+                    f"login_http is 200 and minted is true, the credentials "
+                    f"are fine and the endpoint itself is returning nothing")
             time.sleep(5 * (attempt + 1))
             continue
         return out
@@ -628,6 +637,22 @@ def health_freshness(today: str | None = None, built_at: str | None = None) -> d
                 "reason": f"the health data is current, but this list was built "
                           f"{cache_age / 24:.1f} days ago and has not been "
                           f"rebuilt since."}
+    # Age is not the only way to be wrong. A list two days old because the
+    # snapshot has FAILED twice is not the same as one two days old because it
+    # is between weekend updates — and the day threshold cannot tell them
+    # apart. Ask the producer.
+    try:
+        import health_snapshot as _hs
+        run = _hs.last_run()
+    except Exception:
+        run = {}
+    fails = int(run.get("consecutive_failures") or 0)
+    if fails:
+        return {"stale": True, "latest": latest, "age_days": age,
+                "snapshot_failures": fails,
+                "reason": f"the daily health snapshot has failed {fails} time(s) "
+                          f"in a row, so this list has stopped updating"
+                          + (f" — {run.get('detail')[:160]}" if run.get("detail") else "")}
     out = {"stale": False, "latest": latest, "age_days": age}
     if cache_age is not None:
         out["built_hours_ago"] = round(cache_age, 1)

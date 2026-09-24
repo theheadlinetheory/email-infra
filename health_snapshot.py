@@ -107,6 +107,41 @@ def build_fleet_from_overview(overview: dict) -> list[dict]:
     return list(seen.values())
 
 
+SNAPSHOT_RUN_KEY = "health_snapshot_last_run"
+
+
+def record_run(ok: bool, detail: str = "") -> None:
+    """Remember whether the last snapshot actually succeeded.
+
+    Row age alone cannot tell a list that is BETWEEN updates from one whose
+    producer has been failing. On 2026-09-23..25 the snapshot failed twice, the
+    newest rows were 2 days old, and the freshness banner -- which waits 3 days
+    to survive the Fri->Mon gap -- stayed quiet. Two days stale and two days
+    BROKEN look identical from the data alone.
+    """
+    import datetime as _dt
+    try:
+        prev = store.get_state(SNAPSHOT_RUN_KEY) or {}
+        fails = 0 if ok else int(prev.get("consecutive_failures") or 0) + 1
+        store.set_state(SNAPSHOT_RUN_KEY, {
+            "ok": ok,
+            "at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "detail": detail[:300],
+            "consecutive_failures": fails,
+            "last_success_at": (_dt.datetime.now(_dt.timezone.utc).isoformat()
+                                if ok else prev.get("last_success_at")),
+        })
+    except Exception:
+        pass                                   # never fail the run over telemetry
+
+
+def last_run() -> dict:
+    try:
+        return store.get_state(SNAPSHOT_RUN_KEY) or {}
+    except Exception:
+        return {}
+
+
 def snapshot_daily(overview: dict | None = None, today: str | None = None,
                    cfg: dict | None = None) -> dict:
     """Snapshot + score the fleet. Pass `overview` from sync (fresh), otherwise
