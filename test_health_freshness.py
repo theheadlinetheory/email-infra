@@ -44,7 +44,14 @@ def test_an_empty_window_still_fails_when_records_were_required(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: R())
     with pytest.raises(RuntimeError) as e:
         hd.fetch_window("2026-09-19", "2026-09-21", retries=1, min_records=50)
-    assert "SMARTLEAD_LOGIN_PASSWORD" in str(e.value)
+    # The message must NOT name a cause it has not checked. It once asserted
+    # a stale password; that was disproven on 2026-09-24 when a freshly minted
+    # token returned empty for every window. It reports the observation and
+    # points at credential_state instead.
+    msg = str(e.value)
+    assert "empty result" in msg
+    assert "credential_state" in msg or "credentials:" in msg
+    assert "stale SMARTLEAD_LOGIN_PASSWORD" not in msg
 
 
 def test_a_single_empty_day_is_accepted(monkeypatch):
@@ -256,3 +263,50 @@ def test_accounts_attributed_to_nobody_is_a_refusal_not_a_smaller_fleet():
     overview = {"total_accounts": 1771, "clients": [{"accounts": 0} for _ in range(45)]}
     attributed = sum(c.get("accounts") or 0 for c in overview["clients"])
     assert overview["total_accounts"] and not attributed
+
+
+# ── a failing producer is staleness, whatever the row age says ───────────
+# 2026-09-23..25: the snapshot failed twice, the newest rows were 2 days old,
+# and the banner — which waits 3 days to survive the Fri->Mon gap — stayed
+# quiet. "Two days between updates" and "two days broken" are identical in the
+# data and opposite in meaning.
+
+class _FakeSnap:
+    def __init__(self, run): self._r = run
+    def last_run(self): return self._r
+
+
+def _snap(monkeypatch, run):
+    import sys, types
+    m = types.ModuleType("health_snapshot")
+    m.last_run = lambda: run
+    monkeypatch.setitem(sys.modules, "health_snapshot", m)
+
+
+def test_a_failing_snapshot_is_stale_even_inside_the_day_threshold(monkeypatch):
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-23")
+    _snap(monkeypatch, {"consecutive_failures": 2, "detail": "endpoint returned nothing"})
+    f = hd.health_freshness(today="2026-09-25")      # 2 days: under the 3-day bar
+    assert f["stale"] is True
+    assert f["snapshot_failures"] == 2
+    assert "stopped updating" in f["reason"]
+
+
+def test_a_healthy_snapshot_inside_the_threshold_stays_quiet(monkeypatch):
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-23")
+    _snap(monkeypatch, {"consecutive_failures": 0})
+    assert hd.health_freshness(today="2026-09-25")["stale"] is False
+
+
+def test_no_run_record_does_not_invent_a_failure(monkeypatch):
+    """Absence of telemetry is not evidence of breakage — the day threshold
+    still governs."""
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-23")
+    _snap(monkeypatch, {})
+    assert hd.health_freshness(today="2026-09-25")["stale"] is False
+
+
+def test_an_old_list_is_stale_regardless_of_the_producer(monkeypatch):
+    monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-10")
+    _snap(monkeypatch, {"consecutive_failures": 0})
+    assert hd.health_freshness(today="2026-09-25")["stale"] is True
