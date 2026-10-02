@@ -26,7 +26,9 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 was not enough: the full-campaign reply scan was cancelled mid-run,
+    # which silently left rule 10's safety net stale.
+    timeout-minutes: 30
     steps:
       - name: Zapmail removal check (deletion-date alerts + removal confirmation)
         env:
@@ -112,7 +114,10 @@ jobs:
       # paying 13-98s for it -- and past its TTL they were paying that AND
       # reading a stale number until the rebuild landed.
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
-        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        # EVERY run, not just 02:00. The snapshot is idempotent per date, so
+        # four attempts a day cost nothing and mean one transient Smartlead
+        # failure no longer loses the whole day's burn data — which is
+        # exactly how the list went a week out of date.
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
@@ -139,7 +144,7 @@ jobs:
           echo "ok - daily rows written: $(echo "$body" | jq -r '.daily_rows_written // "?"')"
 
       - name: Warm the inboxes view
-        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        # Follows the snapshot on every run for the same reason.
         continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
