@@ -1486,7 +1486,14 @@ def onboarding_route():
 
         by_client = None
         if zm_domains and zm_mailboxes:
-            tags = ilc.fetch_smartlead_tags() or {}
+            # 34s, uncached, on EVERY request. Together with the two
+            # _slow_cache rebuilds above (infra_lifecycle 44s, zm_inventory
+            # ~25s) that put this route past the browser's 120s budget, which
+            # is why the Onboarding tab "doesn't work" — it was timing out, not
+            # erroring.
+            tags = _slow_cache("cache:smartlead_tags",
+                               lambda: {"tags": ilc.fetch_smartlead_tags() or {}}
+                               ).get("tags") or {}
             crm_names = [c["name"] for c in crm_rows if c.get("name")]
             by_client = {}
             for email, mb in zm_mailboxes.items():

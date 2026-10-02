@@ -166,3 +166,46 @@ def test_a_registered_domain_with_failed_nameservers_is_not_clean():
            "zapmail": None, "error": "nameserver update rejected"}
     assert row["registered"] is True and row["ns"] is False
     assert row["error"]
+
+
+# ── the Buy tab was doing a minute of work the UI threw away ─────────────
+
+def test_a_stale_order_skips_the_live_readiness_walk(monkeypatch):
+    """order_readiness is a live Zapmail walk per order. It ran for two August
+    orders whose domains have been in service for weeks — 73.6s on a tab that
+    then discarded them, so the tab timed out before it rendered."""
+    import datetime as dt
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=40)).isoformat()
+    new = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    orders = [{"id": 1, "created": old, "status": "domains_registered", "domains": []},
+              {"id": 2, "created": new, "status": "domains_registered", "domains": []}]
+    called = []
+    monkeypatch.setattr(bi, "_orders", lambda: orders)
+    monkeypatch.setattr(bi, "order_readiness", lambda oid: called.append(oid) or {"ok": True})
+    out = bi.list_orders()
+    assert called == [2], f"walked a stale order: {called}"
+    by = {o["id"]: o for o in out["orders"]}
+    assert by[1]["stale"] is True and "readiness" not in by[1]
+    assert by[2]["stale"] is False and by[2]["readiness"]
+
+
+def test_an_unreadable_created_date_is_treated_as_new(monkeypatch):
+    """Safe direction: compute readiness for an order we cannot age, rather
+    than silently skipping it."""
+    orders = [{"id": 9, "created": "not-a-date", "status": "domains_registered", "domains": []}]
+    called = []
+    monkeypatch.setattr(bi, "_orders", lambda: orders)
+    monkeypatch.setattr(bi, "order_readiness", lambda oid: called.append(oid) or {"ok": True})
+    bi.list_orders()
+    assert called == [9]
+
+
+def test_a_provisioning_order_never_gets_the_stale_skip(monkeypatch):
+    """Only `domains_registered` bookkeeping goes stale; an order mid-flight
+    must always report readiness however old it is."""
+    import datetime as dt
+    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=90)).isoformat()
+    orders = [{"id": 5, "created": old, "status": "provisioning", "domains": []}]
+    monkeypatch.setattr(bi, "_orders", lambda: orders)
+    out = bi.list_orders()
+    assert out["orders"][0]["stale"] is False

@@ -636,10 +636,40 @@ def order_readiness(order_id):
             "ready_count": sum(1 for r in rows if r["dns_ready"])}
 
 
+STALE_ORDER_DAYS = 30
+
+
+def _age_days(o) -> int:
+    """Days since the order was created. An unreadable date reads as NEW (0),
+    which keeps a visible order rather than silently skipping its readiness."""
+    import datetime as _dt
+    try:
+        t = _dt.datetime.fromisoformat(str(o.get("created")).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=_dt.timezone.utc)
+        return max(0, (_dt.datetime.now(_dt.timezone.utc) - t).days)
+    except Exception:
+        return 0
+
+
 def list_orders():
-    """All buy-orders (most recent first), each with live DNS readiness."""
+    """All buy-orders (most recent first), each with live DNS readiness.
+
+    Readiness is a LIVE Zapmail walk per order, and it was being computed for
+    every order still marked `domains_registered` — including two from August
+    whose domains have been in service for weeks. That cost 73.6s on a tab the
+    UI then rendered without them, because it discards orders older than
+    STALE_ORDER_DAYS as bookkeeping. The server was doing a minute of work so
+    the browser could throw it away, and the Buy tab timed out before it
+    finished.
+
+    Same cutoff as the UI, in one named constant, so the two cannot drift.
+    """
     orders = sorted(_orders(), key=lambda o: o.get("id", 0), reverse=True)
     for o in orders:
-        if o.get("status") == "domains_registered":
+        stale = o.get("status") == "domains_registered" and _age_days(o) > STALE_ORDER_DAYS
+        o["stale"] = stale
+        o["age_days"] = _age_days(o)
+        if o.get("status") == "domains_registered" and not stale:
             o["readiness"] = order_readiness(o["id"])
     return {"orders": orders}
