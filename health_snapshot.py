@@ -110,6 +110,42 @@ def build_fleet_from_overview(overview: dict) -> list[dict]:
 SNAPSHOT_RUN_KEY = "health_snapshot_last_run"
 
 
+SLACK_WEBHOOK_VARS = ("SLACK_ZAPMAIL_WEBHOOK", "SLACK_INFRA_DECISIONS_WEBHOOK",
+                      "SLACK_WEBHOOK_URL")
+ALERT_AFTER_FAILURES = 1       # the first miss, not the third
+
+
+def alert_snapshot_broken(detail: str, failures: int) -> dict:
+    """Tell Slack the burn pipeline has stopped.
+
+    The burnt-inbox list is the point of this dashboard, and it ran silently
+    wrong for a week: the snapshot failed, GitHub went red, and nobody watches
+    GitHub. A red tick in a tab nobody opens is not an alert.
+
+    This posts from the job that KNOWS it failed, using the webhook Vercel
+    already has, so it needs no new secret and cannot drift out of sync with
+    the thing it reports on.
+    """
+    import os
+    import requests
+    text = (f":rotating_light: *Burnt-inbox tracking has stopped* — the daily "
+            f"health snapshot has failed {failures} time(s) in a row.\n"
+            f"The Inboxes tab will keep showing the last good day and will "
+            f"UNDER-REPORT burns until this is fixed.\n"
+            f"```{detail[:600]}```")
+    for var in SLACK_WEBHOOK_VARS:
+        hook = (os.environ.get(var) or "").strip()
+        if not hook:
+            continue
+        try:
+            r = requests.post(hook, json={"text": text}, timeout=10)
+            if r.status_code in (200, 201):
+                return {"alerted": True, "via": var}
+        except requests.RequestException:
+            pass
+    return {"alerted": False, "reason": "no working webhook"}
+
+
 def record_run(ok: bool, detail: str = "") -> None:
     """Remember whether the last snapshot actually succeeded.
 
@@ -123,16 +159,31 @@ def record_run(ok: bool, detail: str = "") -> None:
     try:
         prev = store.get_state(SNAPSHOT_RUN_KEY) or {}
         fails = 0 if ok else int(prev.get("consecutive_failures") or 0) + 1
+        # A success clears the alert latch, so the NEXT outage is announced
+        # too. Without this the pipeline alerts once, ever.
+        alerted_at = None if ok else prev.get("alerted_at")
         store.set_state(SNAPSHOT_RUN_KEY, {
             "ok": ok,
             "at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "detail": detail[:300],
             "consecutive_failures": fails,
+            "alerted_at": alerted_at,
             "last_success_at": (_dt.datetime.now(_dt.timezone.utc).isoformat()
                                 if ok else prev.get("last_success_at")),
         })
     except Exception:
-        pass                                   # never fail the run over telemetry
+        return                                 # never fail the run over telemetry
+    # Alert on the FIRST failure. Waiting for a streak is how a week went by.
+    # Only on the transition, so a long outage does not post every six hours.
+    if not ok and fails >= ALERT_AFTER_FAILURES and not prev.get("alerted_at"):
+        try:
+            res = alert_snapshot_broken(detail, fails)
+            if res.get("alerted"):
+                blob = store.get_state(SNAPSHOT_RUN_KEY) or {}
+                blob["alerted_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+                store.set_state(SNAPSHOT_RUN_KEY, blob)
+        except Exception:
+            pass
 
 
 def last_run() -> dict:
