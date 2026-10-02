@@ -42,6 +42,8 @@
   .buytbl{border-collapse:collapse;margin-top:8px;font-size:12px;width:100%}
   .buytbl th{text-align:left;color:var(--dim);font-weight:400;padding:2px 10px 2px 0}
   .buytbl td{padding:2px 10px 2px 0;white-space:nowrap}
+  .arow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:720px}
+  .arow select{padding:5px 8px}
   .steps{display:flex;flex-direction:column;gap:2px;max-width:560px}
   .steprow{display:flex;align-items:baseline;gap:6px;line-height:1.7}
   .good{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .dim{color:var(--dim)}
@@ -1659,7 +1661,88 @@ function renderPools(){
     <div class="meta" style="margin-top:10px">Stock that can still be given to a client.
       Reserve is Generic Landscaping 1 + 2 (84 = two clients' worth); Replacement Group is separate,
       for swapping burned inboxes. Acquisition is not listed here \u2014 it is our own prospecting
-      fleet, already deployed, and it has its own tab.</div>`;
+      fleet, already deployed, and it has its own tab.</div>
+
+    <h2 style="margin-top:22px">Assign a pool to a client</h2>
+    <div class="meta" style="margin-bottom:10px">Re-tags every inbox in the pool to the client
+      <b>and</b> points its domains at their website in one step. Forwarding does not follow a
+      re-tag on its own \u2014 that is how a group ends up mailing for one client while every link
+      sends prospects to another.</div>
+    <div class="arow">
+      <select id="ag-group"><option value="">Pool\u2026</option></select>
+      <select id="ag-client"><option value="">Client\u2026</option></select>
+      <select id="ag-ab"><option value="A">Group A</option><option value="B">Group B</option></select>
+      <button class="act" id="ag-go">Assign</button>
+    </div>
+    <div id="ag-site" class="meta" style="margin-top:6px"></div>
+    <div id="ag-out" class="meta" style="margin-top:8px"></div>`;
+  wireAssign();
+}
+
+// The client list and each client's website both come from the CRM, which is
+// the only authority on where a client's domains should point. Showing the
+// target site BEFORE the click is the difference between an informed assign
+// and discovering a month later that 24 domains forward nowhere.
+let AG_CLIENTS = null;
+let AG_POOLS = null;
+
+async function wireAssign(){
+  const sel = document.getElementById('ag-client');
+  const site = document.getElementById('ag-site');
+  const out = document.getElementById('ag-out');
+  if (!sel) return;
+  if (!AG_CLIENTS) {
+    const r = await get('/api/crm-clients');
+    AG_CLIENTS = r.clients || [];
+    if (r.error) site.innerHTML = `<span class="bad">could not read the CRM: ${esc(r.error)}</span>`;
+  }
+  // Pools come from the SAME live read the assign step uses, not from the
+  // Pools table above it. That table is built from overview_v2, which has
+  // listed pools that were assigned weeks ago — offering one that cannot
+  // resolve looks available and fails on click.
+  const gsel = document.getElementById('ag-group');
+  if (!AG_POOLS) {
+    gsel.innerHTML = '<option value="">loading pools\u2026</option>';
+    const pr = await get('/api/assignable-pools');
+    AG_POOLS = pr.pools || [];
+    if (pr.error) out.innerHTML = `<span class="bad">${esc(pr.error)}</span>`;
+  }
+  gsel.innerHTML = '<option value="">Pool\u2026</option>'
+    + AG_POOLS.map(p => `<option value="${esc(p.name)}">${esc(p.name)} (${p.inboxes})</option>`).join('');
+  sel.innerHTML = '<option value="">Client\u2026</option>'
+    + AG_CLIENTS.map(c => `<option value="${esc(c.name || c)}">${esc(c.name || c)}</option>`).join('');
+  const showSite = () => {
+    const c = AG_CLIENTS.find(x => (x.name || x) === sel.value);
+    const w = c && c.website;
+    site.innerHTML = !sel.value ? ''
+      : w ? `Domains will forward to <b>${esc(w)}</b>`
+          : `<span class="bad">No website on this client's CRM row \u2014 the inboxes will be
+             re-tagged but forwarding will be left alone rather than pointed at a guess.</span>`;
+  };
+  sel.onchange = showSite;
+  document.getElementById('ag-go').onclick = async () => {
+    const group = document.getElementById('ag-group').value;
+    const client = sel.value, ab = document.getElementById('ag-ab').value;
+    if (!group || !client) return out.innerHTML = '<span class="bad">Pick a pool and a client.</span>';
+    const n = (AG_POOLS || []).find(p => p.name === group);
+    if (!confirm(`Assign ${group} (${n ? n.inboxes : '?'} inboxes) to ${client} as Group ${ab}?\n\n`
+               + `This re-tags every inbox and repoints its domains. It is reversible, but the `
+               + `inboxes stop being reserve stock.`)) return;
+    const b = document.getElementById('ag-go');
+    b.disabled = true; b.textContent = 'assigning\u2026';
+    out.innerHTML = 'working\u2026';
+    const r = await post('/api/assign-generic-to-client', {group_name: group, client_name: client, ab});
+    b.disabled = false; b.textContent = 'Assign';
+    if (r.error) { out.innerHTML = `<span class="bad">${esc(r.error)}</span>`; return; }
+    const f = r.forwarding || r.fwd;
+    out.innerHTML = `<span class="${r.ok ? 'good' : 'warn'}">tagged ${r.tagged}/${r.total}, `
+      + `verified ${r.verified}</span>`
+      + (f ? `<br><span class="dim">forwarding: ${f.ok ? `${f.domains} domain(s) \u2192 ${esc(f.forward_to || '')}`
+                                                      : esc(f.note || f.error || 'not set')}</span>` : '')
+      + (r.ok ? '' : '<br><span class="warn">Re-run to finish \u2014 it resumes, it does not start over.</span>');
+    AG_POOLS = null;          // one was just consumed — re-read before the next
+    showTab('pools', true);
+  };
 }
 
 function banners(){
