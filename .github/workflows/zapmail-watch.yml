@@ -229,6 +229,21 @@ jobs:
       # every count on the landing page is quietly low. This is the one cache
       # whose staleness is invisible by construction, so it runs first and it
       # is NOT continue-on-error.
+      # Nothing warmed the Onboarding tab, so its three caches
+      # (infra_lifecycle, zm_inventory, smartlead_tags) expired after 6h and
+      # the next person to open it paid ~100s of rebuilds — past the browser's
+      # 120s budget. That is the whole reason the tab "does not work".
+      - name: Warm the onboarding view
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          code=$(curl -sS -o /tmp/onb.json -w '%{http_code}' --max-time 290 \
+            "https://email-infra.vercel.app/api/onboarding?refresh=1&pw=${PW}") || code=000
+          echo "onboarding -> HTTP $code $(head -c 160 /tmp/onb.json 2>/dev/null)"
+
       - name: Warm the remaining slow caches
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         continue-on-error: true
