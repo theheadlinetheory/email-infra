@@ -90,7 +90,16 @@ def _niche(domain_or_email: str) -> str:
 def _client_niche(client_name: str) -> str:
     """The client's niche. The client NAME is the strongest signal (e.g. 'Quantum
     Heating & Air', 'Woody's Landcare'); fall back to the dominant niche of its
-    inbox domains only when the name is generic."""
+    inbox domains only when the name is generic.
+
+    Holiday is checked FIRST and on the name only. "Merry & Bright Christmas
+    Lights" otherwise resolves to landscaping and "Wonderly Lights Of
+    Birmingham" to HVAC — both inferred from whatever their domains happen to
+    look like. That is how a lights client ends up barred from the landscaping
+    reserve for being "HVAC". The client's own name is unambiguous.
+    """
+    if _is_holiday(client_name):
+        return "holiday"
     by_name = _niche(client_name)
     if by_name != "generic":
         return by_name
@@ -493,6 +502,99 @@ def list_jobs() -> list[dict]:
     return [_annotate(j) for j in _load().get("jobs", [])]
 
 
+_HOLIDAY_RE = _re.compile(r"holiday|christmas|xmas|light(?:s|ing)?\b|festive|"
+                          r"illuminat|twinkle|glow|wreath|decor", _re.I)
+
+# Holiday lighting has NO reserve of its own and never will — it is seasonal,
+# so we do not warm a standing pool for it. Tim: "make sure we are able to
+# replace holiday lighting clients' burned domains with landscaping fresh
+# replacement inboxes." A landscaping domain on a Christmas-lights campaign is
+# a cosmetic mismatch; a burned inbox left sending is a real one.
+NICHE_FALLBACK = {"holiday": ("landscaping", "generic")}
+
+
+def _is_holiday(name: str) -> bool:
+    return bool(_HOLIDAY_RE.search(name or ""))
+
+
+def live_reserve(force: bool = False) -> list[dict]:
+    """Every reserve inbox, read from Smartlead tags.
+
+    NOT from overview_v2. That cache lists ONE generic group holding 3 accounts
+    with warmup_days None, so reserve_summary skipped it and reported zero —
+    while Smartlead held 84 across three pools, 42 of them warmed. The Inboxes
+    tab told an operator there was nothing to replace a burned client inbox
+    with, and nobody replaced Mary & Bright's.
+
+    Readiness is AGE, not a flag: Smartlead's warm-up toggle stays on for life,
+    so the only honest signal is how long the account has existed.
+    """
+    import datetime as _dt
+    import os as _os
+    import requests as _rq
+    key = (_os.environ.get("SMARTLEAD_API_KEY") or "").strip()
+    if not key:
+        return []
+    DATETAG = _re.compile(r"^\d{1,2}/\d{1,2}/\d{2}$")
+    SKIP = ("cleanup", "retired")
+    POOL = ("generic", "replacement group", "reserve")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    out, offset = [], 0
+    while True:
+        try:
+            r = _rq.get("https://server.smartlead.ai/api/v1/email-accounts/",
+                        params={"api_key": key, "offset": offset, "limit": 100}, timeout=60)
+        except Exception:                            # noqa: BLE001
+            return out
+        if r.status_code != 200:
+            return out
+        batch = r.json() if r.text.strip() else []
+        if not isinstance(batch, list):
+            return out
+        for a in batch:
+            pool = None
+            for t in (a.get("tags") or []):
+                n = (t.get("tag_name") or t.get("name") or "").strip()
+                nl = n.lower()
+                if not n or DATETAG.match(n) or nl in ("zapmail", "premium inboxes"):
+                    continue
+                if any(k in nl for k in SKIP) or not any(k in nl for k in POOL):
+                    continue
+                pool = n
+                break
+            if not pool:
+                continue
+            age = None
+            ca = a.get("created_at")
+            if ca:
+                try:
+                    age = (now - _dt.datetime.fromisoformat(ca.replace("Z", "+00:00"))).days
+                except Exception:                    # noqa: BLE001
+                    age = None
+            out.append({"email": a.get("from_email"), "account_id": a.get("id"),
+                        "group": pool, "niche": _niche(a.get("from_email") or ""),
+                        "age_days": age, "ready": age is not None and age >= WARMUP_DAYS,
+                        "smtp_ok": a.get("is_smtp_success")})
+        if len(batch) < 100:
+            break
+        offset += 100
+    return out
+
+
+def acceptable_niches(want_niche: str) -> tuple:
+    """Which reserve niches may fill a request for `want_niche`.
+
+    HVAC and landscaping still never replace each other — that rule stands.
+    Holiday is the addition: it has no pool of its own, so it draws landscaping
+    then generic.
+    """
+    if not want_niche or want_niche == "generic":
+        return ("generic", "landscaping", "hvac")
+    if want_niche in NICHE_FALLBACK:
+        return (want_niche,) + NICHE_FALLBACK[want_niche]
+    return (want_niche, "generic")
+
+
 def reserve_summary() -> dict:
     """How many warmed reserve inboxes are ready to deploy right now, broken down
     by niche. Reads generic groups from the overview cache; 'ready' = warmed >=
@@ -508,15 +610,16 @@ def reserve_summary() -> dict:
                       if j.get("reserve_email") and j.get("status") in ("reserved", "swapped")}
     ready, available, groups = 0, 0, []
     ready_by, avail_by = Counter(), Counter()
-    for g in (ov or {}).get("generic_groups", []):
-        wd = g.get("warmup_days")
-        ads = g.get("account_details", [])
-        if not (ads and wd is not None and wd >= WARMUP_DAYS):
+    by_group = {}
+    for c in live_reserve():
+        if not c.get("ready") or not c.get("email"):
             continue
-        groups.append({"name": g.get("name"), "count": len(ads)})
-        for ad in ads:
+        by_group.setdefault(c["group"], []).append(c)
+    for name, cands in sorted(by_group.items()):
+        groups.append({"name": name, "count": len(cands)})
+        for ad in cands:
             em = ad.get("email", "")
-            nic = _niche(em)
+            nic = ad.get("niche") or _niche(em)
             ready += 1
             ready_by[nic] += 1
             if em not in claimed_emails:
@@ -534,17 +637,10 @@ def pick_reserve_inbox(exclude=None, want_niche=None) -> dict | None:
     NEVER cross HVAC<->landscaping. Prefers an exact-niche match so the scarce
     generic pool is conserved for niches that have no exact reserve."""
     exclude = exclude or set()
-    ov, _ = store.cache_get("overview_v2")
-    cands = []
-    for g in (ov or {}).get("generic_groups", []):
-        wd = g.get("warmup_days")
-        if wd is None or wd < WARMUP_DAYS:
-            continue
-        for ad in g.get("account_details", []):
-            em = ad.get("email")
-            if em and em not in exclude and ad.get("id"):
-                cands.append({"email": em, "account_id": ad["id"],
-                              "group": g.get("name"), "niche": _niche(em)})
+    cands = [c for c in live_reserve()
+             if c.get("ready") and c.get("email") and c.get("account_id")
+             and c["email"] not in exclude
+             and c.get("smtp_ok") is not False]     # never hand over a dead sender
     if not cands:
         return None
     gen = [c for c in cands if c["niche"] == "generic"]
@@ -552,6 +648,12 @@ def pick_reserve_inbox(exclude=None, want_niche=None) -> dict | None:
         # niche-ambiguous client: prefer a truly generic domain over stamping a
         # landscaping/HVAC brand onto it; fall back to anything if no generic left.
         return gen[0] if gen else cands[0]
+    # Exact first, then the niche's permitted fallbacks in order. Holiday has no
+    # pool of its own and falls back to landscaping — see acceptable_niches.
+    for nic in acceptable_niches(want_niche):
+        hit = [c for c in cands if c["niche"] == nic]
+        if hit:
+            return hit[0]
     exact = [c for c in cands if c["niche"] == want_niche]
     if exact:
         return exact[0]
