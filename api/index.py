@@ -192,10 +192,24 @@ def crm_clients():
         crm_key = os.environ.get("CRM_SUPABASE_KEY", "").strip()
         if not crm_url or not crm_key:
             return _cors(jsonify({"clients": []}))
-        r = _req.get(f"{crm_url}/rest/v1/clients?select=name,client_standing",
+        # website too: the assign panel shows where a client's domains WILL
+        # point before anyone clicks, and forwarding defaults to it. A name on
+        # its own cannot answer "and where do these end up?".
+        r = _req.get(f"{crm_url}/rest/v1/clients?select=name,website,client_standing",
                       headers={"apikey": crm_key, "Authorization": f"Bearer {crm_key}"}, timeout=10)
-        names = sorted(set(c["name"].strip() for c in r.json() if c.get("name"))) if r.status_code == 200 else []
-        return _cors(jsonify({"clients": names}))
+        if r.status_code != 200:
+            return _cors(jsonify({"clients": [], "error": f"CRM returned HTTP {r.status_code}"}))
+        seen, out = set(), []
+        for c in r.json():
+            nm = (c.get("name") or "").strip()
+            if not nm or nm.lower() in seen:
+                continue
+            seen.add(nm.lower())
+            site = (c.get("website") or "").strip()
+            out.append({"name": nm,
+                        "website": (site if site.startswith("http") else f"https://{site}/") if site else None,
+                        "standing": c.get("client_standing")})
+        return _cors(jsonify({"clients": sorted(out, key=lambda x: x["name"].lower())}))
     except Exception:
         return _cors(jsonify({"clients": []}))
 
@@ -2557,14 +2571,59 @@ def _get_campaign_name(campaign_id):
     return str(campaign_id)
 
 
+def _accounts_by_tag(tag_name: str):
+    """Every Smartlead account carrying this exact tag, live.
+
+    The cache is not trustworthy for this. overview_v2 lists ONE generic group
+    holding 3 accounts while Smartlead has three pools of 42 — it is rebuilt by
+    a sync that has silently mis-grouped the fleet more than once, and assigning
+    a pool off a stale copy would re-tag the wrong inboxes. The tag is the thing
+    the Pools table counts and the thing the operator picked; read that.
+    """
+    import re as _re
+    import requests as _req
+    key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
+    if not key:
+        return None, "SMARTLEAD_API_KEY is not set"
+    want = tag_name.strip().lower()
+    out, offset = [], 0
+    while True:
+        try:
+            r = _req.get("https://server.smartlead.ai/api/v1/email-accounts/",
+                         params={"api_key": key, "offset": offset, "limit": 100}, timeout=60)
+        except _req.RequestException as e:
+            return None, f"Smartlead unreachable: {str(e)[:120]}"
+        if r.status_code != 200:
+            return None, f"Smartlead returned HTTP {r.status_code}"
+        batch = r.json() if r.text.strip() else []
+        if not isinstance(batch, list):
+            return None, "unexpected Smartlead response"
+        for a in batch:
+            for t in (a.get("tags") or []):
+                # REST says tag_name, GraphQL says name. Reading one key makes
+                # the other source's tags invisible.
+                nm = (t.get("tag_name") or t.get("name") or "").strip().lower()
+                if nm == want and a.get("id"):
+                    out.append(a["id"])
+                    break
+        if len(batch) < 100:
+            break
+        offset += 100
+    return (out, None) if out else (None, f"no Smartlead accounts carry the tag {tag_name!r}")
+
+
 def _resolve_group_account_ids(group_name, campaign_id=None):
-    """Read SmartLead account IDs from cached account_details."""
+    """Smartlead account IDs for a group, live first and cache only as a
+    fallback -- see _accounts_by_tag for why that order."""
+    ids, err = _accounts_by_tag(group_name)
+    if ids:
+        return ids, None
     try:
         data, _ = _get_cache("overview_v2")
     except Exception as e:
-        return None, f"Cache error: {e}"
+        return None, f"{err}; cache error: {e}"
     if not data:
-        return None, "No cached data"
+        return None, err
     account_ids = []
     for section in ["acquisition_groups", "generic_groups"]:
         for g in (data.get(section) or []):
@@ -2573,8 +2632,9 @@ def _resolve_group_account_ids(group_name, campaign_id=None):
                     if a.get("id"):
                         account_ids.append(a["id"])
     if not account_ids:
-        all_names = [g.get("name") for s in ["acquisition_groups", "generic_groups"] for g in (data.get(s) or [])]
-        return None, f"No account IDs for '{group_name}'. Groups: {all_names}"
+        all_names = [g.get("name") for s in ["acquisition_groups", "generic_groups"]
+                     for g in (data.get(s) or [])]
+        return None, f"{err}. Cached groups: {all_names}"
     return account_ids, None
 
 
@@ -2705,6 +2765,73 @@ def unassign_group():
                           "stragglers_retried": len(stragglers), "message": msg}))
 
 
+def _client_website(client_name: str) -> str | None:
+    """The client's website from the CRM, normalised to a URL.
+
+    The CRM is the only authority on where a client's domains should point.
+    Guessing from the client name is how a domain ends up forwarding to a site
+    that does not exist.
+    """
+    try:
+        import infra_lifecycle as ilc
+        for c in (ilc.fetch_crm_clients() or []):
+            if (c.get("name") or "").strip().lower() == client_name.strip().lower():
+                site = (c.get("website") or "").strip()
+                if not site:
+                    return None
+                return site if site.startswith("http") else f"https://{site}/"
+    except Exception:
+        return None
+    return None
+
+
+@app.route("/api/assignable-pools")
+def assignable_pools():
+    """Pools that can actually be handed to a client, read LIVE from Smartlead.
+
+    The picker and the resolver must agree. The Pools table is built from
+    overview_v2, which has listed pools that no longer exist (Generic
+    Landscaping 1 was assigned weeks ago and still appeared) and missed ones
+    that do. Offering a pool the assign step then cannot resolve is the worst
+    of both: it looks available and fails on click.
+
+    Cleanup and Retired are excluded — those are on their way out, not stock.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import re as _re
+    import requests as _req
+    key = (os.environ.get("SMARTLEAD_API_KEY") or "").strip()
+    if not key:
+        return _cors(jsonify({"error": "SMARTLEAD_API_KEY is not set"})), 500
+    DATE = _re.compile(r"^\d{1,2}/\d{1,2}/\d{2}$")
+    SKIP = ("cleanup", "retired")
+    ASSIGNABLE = ("generic", "replacement group", "reserve")
+    counts, offset = {}, 0
+    while True:
+        r = _req.get("https://server.smartlead.ai/api/v1/email-accounts/",
+                     params={"api_key": key, "offset": offset, "limit": 100}, timeout=60)
+        if r.status_code != 200:
+            return _cors(jsonify({"error": f"Smartlead returned HTTP {r.status_code}"})), 502
+        batch = r.json() if r.text.strip() else []
+        if not isinstance(batch, list):
+            return _cors(jsonify({"error": "unexpected Smartlead response"})), 502
+        for a in batch:
+            for t in (a.get("tags") or []):
+                n = (t.get("tag_name") or t.get("name") or "").strip()
+                if not n or DATE.match(n) or n.lower() in ("zapmail", "premium inboxes"):
+                    continue
+                nl = n.lower()
+                if any(k in nl for k in SKIP) or not any(k in nl for k in ASSIGNABLE):
+                    continue
+                counts[n] = counts.get(n, 0) + 1
+        if len(batch) < 100:
+            break
+        offset += 100
+    pools = [{"name": n, "inboxes": v} for n, v in sorted(counts.items())]
+    return _cors(jsonify({"pools": pools}))
+
+
 @app.route("/api/assign-generic-to-client", methods=["POST", "OPTIONS"])
 def assign_generic_to_client():
     """Convert a generic reserve group into a client group by re-tagging accounts."""
@@ -2723,11 +2850,18 @@ def assign_generic_to_client():
         if ab not in ("A", "B"):
             return _cors(jsonify({"error": "ab must be A or B"})), 400
 
-        jwt = os.environ.get("SMARTLEAD_JWT", "").strip()
-        gql_url = os.environ.get("SMARTLEAD_GQL", "").strip()
+        # Mint, do not read. The static SMARTLEAD_JWT is dated 2026-07-02 and
+        # expired; a route that re-tags up to 57 live accounts must not run on
+        # a token nobody has checked. get_jwt() prefers a freshly minted one
+        # and only falls back to the env var.
+        import health_smartlead as _hsl
+        jwt = (_hsl.get_jwt() or "").strip()
+        gql_url = (os.environ.get("SMARTLEAD_GQL", "").strip()
+                   or "https://fe-gql.smartlead.ai/v1/graphql")
         sl_key = os.environ.get("SMARTLEAD_API_KEY", "").strip()
-        if not jwt or not gql_url:
-            return _cors(jsonify({"error": "SMARTLEAD_JWT and SMARTLEAD_GQL required"})), 500
+        if not jwt:
+            return _cors(jsonify({"error": "could not obtain a Smartlead token — "
+                                           "set SMARTLEAD_LOGIN_EMAIL/PASSWORD"})), 500
 
         sl_headers = {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
         sl_internal = "https://server.smartlead.ai/api"
@@ -2922,7 +3056,14 @@ def assign_generic_to_client():
         # Point the group's domains at the new client's website. Zapmail's
         # forwardTo does NOT follow a re-tag, so without this the domains keep
         # redirecting prospects to whoever used them last.
-        forward_to = (body.get("forward_to") or "").strip()
+        # Default to the CRM's website for this client. Forwarding is per
+        # DOMAIN and does not follow a re-tag, so an assignment that omits it
+        # leaves the group pointing wherever it pointed before: nothing for a
+        # generic pool, or the PREVIOUS client's site for a reused one. Gorilla
+        # and Iceberg shipped exactly that way -- 24 domains forwarding nowhere
+        # and 3 at another client's website -- and nobody noticed until asked.
+        # Making it opt-OUT rather than opt-in is the whole fix.
+        forward_to = (body.get("forward_to") or "").strip() or (_client_website(client_name) or "")
         fwd = None
         if forward_to:
             try:
