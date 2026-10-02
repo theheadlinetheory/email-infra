@@ -850,6 +850,16 @@ function renderInboxes(){
   wireReplace(act);
 }
 
+function wireAcqBlocked(){
+  const b = document.getElementById('acq-blocked-show');
+  if (!b) return;
+  b.onclick = () => {
+    const t = document.getElementById('acq-blocked');
+    t.hidden = !t.hidden;
+    b.textContent = t.hidden ? 'Show them' : 'Hide';
+  };
+}
+
 function renderAcquisition(){
   const d = DATA.acquisition || {};
   const el = document.getElementById('acquisition');
@@ -917,6 +927,30 @@ function renderAcquisition(){
     Daily volume is set by where each campaign is in its sequence, so it is not a
     utilisation figure \u2014 an inbox between sequence steps sends nothing today and is
     still working.</div>`;
+
+  // "Cannot send" was a row in a table, which reads as a category rather than
+  // a problem. These are inboxes we pay for every month that cannot send at
+  // all, and nothing on the page asked anyone to do something about them.
+  const blocked = ((wk.by_email) || []).filter(x => x.work === 'blocked');
+  if (blocked.length) {
+    const lost = blocked.reduce((t, x) => t + (x.per_day || 0), 0);
+    const pct = s.inboxes ? Math.round(blocked.length * 100 / s.inboxes) : 0;
+    html += `<div class="banner bad" style="margin-bottom:14px">
+      <b>${blocked.length} acquisition inboxes cannot send</b> \u2014 ${pct}% of the fleet,
+      ${lost.toLocaleString()} emails a day of capacity you are paying for and not getting.
+      Their SMTP connection is down, so they are not between sequence steps; they would fail
+      if a campaign tried to use them.
+      <button class="act" id="acq-blocked-show" style="margin-left:8px">Show them</button>
+      </div>
+      <div id="acq-blocked" class="wrap" hidden>
+        <table style="max-width:720px"><tr><th>Inbox</th><th class="n">Lost/day</th></tr>${
+          blocked.map(x => `<tr><td>${esc(x.email)}</td>
+            <td class="n dim">${x.per_day || 0}</td></tr>`).join('')}</table>
+        <div class="meta" style="margin-top:8px">Fix the connection in Smartlead, or replace them
+          from reserve on the Inboxes tab. Leaving them attached means campaigns keep assigning
+          leads to senders that cannot deliver.</div>
+      </div>`;
+  }
 
   (d.notes || []).forEach(n => html += `<div class="banner">${esc(n)}</div>`);
   if (s.registrar_read === false)
@@ -996,6 +1030,7 @@ function renderAcquisition(){
   </table></div>`;
 
   el.innerHTML = html;
+  wireAcqBlocked();
 }
 
 // ── Buy ────────────────────────────────────────────────────────────────

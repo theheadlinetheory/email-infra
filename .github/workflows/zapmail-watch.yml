@@ -178,7 +178,10 @@ jobs:
       # Warming it here means the first person to open the tab is not the one
       # who pays the 60-90s rebuild.
       - name: Refresh acquisition capacity from Smartlead
-        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        # EVERY run, not just 02:00 — same reasoning as the health snapshot.
+        # The Acquisition tab reports what each inbox is doing TODAY, and it
+        # was rebuilt once a day, so the figure on screen was routinely a day
+        # behind and a single failed run left it two.
         continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
