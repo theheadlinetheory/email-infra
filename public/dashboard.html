@@ -606,6 +606,45 @@ function renderOnboarding(){
   });
 }
 
+// Survives the re-render that follows a reallocation. Cleared only when the
+// operator dismisses it, so the campaign links stay clickable long enough to
+// actually use them.
+let REALLOC_RESULT = null;
+
+function reallocResultHtml(){
+  const r = REALLOC_RESULT;
+  if (!r) return '';
+  if (r.error) {
+    return `<div class="banner bad"><b>Reallocation failed on ${esc(r.domain)}</b> —
+      ${esc(r.error)}<button class="act" id="rr-x" style="margin-left:8px">Dismiss</button></div>`;
+  }
+  const swapped = r.swapped || 0, asked = r.asked || 0;
+  const held = r.held || [], failed = r.failed || [];
+  const camps = r.campaigns_to_reallocate || [];
+  // Say what happened to EVERY inbox asked about. "2 of 3" with no account of
+  // the third is why this looked broken.
+  let parts = [`<b>${swapped} of ${asked} swapped</b> on ${esc(r.domain)}`];
+  if (held.length) parts.push(`${held.length} kept in campaign (own a positive reply)`);
+  if (failed.length) parts.push(`<span class="bad">${failed.length} failed</span>`);
+  const unaccounted = asked - swapped - held.length - failed.length;
+  if (unaccounted > 0) parts.push(`<span class="warn">${unaccounted} already had a job</span>`);
+  return `<div class="banner ${failed.length ? 'bad' : 'ok'}">
+    ${parts.join(' · ')}
+    <button class="act" id="rr-x" style="margin-left:8px">Dismiss</button>
+    ${camps.length ? `<div style="margin-top:8px">
+        <b>Now click “Reallocate mailboxes” in SmartLead</b> — once per campaign:
+        <ul style="margin:6px 0 0 18px">${camps.map(c => `<li>${
+          c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a>`
+                : esc(c.name)}</li>`).join('')}</ul>
+        <div class="dim" style="margin-top:4px">Until that click the replacements hold no
+          leads — the swap is only half done.</div>
+      </div>`
+      : '<div class="dim" style="margin-top:6px">No ACTIVE campaign needs the manual click.</div>'}
+    ${(r.old_to_cancel || []).length ? `<div class="dim" style="margin-top:6px">${
+      r.old_to_cancel.length} old inbox(es) are now safe to cancel.</div>` : ''}
+  </div>`;
+}
+
 function renderInboxes(){
   const d = DATA.inboxes || {};
   const el = document.getElementById('inboxes');
@@ -618,7 +657,7 @@ function renderInboxes(){
   const b = d.burn_rate || {}, bs = b.summary || {};
   const rate = bs.per_week, runway = bs.runway_weeks;
 
-  let html = '<div class="cards">'
+  let html = reallocResultHtml() + '<div class="cards">'
     + card('Needs replacing', s.actionable_burned ?? '–', s.actionable_burned ? 'bad' : 'ok')
     + card('Burn rate', b.measured ? `${rate}<span class="dim" style="font-size:13px">/wk</span>` : '?',
            !b.measured ? 'warn' : rate >= 5 ? 'bad' : rate > 0 ? 'warn' : 'ok')
@@ -847,6 +886,8 @@ function renderInboxes(){
     html += `<h2>Burned but already cancelled — ${dead.length}</h2>
       <div class="meta">No action: these sit in a cleanup bucket and disappear on their billing date.</div>`;
   el.innerHTML = html;
+  const rx = document.getElementById('rr-x');
+  if (rx) rx.onclick = () => { REALLOC_RESULT = null; showTab('inboxes'); };
   wireReplace(act);
 }
 
@@ -1531,9 +1572,13 @@ function wireDomainCards(){
                + `Each is swapped for a niche-matched reserve inbox.`)) { dmsg(dom, ''); return; }
     dmsg(dom, 'reallocating…');
     const r = await post('/api/health-reallocate', {emails, confirm: true});
-    dmsg(dom, r.error ? `<span class="bad">${esc(r.error)}</span>`
-                      : `<span class="good">done — now hit Reallocate mailboxes in SmartLead</span>`);
-    showTab('inboxes', true);
+    // Keep the result OUTSIDE the domain card. dmsg writes into #dm-<domain>,
+    // which showTab destroys when it re-renders — so the outcome of the one
+    // action that moves live senders flashed up and vanished, and the tab came
+    // back looking like nothing had happened.
+    REALLOC_RESULT = r.error ? {error: r.error, domain: dom, asked: emails.length}
+                             : {...r, domain: dom, asked: emails.length};
+    await showTab('inboxes', true);
   });
   document.querySelectorAll('button[data-dcancel]').forEach(b => b.onclick = async () => {
     const dom = b.dataset.dcancel;
@@ -1847,7 +1892,15 @@ async function showTab(t, force){
   CURRENT = t;
   const el = document.getElementById(t);
   const pending = (TAB_FEEDS[t] || []).some(k => force || !(k in LOADED));
-  if (pending && RENDER[t]) el.innerHTML = '<div class="empty">loading…</div>';
+  if (pending && RENDER[t]) {
+    // Keep a pending reallocation result visible THROUGH the refresh. The
+    // refresh it triggers takes ~10s, and blanking the tab to "loading…" hid
+    // the only confirmation that the swap had happened — so the action looked
+    // like it had done nothing.
+    const keep = (t === 'inboxes' && typeof reallocResultHtml === 'function')
+      ? reallocResultHtml() : '';
+    el.innerHTML = keep + '<div class="empty">loading…</div>';
+  }
   try {
     await need(TAB_FEEDS[t] || [], force);
     stamp(); banners();
