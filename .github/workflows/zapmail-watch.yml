@@ -247,6 +247,26 @@ jobs:
             "https://email-infra.vercel.app/api/onboarding?refresh=1&pw=${PW}") || code=000
           echo "onboarding -> HTTP $code $(head -c 160 /tmp/onb.json 2>/dev/null)"
 
+      # Rule 12, daily, posting to #infra-renewals. NOT continue-on-error:
+      # the whole point is that a cold inbox is invisible, so a silently failing
+      # check restores exactly the blind spot it was built to remove.
+      - name: Warm-up check (every inbox sending or warming)
+        if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS --max-time 290 \
+            "https://email-infra.vercel.app/api/warmup-alert?pw=${PW}")
+          echo "$body" | head -c 400; echo
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "::error::warm-up check failed: $(echo "$body" | jq -r '.error')"
+            exit 1
+          fi
+          echo "ok - status=$(echo "$body" | jq -r '.status // "?"')" \
+               "cold=$(echo "$body" | jq -r '.cold // 0')" \
+               "posted=$(echo "$body" | jq -r '.posted // false')"
+
       - name: Warm the remaining slow caches
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
         continue-on-error: true

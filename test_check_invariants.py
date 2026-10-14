@@ -310,7 +310,7 @@ class Harness(unittest.TestCase):
 
     def test_a_broken_rule_does_not_mask_the_others(self):
         results = ci.check({"accounts": "not-a-list", "crm": [client("Acme")]})
-        self.assertEqual(len(results), 11)
+        self.assertEqual(len(results), 12)
 
     def test_exit_code_is_nonzero_only_on_failure(self):
         ok = [ci.Result(1, "x", ci.PASS), ci.Result(2, "y", ci.SKIP)]
@@ -369,6 +369,7 @@ def test_rule_11_names_a_source_that_was_never_read():
 
 
 def test_rule_11_is_registered_and_last():
-    """It has to run, and it reads best beneath the rules it qualifies."""
+    """It has to run, and it must stay LAST: it certifies that every rule above
+    it saw a complete fleet, so anything appended after it is uncertified."""
     assert ci.rule_11_reads_were_complete in ci.RULES
     assert ci.RULES[-1] is ci.rule_11_reads_were_complete

@@ -214,6 +214,32 @@ fails open across the whole fleet and reports everything as safe to delete.
 
 ---
 
+## Rule 12 — every inbox is sending or warming
+
+An inbox is either on an ACTIVE campaign sending, or warming in a replacement
+or generic pool. There is no third state. Idle and cold is a fault: it costs
+$3/month, loses sender reputation while it sits, and is invisible — a cold
+inbox does nothing, so nothing draws attention to it.
+
+Retirement buckets (Cleanup, Retired, Burnt) are exempt. They are on their way
+out and should not be warming; demanding it would fire 337 times and train
+everyone to ignore the rule.
+
+**Why it exists.** 42 service inboxes sat six weeks with warm-up never switched
+on. Provisioning stalls at `forwarding` and `warmup` is the step AFTER it, so a
+missing forwarding target silently meant no warm-up. The order's journal read
+`step=forwarding` the whole time — the fact was recorded and never surfaced. A
+fleet sweep then found 71 in that state, 33 of them on LIVE client tags, where
+warm-up being off is a deliverability problem rather than idle stock.
+
+Checked daily by `/api/warmup-alert`, which posts to #infra-renewals on the
+transition into failure and again when it clears — not every run, because a
+daily message that always says the same thing stops being read.
+
+A SKIP is not a pass: if the fleet cannot be read the alert says so, because
+"all good" on an unread fleet is exactly how those 42 stayed cold.
+
+
 ## Rule 11 — a short read is not a small fleet
 
 This is not a trap alongside the others. It is the single most common bug in
