@@ -684,6 +684,28 @@ def inboxes_route():
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()[-800:]})), 500
 
+@app.route("/api/warmup-alert", methods=["GET", "POST"])
+def warmup_alert_route():
+    """Daily: post to #infra-renewals if any inbox is neither sending nor warming.
+
+    Rule 12. Separate from /api/invariants because this one has to run and POST
+    every day whether or not anyone opens the dashboard — the failure it catches
+    is invisible by nature: an inbox that is cold does nothing, costs money, and
+    loses reputation quietly.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import check_invariants as civ
+        dry = request.args.get("dry") == "1"
+        return _cors(jsonify(civ.warmup_alert(dry_run=dry)))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/invariants")
 def invariants_route():
     """The last stored run, with its age. `?refresh=1` recomputes.

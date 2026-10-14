@@ -45,6 +45,8 @@ REPLACEMENT_CEILING = 45      # a separate pool, for swapping burned inboxes.
                               # ceiling is a decision; drifting past one is not.
 EXPIRY_WINDOW_DAYS = 45
 
+RETIREMENT_TAG_HINTS = ("cleanup", "retired", "burnt")
+
 RESERVE_TAGS = ("Generic Landscaping 1", "Generic Landscaping 2")
 REPLACEMENT_TAGS = ("Replacement Group",)
 
@@ -403,7 +405,7 @@ def rule_10_expired_purged(s) -> Result:
 
 
 def rule_11_reads_were_complete(s) -> Result:
-    """The rule the other ten depend on: did we actually see the fleet?
+    """The rule the other eleven depend on: did we actually see the fleet?
 
     Six bugs in this codebase have been the same shape — a read that came back
     short, treated as complete, producing a confident wrong number, and every
@@ -413,7 +415,7 @@ def rule_11_reads_were_complete(s) -> Result:
 
     See docs/INFRA_RULES.md rule 11.
     """
-    name = ("the ten rules above were checked against a COMPLETE picture "
+    name = ("the eleven rules above were checked against a COMPLETE picture "
             "(no source returned a short answer)")
     bad = []
 
@@ -456,9 +458,56 @@ def rule_11_reads_were_complete(s) -> Result:
     return Result(11, name, FAIL if bad else PASS, " · ".join(sizes), bad)
 
 
+def rule_12_every_inbox_is_working_or_warming(s) -> Result:
+    """Every inbox is either SENDING or WARMING. There is no third state.
+
+    Tim's rule, in his words: an inbox group should either be in active
+    campaigns sending, or in a replacement group where it is warming, or in a
+    generic group where it is also warming.
+
+    This exists because 42 service inboxes sat for six weeks with warm-up never
+    switched on. Provisioning stalls at `forwarding`, and `warmup` is the step
+    AFTER it — so a missing forwarding target silently meant no warm-up, and
+    nothing anywhere said so. The order's own journal read `step=forwarding`
+    the whole time; the fact was recorded and never surfaced. A fleet-wide
+    sweep then found 71 more in the same state, including 33 on LIVE client
+    tags — warm-up off on an inbox that is actively sending is a deliverability
+    problem, not a cosmetic one.
+
+    Retirement buckets are exempt: an inbox on its way out should not be
+    warming, and demanding it would make this rule cry wolf 337 times.
+
+    See docs/INFRA_RULES.md rule 12.
+    """
+    name = ("every inbox is either sending on an ACTIVE campaign or warming "
+            "in a pool — nothing idle and cold")
+    if not s.get("accounts"):
+        return Result(12, name, SKIP, "needs Smartlead accounts")
+
+    retired, cold = 0, []
+    for a in s["accounts"]:
+        tag = (client_tag_of(a) or "").strip()
+        if any(k in tag.lower() for k in RETIREMENT_TAG_HINTS):
+            retired += 1
+            continue
+        warm = ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE"
+        if warm:
+            continue
+        # Not warming. Only acceptable if it is genuinely sending right now.
+        if (a.get("daily_sent_count") or 0) > 0:
+            continue
+        cold.append(f"{(a.get('from_email') or '?')} ({tag or 'untagged'})")
+
+    return Result(12, name, FAIL if cold else PASS,
+                  f"{len(s['accounts']) - retired} live inboxes checked, "
+                  f"{retired} in retirement buckets (exempt), {len(cold)} cold",
+                  cold)
+
+
 RULES = [rule_1_client_counts, rule_2_one_tag, rule_3_one_client_per_domain,
          rule_4_forwarding, rule_5_crm_rows, rule_6_expiry, rule_7_empty_autorenew,
-         rule_8_billing, rule_9_pool_ceilings, rule_10_expired_purged, rule_11_reads_were_complete]
+         rule_8_billing, rule_9_pool_ceilings, rule_10_expired_purged,
+         rule_12_every_inbox_is_working_or_warming, rule_11_reads_were_complete]
 
 
 def _norm(n) -> str:
@@ -697,3 +746,83 @@ def main(argv):
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
+
+
+# ── daily alert for rule 12 ──────────────────────────────────────────────
+
+WARMUP_ALERT_KEY = "warmup_alert_state"
+# #infra-renewals first: this is the channel Tim asked for, and the one where
+# infrastructure decisions already land.
+WARMUP_WEBHOOK_VARS = ("SLACK_INFRA_DECISIONS_WEBHOOK", "SLACK_ZAPMAIL_WEBHOOK",
+                       "SLACK_WEBHOOK_URL")
+
+
+def warmup_alert(snapshot=None, dry_run: bool = False) -> dict:
+    """Post to #infra-renewals when any inbox is neither sending nor warming.
+
+    Runs daily. Posts on the transition into failure and again when it clears,
+    not on every run — a daily ping that says the same thing becomes furniture,
+    and the one day it changes nobody reads it.
+
+    A SKIP is not a pass. If the fleet could not be read we say so rather than
+    reporting "all good", because that is exactly how 42 inboxes sat cold for
+    six weeks.
+    """
+    import os
+    import requests
+    import db as store                    # local, like every other use here
+    s = snapshot if snapshot is not None else collect()
+    r = rule_12_every_inbox_is_working_or_warming(s)
+
+    try:
+        prev = store.get_state(WARMUP_ALERT_KEY) or {}
+    except Exception:
+        prev = {}
+    was_bad = bool(prev.get("failing"))
+    now_bad = r.status == FAIL
+
+    if r.status == SKIP:
+        text = (":warning: *Warm-up check could not run* — the Smartlead fleet "
+                f"could not be read ({r.detail}). This is NOT a pass: inboxes "
+                "could be sitting cold and unseen.")
+    elif now_bad:
+        by_group = {}
+        for v in r.violations:
+            g = v.rsplit("(", 1)[-1].rstrip(")") if "(" in v else "untagged"
+            by_group[g] = by_group.get(g, 0) + 1
+        lines = "\n".join(f"  • {g}: {n}" for g, n in
+                          sorted(by_group.items(), key=lambda kv: -kv[1])[:12])
+        text = (f":rotating_light: *{len(r.violations)} inboxes are neither sending "
+                f"nor warming up*\nEvery inbox should be on an ACTIVE campaign, or "
+                f"warming in a replacement or generic group. These are idle and cold "
+                f"— they are being paid for and are losing reputation.\n{lines}")
+    elif was_bad:
+        text = (":white_check_mark: *Warm-up is clean again* — every live inbox is "
+                f"sending or warming. ({r.detail})")
+    else:
+        return {"posted": False, "reason": "no change", "status": r.status,
+                "cold": len(r.violations)}
+
+    if dry_run:
+        return {"dry_run": True, "text": text, "status": r.status,
+                "cold": len(r.violations)}
+
+    posted = False
+    for var in WARMUP_WEBHOOK_VARS:
+        hook = (os.environ.get(var) or "").strip()
+        if not hook:
+            continue
+        try:
+            resp = requests.post(hook, json={"text": text}, timeout=10)
+            if resp.status_code in (200, 201):
+                posted = True
+                break
+        except requests.RequestException:
+            pass
+    try:
+        store.set_state(WARMUP_ALERT_KEY, {"failing": now_bad,
+                                           "cold": len(r.violations),
+                                           "status": r.status})
+    except Exception:
+        pass
+    return {"posted": posted, "status": r.status, "cold": len(r.violations)}
