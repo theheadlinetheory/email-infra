@@ -239,6 +239,56 @@ daily message that always says the same thing stops being read.
 A SKIP is not a pass: if the fleet cannot be read the alert says so, because
 "all good" on an unread fleet is exactly how those 42 stayed cold.
 
+### Deliberate exemptions
+
+`WARMUP_EXEMPT_TAG_HINTS` in `check_invariants.py` names inbox groups the rule
+does not ask to warm. Each entry carries its reason in a comment; an exemption
+without a stated reason becomes a place where real problems hide, so the rule
+also prints the exempt count and the list in its detail line rather than
+dropping them silently.
+
+Currently exempt:
+
+| Tag contains | Why |
+|---|---|
+| `landy rose` | Landy Rose Media — a free, untracked account held at 18 mailboxes. Tim, 2026-10-15, after a sweep warmed them: *"don't start warm-up for Landy Rose, please do not."* |
+
+**The writer honours the same list as the check.** `scripts/warmup_sweep.py`
+calls `check_invariants.is_warmup_exempt`, so a group the rule tolerates is a
+group the sweep will not touch. An exemption respected by the check but ignored
+by the writer is not an exemption, it is a race.
+
+### Why enabling warm-up is not automatic
+
+The daily job alerts; it does not switch warm-up on. A nightly unattended
+blanket sweep is exactly what warmed Landy Rose, and automating it would repeat
+that every night, silently. Turning warm-up on is a deliberate act:
+
+```
+python scripts/warmup_sweep.py                    # plan only, writes nothing
+python scripts/warmup_sweep.py --apply            # enable, then re-read to verify
+python scripts/warmup_sweep.py --apply --group "Acquisition P"
+```
+
+It verifies against a fresh read afterwards, because "the write returned 200"
+is a different claim from "warm-up is on" — `save-management-details` returns
+`200 {"ok":true,"data":[]}` and changes nothing when its GraphQL layer is down.
+
+### What we could not answer, and the gap that caused it
+
+All 304 acquisition inboxes carry a warm-up reputation of 97–100% and warm-up
+records dating back to 2025-10-22, so warm-up had been configured and running
+on them; on 32 it had since gone inactive. We cannot say when or by what:
+`inbox_health_daily` records `warmup_reputation` but has never recorded
+`warmup_enabled`, so a dormant mailbox kept reporting a healthy 100% and read
+as fine, and there is no history to look back through. Nothing in this
+repository disables warm-up on a live account — `setup.py` only sets
+`warmup_enabled: False` at creation, before `sl_set_warmup` turns it on.
+
+The fix for next time is the stored breakdown (`payload["warmup"]` from
+`run_and_store`) plus the dashboard panel, which make the flag itself visible
+daily instead of only its reputation.
+
 
 ## Rule 11 — a short read is not a small fleet
 

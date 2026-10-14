@@ -53,8 +53,10 @@ def test_retirement_buckets_are_exempt():
 
 
 def test_the_violation_names_the_group_so_it_is_actionable():
-    r = run([_acct("a@x.co", "Landy Rose Media", warm=False, sent=0)])
-    assert "Landy Rose Media" in r.violations[0]
+    # Deliberately NOT Landy Rose: that tag is exempt, so it would never
+    # produce a violation to name. See the exemption tests below.
+    r = run([_acct("a@x.co", "Mighty Oak Landscaping", warm=False, sent=0)])
+    assert "Mighty Oak Landscaping" in r.violations[0]
 
 
 def test_no_accounts_is_a_SKIP_not_a_PASS():
@@ -70,3 +72,86 @@ def test_a_mixed_fleet_reports_only_the_cold_ones():
              _acct("gone@x.co", "Cleanup 2026-09", warm=False, sent=0)])
     assert r.status == civ.FAIL
     assert len(r.violations) == 1 and "cold@x.co" in r.violations[0]
+
+
+# ---------------------------------------------------------------------------
+# Deliberate exemptions.
+#
+# A fleet-wide sweep warmed Landy Rose Media's 18 mailboxes. Tim, 2026-10-15:
+# "don't start warm-up for Landy Rose, please do not." So the rule must not ask
+# for warm-up there — and, just as important, the sweep must not override the
+# rule. An exemption honoured by the check but ignored by the writer is not an
+# exemption, it is a race.
+# ---------------------------------------------------------------------------
+
+def test_an_exempt_client_is_not_demanded_to_warm():
+    r = run([_acct("a@x.co", "Landy Rose Media", warm=False, sent=0)])
+    assert r.status == civ.PASS, r.detail
+
+
+def test_the_exemption_is_stated_not_silent():
+    """A quietly-dropped inbox is how things hide. The count has to show."""
+    r = run([_acct("a@x.co", "Landy Rose Media", warm=False, sent=0)])
+    assert "exempt" in r.detail.lower() and "landy rose" in r.detail.lower()
+
+
+def test_the_exemption_is_name_scoped_not_fleet_wide():
+    r = run([_acct("a@x.co", "Landy Rose Media", warm=False),
+             _acct("b@y.co", "Acquisition P", warm=False, sent=0)])
+    assert r.status == civ.FAIL
+    assert len(r.violations) == 1 and "b@y.co" in r.violations[0]
+
+
+def test_is_warmup_exempt_is_case_and_suffix_tolerant():
+    assert civ.is_warmup_exempt("Landy Rose Media")
+    assert civ.is_warmup_exempt("  landy rose media  ")
+    assert not civ.is_warmup_exempt("Landry's Landscape")   # a different client
+    assert not civ.is_warmup_exempt("")
+    assert not civ.is_warmup_exempt(None)
+
+
+def test_the_sweep_honours_the_same_exemption_as_the_rule():
+    """The writer and the check must agree, or the nightly alert passes while
+    the sweep keeps switching warm-up back on."""
+    import scripts.warmup_sweep as sweep
+    cold, skipped = sweep.classify([
+        {"id": 1, "from_email": "a@x.co",
+         "tags": [{"tag_name": "Landy Rose Media"}],
+         "warmup_details": {"status": "INACTIVE"}, "daily_sent_count": 0},
+        {"id": 2, "from_email": "b@y.co",
+         "tags": [{"tag_name": "Acquisition P"}],
+         "warmup_details": {"status": "INACTIVE"}, "daily_sent_count": 0},
+    ])
+    assert skipped["exempt"] == 1
+    assert [c[1] for c in cold] == ["b@y.co"]
+
+
+# ---------------------------------------------------------------------------
+# The per-group breakdown the dashboard renders.
+# ---------------------------------------------------------------------------
+
+def test_breakdown_splits_every_state():
+    b = civ.warmup_breakdown({"accounts": [
+        _acct("a@x.co", "Generic Landscaping 1", warm=True),
+        _acct("b@x.co", "Mighty Oak Landscaping", warm=False, sent=15),
+        _acct("c@x.co", "Replacement Group - Service", warm=False, sent=0),
+        _acct("d@x.co", "Landy Rose Media", warm=False, sent=0),
+        _acct("e@x.co", "Cleanup Oct", warm=False, sent=0),
+    ]})
+    assert b["available"]
+    assert b["totals"] == {"warming": 1, "sending": 1, "cold": 1,
+                           "exempt": 1, "retired": 1}
+
+
+def test_breakdown_puts_the_cold_groups_first():
+    b = civ.warmup_breakdown({"accounts": [
+        _acct("a@x.co", "Aaa Pool", warm=True),
+        _acct("b@x.co", "Zzz Pool", warm=False, sent=0),
+    ]})
+    assert b["groups"][0]["group"] == "Zzz Pool"
+
+
+def test_breakdown_with_no_accounts_says_unavailable_not_zero():
+    """Zero cold and "could not read the fleet" must never render the same."""
+    b = civ.warmup_breakdown({})
+    assert b["available"] is False and b["totals"] == {}

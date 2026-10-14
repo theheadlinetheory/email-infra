@@ -47,6 +47,26 @@ EXPIRY_WINDOW_DAYS = 45
 
 RETIREMENT_TAG_HINTS = ("cleanup", "retired", "burnt")
 
+# Deliberate warm-up exemptions. Rule 12 does not ask for warm-up on these and
+# no sweep may switch it on. Keep this list short and keep the reason attached:
+# an exemption without a reason becomes a place where real problems hide.
+#
+#   "landy rose" — Landy Rose Media. A free, untracked account held at 18
+#   mailboxes. Tim, 2026-10-15, after a fleet-wide sweep warmed them:
+#   "don't start warm-up for Landy Rose, please do not."
+WARMUP_EXEMPT_TAG_HINTS = ("landy rose",)
+
+
+def is_warmup_exempt(tag) -> bool:
+    """True when this tag is deliberately excluded from warm-up.
+
+    Every path that ENABLES warm-up must call this, not just the rule that
+    checks it. A rule that tolerates an exemption while a sweep overrides it is
+    not an exemption, it is a race.
+    """
+    t = (tag or "").strip().lower()
+    return any(k in t for k in WARMUP_EXEMPT_TAG_HINTS)
+
 RESERVE_TAGS = ("Generic Landscaping 1", "Generic Landscaping 2")
 REPLACEMENT_TAGS = ("Replacement Group",)
 
@@ -484,11 +504,16 @@ def rule_12_every_inbox_is_working_or_warming(s) -> Result:
     if not s.get("accounts"):
         return Result(12, name, SKIP, "needs Smartlead accounts")
 
-    retired, cold = 0, []
+    retired, exempt, cold = 0, 0, []
     for a in s["accounts"]:
         tag = (client_tag_of(a) or "").strip()
         if any(k in tag.lower() for k in RETIREMENT_TAG_HINTS):
             retired += 1
+            continue
+        # Deliberately excluded by name, with a reason recorded above. Counted
+        # and reported, never silently dropped.
+        if is_warmup_exempt(tag):
+            exempt += 1
             continue
         warm = ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE"
         if warm:
@@ -498,10 +523,45 @@ def rule_12_every_inbox_is_working_or_warming(s) -> Result:
             continue
         cold.append(f"{(a.get('from_email') or '?')} ({tag or 'untagged'})")
 
-    return Result(12, name, FAIL if cold else PASS,
-                  f"{len(s['accounts']) - retired} live inboxes checked, "
-                  f"{retired} in retirement buckets (exempt), {len(cold)} cold",
-                  cold)
+    detail = (f"{len(s['accounts']) - retired - exempt} live inboxes checked, "
+              f"{retired} in retirement buckets (exempt), {len(cold)} cold")
+    if exempt:
+        detail += (f"; {exempt} deliberately exempt "
+                   f"({', '.join(WARMUP_EXEMPT_TAG_HINTS)})")
+    return Result(12, name, FAIL if cold else PASS, detail, cold)
+
+
+def warmup_breakdown(s) -> dict:
+    """Warm-up state per inbox group, for the dashboard and the alert.
+
+    The daily table records `warmup_reputation` but has never recorded whether
+    warm-up was switched ON, so a dormant mailbox kept reporting a healthy 100%
+    and read as fine. This is the view that would have shown it.
+    """
+    if not s.get("accounts"):
+        return {"available": False, "reason": "needs Smartlead accounts",
+                "groups": [], "totals": {}}
+    groups, totals = {}, {"sending": 0, "warming": 0, "cold": 0,
+                          "exempt": 0, "retired": 0}
+    for a in s["accounts"]:
+        tag = (client_tag_of(a) or "").strip() or "untagged"
+        low = tag.lower()
+        if any(k in low for k in RETIREMENT_TAG_HINTS):
+            state = "retired"
+        elif is_warmup_exempt(tag):
+            state = "exempt"
+        elif ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE":
+            state = "warming"
+        elif (a.get("daily_sent_count") or 0) > 0:
+            state = "sending"
+        else:
+            state = "cold"
+        g = groups.setdefault(tag, {"group": tag, "sending": 0, "warming": 0,
+                                    "cold": 0, "exempt": 0, "retired": 0})
+        g[state] += 1
+        totals[state] += 1
+    rows = sorted(groups.values(), key=lambda r: (-r["cold"], r["group"].lower()))
+    return {"available": True, "groups": rows, "totals": totals}
 
 
 RULES = [rule_1_client_counts, rule_2_one_tag, rule_3_one_client_per_domain,
@@ -703,6 +763,9 @@ def run_and_store(want_campaigns: bool = True) -> dict:
     snap = collect(want_campaigns=want_campaigns)
     payload = summarise(check(snap), snap)
     payload["scanned_campaigns"] = bool(want_campaigns)
+    # Stored with the run so the dashboard can show warm-up state per group
+    # without a second 1,800-account Smartlead walk inside a web request.
+    payload["warmup"] = warmup_breakdown(snap)
     payload["stored"] = store_result(payload)
     return payload
 
