@@ -270,6 +270,12 @@ function renderOverview(){
         const a = (DATA.acquisition || {}).summary || {};
         return a.free_inboxes != null ? a.free_inboxes : '?';
       })(), 'warn')
+    // Rule 12 at a glance. '?' not '0' when the fleet could not be read: 42
+    // inboxes sat cold for six weeks precisely because nothing said "unknown".
+    + card('Cold inboxes', (inv.warmup || {}).available
+             ? ((inv.warmup.totals || {}).cold ?? '–') : '?',
+           !(inv.warmup || {}).available ? 'warn'
+             : ((inv.warmup.totals || {}).cold ? 'bad' : 'ok'))
     + '</div>';
 
   html += `<h2>The rules</h2>
@@ -645,6 +651,41 @@ function reallocResultHtml(){
   </div>`;
 }
 
+// Warm-up state for every inbox group — Tim's rule: an inbox is sending on an
+// ACTIVE campaign, or warming in a replacement or generic pool. There is no
+// third state. This reads the breakdown stored with the nightly rule run, so it
+// costs nothing here; a second 1,800-account Smartlead walk inside a web
+// request is what made this page slow in the first place.
+function warmupPanelHtml(){
+  const w = (DATA.invariants || {}).warmup;
+  if (!w) return `<h2>Warm-up</h2><div class="banner">The stored rule run predates
+    the warm-up breakdown. Open Overview and hit Refresh, or wait for tonight's cron.</div>`;
+  if (!w.available) return `<h2>Warm-up</h2><div class="banner">Warm-up state is
+    UNKNOWN — ${esc(w.reason || 'the Smartlead fleet could not be read')}. This is not
+    a pass: inboxes could be sitting cold and unseen.</div>`;
+  const t = w.totals || {}, rows = w.groups || [];
+  const cold = rows.filter(r => r.cold > 0);
+  let h = `<h2>Warm-up <span class="dim" style="font-size:13px;font-weight:400">
+      ${t.sending || 0} sending · ${t.warming || 0} warming · ${t.cold || 0} cold
+      · ${t.exempt || 0} exempt · ${t.retired || 0} retiring</span></h2>
+    <div class="meta" style="margin:-4px 0 10px">Every inbox should be sending on an ACTIVE
+      campaign or warming in a pool. <b>Cold</b> means neither — it is being paid for and
+      losing reputation. <b>Exempt</b> is a named, deliberate exclusion; <b>retiring</b> is
+      a cleanup bucket on its way out.</div>`;
+  if (!cold.length) {
+    h += `<div class="rule"><span class="st good">OK</span>
+      <span class="nm">no cold inboxes</span>
+      <span class="dt">${rows.length} groups checked</span></div>`;
+    return h;
+  }
+  h += `<table><thead><tr><th>Group</th><th>Sending</th><th>Warming</th>
+    <th>Cold</th></tr></thead><tbody>`
+    + cold.map(r => `<tr><td>${esc(r.group)}</td><td>${r.sending}</td>
+        <td>${r.warming}</td><td class="bad"><b>${r.cold}</b></td></tr>`).join('')
+    + `</tbody></table>`;
+  return h;
+}
+
 function renderInboxes(){
   const d = DATA.inboxes || {};
   const el = document.getElementById('inboxes');
@@ -670,6 +711,8 @@ function renderInboxes(){
     + card('Reserve', s.reserve ?? '–')
     + card('Fleet', s.inboxes ?? '–')
     + '</div>';
+
+  html += warmupPanelHtml();
 
   if (!b.measured)
     html += `<div class="banner">${esc(b.reason || 'Burn rate could not be computed')} —
@@ -1860,7 +1903,9 @@ const RENDER = {
 // Which feeds a tab needs before it can draw.
 const TAB_FEEDS = {
   overview: ['invariants', 'clients'],
-  clients: ['clients'], onboarding: ['onboarding'], inboxes: ['inboxes'],
+  clients: ['clients'], onboarding: ['onboarding'],
+  // inboxes shows the warm-up panel, which comes from the stored rule run.
+  inboxes: ['inboxes', 'invariants'],
   acquisition: ['acquisition'], pools: ['clients'], buy: [],
 };
 const LOADED = {};
