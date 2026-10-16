@@ -38,9 +38,14 @@ That is a measurement, not a memory. It cannot drift, it needs no upkeep, and it
 would never have raised the false alarm. The registry is still read, but only to
 name the mailboxes likely behind a gap so the message to Zapmail can be specific.
 
-Providers are checked separately because Zapmail partitions everything by the
-`x-service-provider` header — a GOOGLE-headed call cannot see MICROSOFT
-subscriptions at all, and both return HTTP 200.
+Providers are checked separately. Each subscription is assigned to a provider
+by its own `uniquePlanKey` (`zap_google_…` / `zap_microsoft_…`), never by the
+`x-service-provider` header it was fetched under. Zapmail used to partition by
+that header; by 2026-10-13 it ignored it and returned all 81 subscriptions under
+both. Bucketing by header then counted the whole bill twice (1,429 "billed" on
+each plan) and alerted on 1,448 phantom slots, $4,344/mo, against a real 19.
+So both headers are still walked in case partitioning comes back, the results
+are deduped by id, and the plan key decides the provider.
 """
 
 from __future__ import annotations
@@ -92,29 +97,47 @@ def _days_since(d) -> int | None:
         return None
 
 
-def _subscriptions(provider: str) -> list:
-    """ACTIVE subscriptions for one provider.
+def _plan_provider(sub: dict, fetched_under: str) -> str:
+    """GOOGLE / MICROSOFT for one subscription, read off its own plan key."""
+    key = str(sub.get("uniquePlanKey") or "").lower()
+    for prov in PROVIDERS:
+        if prov.lower() in key:
+            return prov
+    return fetched_under
+
+
+def _subscriptions_by_provider() -> dict:
+    """{provider: [ACTIVE subscriptions]}, each subscription counted once.
 
     Fetched here rather than through `zapmail_removals.fetch_subscriptions`,
-    which is hard-wired to GOOGLE and takes no provider argument — calling it
-    would silently report the Microsoft fleet as having zero billed slots, which
-    reads as a phantom-slot gap that does not exist.
+    which is hard-wired to GOOGLE and takes no provider argument.
+
+    Returns None when any read fails: a missing half would show up as a gap
+    that does not exist (or hide one that does).
     """
     import requests
     key = (os.environ.get("ZAPMAIL_API_KEY") or "").strip()
     if not key:
-        return []
-    try:
-        r = requests.get("https://api.zapmail.ai/api/v2/subscriptions",
-                         headers={"Content-Type": "application/json",
-                                  "x-auth-zapmail": key,
-                                  "x-service-provider": provider}, timeout=60)
-    except requests.RequestException:
-        return []
-    if r.status_code != 200 or not r.text.strip():
-        return []
-    return [s for s in (r.json().get("data") or [])
-            if str(s.get("subscriptionStatus", "")).upper() == "ACTIVE"]
+        return None
+    seen, out = set(), {p: [] for p in PROVIDERS}
+    for header in PROVIDERS:
+        try:
+            r = requests.get("https://api.zapmail.ai/api/v2/subscriptions",
+                             headers={"Content-Type": "application/json",
+                                      "x-auth-zapmail": key,
+                                      "x-service-provider": header}, timeout=60)
+        except requests.RequestException:
+            return None
+        if r.status_code != 200 or not r.text.strip():
+            return None
+        for s in (r.json().get("data") or []):
+            sid = s.get("id") or s.get("subscriptionId")
+            if sid in seen:
+                continue
+            seen.add(sid)
+            if str(s.get("subscriptionStatus", "")).upper() == "ACTIVE":
+                out[_plan_provider(s, header)].append(s)
+    return out
 
 
 def slots_committed_to_unfinished_orders() -> int:
@@ -163,9 +186,14 @@ def reconcile() -> dict:
     # 12 mailboxes his in-flight order was about to create.
     committed = slots_committed_to_unfinished_orders()
 
+    subs = _subscriptions_by_provider()
+    if subs is None:
+        raise RuntimeError("Zapmail subscriptions could not be read — "
+                           "refusing to report a billing gap from half a bill")
+
     per, total_gap = [], 0
     for prov in PROVIDERS:
-        live = _subscriptions(prov)
+        live = subs[prov]
         billed = sum(int(s.get("totalMailboxQuantity") or 0) for s in live)
         have = actual.get(prov, 0)
         raw_gap = billed - have

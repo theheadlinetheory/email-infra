@@ -381,8 +381,11 @@ def fetch_crm_clients() -> list[dict]:
 def fetch_zapmail_inventory(provider_headers=("GOOGLE", "MICROSOFT")) -> dict:
     """{"mailboxes": {email: {...}}, "domains": {domain: {...}}} straight from Zapmail.
 
-    Zapmail partitions inventory by `x-service-provider`: a GOOGLE-headed call
-    cannot see MICROSOFT domains at all, so both are always walked.
+    Zapmail used to partition inventory by `x-service-provider` (a GOOGLE-headed
+    call could not see MICROSOFT domains), so both are always walked. By
+    2026-10-13 it ignored the header and returned the whole fleet under both, so
+    the provider is read off each domain's own `serviceProvider` field — labelling
+    by header made the MICROSOFT pass relabel every mailbox MICROSOFT.
     """
     path = os.environ.get("INFRA_LIFECYCLE_ZM_FILE", "").strip()
     if path:
@@ -411,7 +414,8 @@ def fetch_zapmail_inventory(provider_headers=("GOOGLE", "MICROSOFT")) -> dict:
                 dn = (dom.get("domain") or "").lower()
                 if not dn:
                     continue
-                domains[dn] = {"domain": dn, "id": dom.get("id"), "provider": prov,
+                dprov = str(dom.get("serviceProvider") or prov).upper()
+                domains[dn] = {"domain": dn, "id": dom.get("id"), "provider": dprov,
                                "status": dom.get("status"),
                                "expire_on": (dom.get("expireOn") or "")[:10],
                                "auto_renew": dom.get("autoRenew"),
@@ -422,7 +426,7 @@ def fetch_zapmail_inventory(provider_headers=("GOOGLE", "MICROSOFT")) -> dict:
                         mailboxes[f"{u}@{dn}".lower()] = {
                             "id": mb.get("id"), "created_at": mb.get("createdAt"),
                             "domain": dn, "domain_id": dom.get("id"),
-                            "provider": prov, "status": mb.get("status")}
+                            "provider": dprov, "status": mb.get("status")}
             if page >= data.get("totalPages", 1):
                 break
             page += 1
