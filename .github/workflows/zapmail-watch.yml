@@ -114,10 +114,22 @@ jobs:
       # paying 13-98s for it -- and past its TTL they were paying that AND
       # reading a stale number until the rebuild landed.
       - name: Daily health snapshot (restores the job the dead cron was meant to run)
+        id: snapshot
         # EVERY run, not just 02:00. The snapshot is idempotent per date, so
         # four attempts a day cost nothing and mean one transient Smartlead
         # failure no longer loses the whole day's burn data — which is
         # exactly how the list went a week out of date.
+        #
+        # continue-on-error, but NOT forgiven: the job is failed at the end by
+        # "Fail the job if the health snapshot failed". Without that split, a
+        # failing snapshot SKIPPED the nine steps after it — the inboxes view,
+        # the invariants refresh, acquisition, the reply scan and the warm-up
+        # check all stopped running, including steps carrying their own
+        # continue-on-error, because that flag covers a step's own failure and
+        # not being skipped after an earlier one. Four days of that cost the
+        # burn list, the rule results and the warm-up panel at once, from one
+        # upstream Smartlead read returning HTTP 200 with an empty body.
+        continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
@@ -210,7 +222,10 @@ jobs:
       # Warm the Inboxes tab too. Its burned-domain view is a ~10s build on top
       # of five other reads; whoever opens the tab first should not pay for it.
       - name: Full-campaign positive-reply scan (rule 10's safety net)
+        id: replyscan
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        # Loud but not blocking — gated at the end, same as the snapshot.
+        continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
@@ -251,7 +266,10 @@ jobs:
       # the whole point is that a cold inbox is invisible, so a silently failing
       # check restores exactly the blind spot it was built to remove.
       - name: Warm-up check (every inbox sending or warming)
+        id: warmupcheck
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        # Loud but not blocking — gated at the end, same as the snapshot.
+        continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
@@ -279,3 +297,29 @@ jobs:
               "https://email-infra.vercel.app/api/$path?refresh=1&pw=${PW}") || code=000
             echo "$path -> HTTP $code $(head -c 140 /tmp/$path.json 2>/dev/null)"
           done
+
+      # The gate for the step above. It runs LAST so that a failed snapshot
+      # still shows up as a red run and still pages whoever is watching, while
+      # no longer taking the rest of the job down with it. Anything that must
+      # genuinely block later steps belongs before this, not after.
+      - name: Fail the job if a must-not-fail step failed
+        if: always() && (steps.snapshot.outcome == 'failure'
+          || steps.replyscan.outcome == 'failure'
+          || steps.warmupcheck.outcome == 'failure')
+        run: |
+          set -uo pipefail
+          if [ "${{ steps.snapshot.outcome }}" = "failure" ]; then
+            echo "::error::the daily health snapshot failed — burn scoring did not run,"
+            echo "::error::so the burned-inbox list is FROZEN at its last good date."
+          fi
+          if [ "${{ steps.replyscan.outcome }}" = "failure" ]; then
+            echo "::error::the full-campaign positive-reply scan failed — rule 10's"
+            echo "::error::safety net is stale, so the remove-from-Smartlead button"
+            echo "::error::will refuse rather than risk cutting a live thread."
+          fi
+          if [ "${{ steps.warmupcheck.outcome }}" = "failure" ]; then
+            echo "::error::the warm-up check failed — rule 12 did not report, so an"
+            echo "::error::inbox could be sitting cold with nothing saying so."
+          fi
+          echo "::error::Every other step in this job still ran."
+          exit 1
