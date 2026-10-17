@@ -372,7 +372,15 @@ def rule_7_empty_autorenew(s) -> Result:
         if reg.get("auto_renew"):
             bad.append(f"{dom}: 0 mailboxes, auto-renew ON, expires {reg.get('expires')}")
     empties = sum(1 for d in s["zm_domains"] if not _mailbox_count(s, d))
-    return Result(7, name, FAIL if bad else PASS, f"{empties} empty domains", bad)
+    # State the FAULT, not the population. This used to read "473 empty
+    # domains" beside a rule called "no empty domain is auto-renewing", so the
+    # dashboard showed 473 where the actual number auto-renewing was 8 — a
+    # 59x overstatement of a spend problem, on a rule whose whole job is to
+    # catch wasted renewal spend. An empty domain is only a fault if it is
+    # also set to renew; the rest are simply empty.
+    detail = (f"{len(bad)} of {empties} empty domains are auto-renewing"
+              if bad else f"{empties} empty domains, none auto-renewing")
+    return Result(7, name, FAIL if bad else PASS, detail, bad)
 
 
 def rule_8_billing(s) -> Result:

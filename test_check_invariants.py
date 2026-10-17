@@ -373,3 +373,38 @@ def test_rule_11_is_registered_and_last():
     it saw a complete fleet, so anything appended after it is uncertified."""
     assert ci.rule_11_reads_were_complete in ci.RULES
     assert ci.RULES[-1] is ci.rule_11_reads_were_complete
+
+
+def test_rule_7_detail_states_the_number_AUTO_RENEWING_not_the_number_empty():
+    """The detail line is what the dashboard shows beside the rule name.
+
+    It used to read "473 empty domains" next to "no empty domain is
+    auto-renewing", so a reader saw 473 wasteful renewals where the real
+    number was 8 — a 59x overstatement on the one rule whose job is to catch
+    wasted renewal spend. All three domains here are empty; only one renews.
+    """
+    snap = {
+        "zm_domains": {"renewing.co": {}, "off-a.co": {}, "off-b.co": {}},
+        "registrar": {
+            "renewing.co": {"auto_renew": True, "expires": "2027-06-24"},
+            "off-a.co": {"auto_renew": False, "expires": "2027-06-24"},
+            "off-b.co": {"auto_renew": False, "expires": "2027-06-24"},
+        },
+        "accounts": [],
+    }
+    r = ci.rule_7_empty_autorenew(snap)
+    assert r.status == ci.FAIL
+    assert len(r.violations) == 1 and "renewing.co" in r.violations[0]
+    # 1 is the fault; 3 is the population. The fault has to come first.
+    assert r.detail.startswith("1 of 3"), r.detail
+
+
+def test_rule_7_passing_detail_does_not_imply_a_problem():
+    snap = {
+        "zm_domains": {"off.co": {}},
+        "registrar": {"off.co": {"auto_renew": False}},
+        "accounts": [],
+    }
+    r = ci.rule_7_empty_autorenew(snap)
+    assert r.status == ci.PASS
+    assert "none auto-renewing" in r.detail
