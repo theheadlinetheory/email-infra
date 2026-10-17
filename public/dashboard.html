@@ -698,8 +698,22 @@ function renderInboxes(){
   const b = d.burn_rate || {}, bs = b.summary || {};
   const rate = bs.per_week, runway = bs.runway_weeks;
 
-  let html = reallocResultHtml() + '<div class="cards">'
-    + card('Needs replacing', s.actionable_burned ?? '–', s.actionable_burned ? 'bad' : 'ok')
+  // The freshness warning goes ABOVE the cards, not below the list. It used to
+  // sit further down the page, under "Burned domains" — so the first thing on
+  // screen was "Needs replacing: 0" reading as a quiet week, while the reason
+  // it was zero sat below the fold. A frozen burn list and a clean one are the
+  // same picture; whichever one it is has to be said before the number.
+  const fr = d.freshness || {};
+  let html = reallocResultHtml();
+  if (fr.stale) {
+    html += `<div class="banner bad">⚠ <b>Burn scoring has stopped — the counts below
+      are frozen, not clean.</b><br>${esc(fr.reason || 'health data freshness could not be established')}
+      ${fr.latest ? `<br><span class="dim">Newest health data: ${esc(fr.latest)}${
+        fr.age_days != null ? ` (${fr.age_days} day(s) old)` : ''}.</span>` : ''}</div>`;
+  }
+  html += '<div class="cards">'
+    + card('Needs replacing', fr.stale ? '?' : (s.actionable_burned ?? '–'),
+           fr.stale ? 'warn' : (s.actionable_burned ? 'bad' : 'ok'))
     + card('Burn rate', b.measured ? `${rate}<span class="dim" style="font-size:13px">/wk</span>` : '?',
            !b.measured ? 'warn' : rate >= 5 ? 'bad' : rate > 0 ? 'warn' : 'ok')
     + card('Replacement pool', s.replacement ?? '–', (s.replacement ?? 0) ? '' : 'bad')
@@ -707,7 +721,7 @@ function renderInboxes(){
                                     : (b.measured ? 'n/a' : '?'),
            runway == null ? '' : runway < 4 ? 'bad' : runway < 12 ? 'warn' : 'ok')
     + card('At risk', bs.at_risk ?? '–', (bs.at_risk ?? 0) > 200 ? 'warn' : '')
-    + card('Burned total', s.burned ?? '–')
+    + card('Burned total', fr.stale ? '?' : (s.burned ?? '–'), fr.stale ? 'warn' : '')
     + card('Reserve', s.reserve ?? '–')
     + card('Fleet', s.inboxes ?? '–')
     + '</div>';
@@ -828,16 +842,7 @@ function renderInboxes(){
     html += '<h2>Burned domains</h2><div class="empty">No burned domains.</div>';
   }
 
-  // A frozen burned list looks exactly like a quiet week. If the health feed
-  // has stopped, say so ABOVE the list, because the number below it is the
-  // thing that will otherwise be trusted.
-  const fr = d.freshness || {};
-  if (fr.stale) {
-    html += `<div class="banner bad">⚠ This list may be incomplete —
-      ${esc(fr.reason || 'health data freshness could not be established')}
-      ${fr.latest ? `<span class="dim">Newest health data: ${esc(fr.latest)}.</span>` : ''}
-      </div>`;
-  }
+  // `fr` is read at the top of this function, where the banner now lives.
   html += `<h2>Burned on a live client — ${act.length}${
     fr.stale ? ' <span class="warn" style="font-size:.8em">(as of '
              + esc(fr.latest || 'unknown') + ')</span>' : ''}</h2>`;
