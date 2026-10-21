@@ -761,6 +761,17 @@ def dashboard_page():
     return send_from_directory(_PUBLIC_DIR, "dashboard.html")
 
 
+@app.route("/api/health-snapshot-status")
+def health_snapshot_status():
+    """The last snapshot's recorded outcome. CI reads this when its curl gives
+    up at 290s: Vercel keeps running to 300s, so a client timeout says nothing
+    about whether the snapshot finished. Judge the artefact, not the socket."""
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import health_snapshot as hs
+    return _cors(jsonify(hs.last_run()))
+
+
 @app.route("/api/health-snapshot", methods=["GET", "POST", "OPTIONS"])
 def health_snapshot():
     """Run today's snapshot: score the fleet from the cache, persist. Daily cron (GET)."""
@@ -774,15 +785,7 @@ def health_snapshot():
     out, status = {}, 200
     try:
         import health_snapshot as hs
-        try:
-            out = hs.snapshot_daily()
-        except Exception as _e:                      # noqa: BLE001
-            # Record the failure BEFORE re-raising, so "the producer is
-            # broken" is visible even though no rows were written.
-            hs.record_run(False, str(_e))
-            raise
-        hs.record_run(not (isinstance(out, dict) and out.get("error")),
-                      str((out or {}).get("error") or ""))
+        out = hs.run()
     except Exception as e:
         out, status = {"error": str(e), "trace": traceback.format_exc()}, 500
 

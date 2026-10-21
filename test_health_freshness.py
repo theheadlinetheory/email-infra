@@ -310,3 +310,40 @@ def test_an_old_list_is_stale_regardless_of_the_producer(monkeypatch):
     monkeypatch.setattr(hd, "latest_health_date", lambda: "2026-09-10")
     _snap(monkeypatch, {"consecutive_failures": 0})
     assert hd.health_freshness(today="2026-09-25")["stale"] is True
+
+
+def test_a_blank_session_is_named_and_tries_the_static_token(monkeypatch):
+    """2026-10-22: a minted token whose auth/me is empty. The error must say
+    'blank session', not 'credentials fine', and the static token gets a try."""
+    used = []
+
+    class R:
+        status_code = 200
+        def __init__(self, data): self._d = data
+        def json(self): return {"ok": True, "data": self._d}
+
+    def fake_get(url, headers=None, **k):
+        used.append(headers.get("Authorization"))
+        owner = headers.get("Authorization") == "Bearer OWNER"
+        if url == hd.ME_URL:
+            if owner:
+                me = R(None)
+                me.json = lambda: {"user": {"id": 1}}     # the real healthy shape
+                return me
+            return R([])                                  # the real blank shape
+        return R([{"from_email": f"i{n}@x.co"} for n in range(60)] if owner else [])
+
+    import requests
+    import health_smartlead as hsl
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(hd.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(hsl, "get_jwt", lambda force=False: "MINTED")
+    monkeypatch.setenv("SMARTLEAD_JWT", "OWNER")
+    out = hd.fetch_window("2026-10-19", "2026-10-20", retries=3, min_records=50)
+    assert len(out) == 60
+    assert "Bearer OWNER" in used
+
+    monkeypatch.delenv("SMARTLEAD_JWT")
+    with pytest.raises(RuntimeError) as e:
+        hd.fetch_window("2026-10-19", "2026-10-20", retries=2, min_records=50)
+    assert "BLANK SESSION" in str(e.value)

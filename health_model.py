@@ -69,8 +69,15 @@ DEFAULT_CONFIG = {
     # status bands from the blended score
     "band_healthy": 80, "band_watch": 60, "band_atrisk": 40,
 
-    # data-quality gate
-    "min_sent_3d": 30,         # fewer sends than this over 3 days -> INSUFFICIENT
+    # data-quality gate. 105 sends over 10 SENDING days was set 2026-09-10 from
+    # 22 real sending days (258k sends) and then never wired in: production kept
+    # scoring 3 days at >= 30 sends, where 3% bounce is ONE bounce and 0.5% reply
+    # is ZERO replies. On 2026-10-22 that called 60 inboxes burned; under this
+    # gate 2 of those 60 were, and 31 burned inboxes were missing from the list.
+    # 105 is the peak of both precision and lift; 150 is the 10-day ceiling.
+    "window_sending_days": 10,  # scoring window, counted in days that actually sent
+    "min_sends_window": 105,    # fewer sends than this in the window -> INSUFFICIENT
+    "min_sent_3d": 30,          # legacy; only used when min_sends_window is absent
     "warmup_days": 14,         # inboxes younger than this are WARMING, not scored
 
     # trend: reply drop (pts) vs the prior 3-day window that pulls a HEALTHY
@@ -115,6 +122,18 @@ def blended_score(subs, cfg):
     return round(sum(subs[k] * (present[k] / total_w) for k in present))
 
 
+def min_sends(cfg=None) -> int:
+    """The volume gate. The live config row has carried min_sends_window since
+    2026-09-10, so it must win over the legacy min_sent_3d it replaced."""
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    return int(cfg.get("min_sends_window") or cfg["min_sent_3d"])
+
+
+def window_sending_days(cfg=None) -> int:
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    return int(cfg.get("window_sending_days") or 3)
+
+
 def score_inbox(signals, cfg=None):
     """Score one inbox.
 
@@ -153,9 +172,10 @@ def score_inbox(signals, cfg=None):
                 "subscores": {}, "reasons": ["no sends — idle"]}
 
     # --- data-quality gate: some volume, but too little to trust the rates ---
-    if sent < cfg["min_sent_3d"]:
+    floor = min_sends(cfg)
+    if sent < floor:
         return {"score": None, "status": INSUFFICIENT, "label": STATUS_LABEL[INSUFFICIENT],
-                "subscores": {}, "reasons": [f"only {sent} sends in 3d"]}
+                "subscores": {}, "reasons": [f"only {sent} sends in the window (need {floor})"]}
 
     subs = sub_scores(signals, cfg)
     score = blended_score(subs, cfg)
