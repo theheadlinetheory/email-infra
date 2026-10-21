@@ -50,9 +50,9 @@ def main(verbose: bool = False) -> None:
           f"({len([d for d in window if d in live])} sending days"
           f"{', spans a weekend' if len(window) > hd.WINDOW_DAYS else ''})")
 
-    window_sig, _ = hd.window_signals(sent_by_date=sent_by_date)
     cfg = store.get_health_config("default") or {}
-    min_sent = int(cfg.get("min_sent_3d", hm.DEFAULT_CONFIG["min_sent_3d"]))
+    window_sig, _ = hd.window_signals(days=hm.window_sending_days(cfg), sent_by_date=sent_by_date)
+    min_sent = hm.min_sends(cfg)
 
     before = {r["email"]: r for r in store.get_health_status_all()}
     history = store.get_health_daily_bulk(dates[0])
@@ -101,7 +101,7 @@ def main(verbose: bool = False) -> None:
               % (sents[len(sents) // 2], sents[int(len(sents) * .1)],
                  sents[int(len(sents) * .9)], sents[-1]))
         under = sum(1 for v in sents if v < min_sent)
-        print("  below min_sent_3d=%d: %d of %d sending (%.0f%%)"
+        print("  below the volume gate (%d): %d of %d sending (%.0f%%)"
               % (min_sent, under, len(sents), 100 * under / len(sents)))
         old_sents = sorted(int(v.get("sent_3d") or 0) for v in before.values()
                            if int(v.get("sent_3d") or 0) > 0)

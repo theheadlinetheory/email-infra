@@ -112,7 +112,10 @@ SNAPSHOT_RUN_KEY = "health_snapshot_last_run"
 
 SLACK_WEBHOOK_VARS = ("SLACK_ZAPMAIL_WEBHOOK", "SLACK_INFRA_DECISIONS_WEBHOOK",
                       "SLACK_WEBHOOK_URL")
-ALERT_AFTER_FAILURES = 1       # the first miss, not the third
+# Three ATTEMPTS, not three runs: the CI step now retries the snapshot 3 times,
+# 5 minutes apart, inside one run. So this still alerts on the first failed RUN
+# (~10 min), but a blank Smartlead session that clears on retry stays quiet.
+ALERT_AFTER_FAILURES = 3
 
 
 def alert_snapshot_broken(detail: str, failures: int) -> dict:
@@ -173,7 +176,7 @@ def record_run(ok: bool, detail: str = "") -> None:
         })
     except Exception:
         return                                 # never fail the run over telemetry
-    # Alert on the FIRST failure. Waiting for a streak is how a week went by.
+    # Alert on the first failed RUN. Waiting for a streak of runs is how a week went by.
     # Only on the transition, so a long outage does not post every six hours.
     if not ok and fails >= ALERT_AFTER_FAILURES and not prev.get("alerted_at"):
         try:
@@ -235,7 +238,8 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         except ValueError:
             weekday_gaps.append(d)
     hist_info["weekday_gaps"] = weekday_gaps
-    window_sig, window_dates = hd.window_signals(sent_by_date=hist_info["sent_by_date"])
+    window_sig, window_dates = hd.window_signals(days=hm.window_sending_days(cfg),
+                                                 sent_by_date=hist_info["sent_by_date"])
 
     # 2) re-score each inbox off that window
     #    (one bulk fetch of recent history, not one query per inbox)

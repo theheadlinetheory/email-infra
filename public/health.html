@@ -239,7 +239,7 @@ td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-num
       <thead><tr>
         <th></th><th>Inbox / Domain</th><th>Source</th><th>Client</th><th>Grp</th>
         <th>Status</th><th class="num">Score</th>
-        <th class="num">Reply 3d</th><th class="num">Bounce 3d</th><th class="num">OOO 3d</th><th class="num">Placement</th><th class="num">Sent 3d</th>
+        <th class="num">Reply</th><th class="num">Bounce</th><th class="num">OOO</th><th class="num">Placement</th><th class="num">Sent (window)</th>
         <th>Why</th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
@@ -1006,7 +1006,7 @@ function renderAlerts(alerts, summary){
     </div>`;
   }).join('');
   const s=summary;
-  const sub = `${s.declining||0} sinking · ${s.burned||0} burned · ${s.at_risk||0} at-risk (3d) · act on these in the sections below · sharpens as daily data accumulates`;
+  const sub = `${s.declining||0} sinking · ${s.burned||0} burned · ${s.at_risk||0} at-risk (10 sending days) · act on these in the sections below · sharpens as daily data accumulates`;
   el.innerHTML = `<div class="sect" style="margin:0 0 6px"><h2>🔻 Sinking now — biggest deliverability drops</h2><span class="eye">${sub}</span></div>${rows}`;
 }
 

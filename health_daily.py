@@ -63,13 +63,15 @@ TZ = "America/New_York"          # the timezone SmartLead buckets days by
 # instead of writing zeros over everyone's history.
 MIN_RECORDS = 50
 
-WINDOW_DAYS = 3                  # the scoring window, matching min_sent_3d
+WINDOW_DAYS = 10                 # sending days scored; health_model.window_sending_days
 # Must be >= the lookback health_snapshot passes to get_health_daily_bulk (14),
 # or the scorer can still read un-repaired rows. It did: repairing 10 days left
 # 2026-08-09 and earlier holding the old 7-day totals, and `rolling`'s PRIOR
 # window (rows[-6:-3]) reaches back that far to compute the reply trend. The
 # repaired days looked right while the trend was still being drawn from garbage.
-HISTORY_DAYS = 14                # how many complete days of daily rows we keep fresh
+# Also must hold WINDOW_DAYS sending days: 14 calendar days is exactly 10
+# weekdays, so one holiday would leave the window a day short.
+HISTORY_DAYS = 16                # how many complete days of daily rows we keep fresh
 
 # Count columns we persist per day. Rates are derived from these, never averaged.
 COUNT_FIELDS = ("sent", "bounced", "replied", "opened",
@@ -137,6 +139,10 @@ def credential_state() -> dict:
                         if k in ("login_http", "token_found")})
         except Exception as e:                       # noqa: BLE001
             out["mint_error"] = str(e)[:140]
+    if out["minted"] or has_static:
+        # login_http 200 + minted True used to read as "credentials fine" while
+        # the session itself saw nothing. Say so explicitly.
+        out["session_sees_account"] = session_sees_account()
     if not has_login and not has_static:
         out["fix"] = ("set SMARTLEAD_LOGIN_EMAIL and SMARTLEAD_LOGIN_PASSWORD "
                       "on this deployment")
@@ -147,13 +153,48 @@ def credential_state() -> dict:
     return out
 
 
-def _headers() -> dict:
+def _headers(jwt: str | None = None) -> dict:
     import health_smartlead as hsl
-    jwt = hsl.get_jwt()
+    jwt = jwt or hsl.get_jwt()
     if not jwt:
         raise RuntimeError("no SmartLead JWT — set SMARTLEAD_LOGIN_EMAIL/PASSWORD "
                            "or SMARTLEAD_JWT")
     return {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
+
+
+ME_URL = "https://server.smartlead.ai/api/auth/me"
+
+
+def session_sees_account(jwt: str | None = None) -> bool | None:
+    """Does this token's session see an account at all?
+
+    Smartlead intermittently hands a team-member login a BLANK session: the
+    login is a 200, the token verifies (a bad one gets 401/500), and then every
+    endpoint -- auth/me included -- answers `{"ok":true,"data":[]}`. Seen
+    2026-09-24 and 2026-10-22 (~30 min, then fine again, nothing changed on our
+    side), while the owner's browser session read the same data normally. An
+    empty auth/me can only mean that, so it is the one cheap test that tells a
+    blank session apart from a genuinely empty window. None = could not check.
+    """
+    import requests
+    try:
+        r = requests.get(ME_URL, headers=_headers(jwt) if jwt else _headers(), timeout=30)
+        if r.status_code != 200:
+            return None
+        # healthy: {"user": {...}}; blank: {"ok": true, "data": []}
+        j = r.json()
+        return bool(j.get("user") or j.get("data"))
+    except Exception:                                # noqa: BLE001
+        return None
+
+
+def _fallback_jwt() -> str | None:
+    """A token to try when the minted session comes back blank: the static
+    SMARTLEAD_JWT, if one is set and it is a different token."""
+    import os as _os
+    import health_smartlead as hsl
+    static = (_os.environ.get("SMARTLEAD_JWT") or "").strip()
+    return static if static and static != hsl.get_jwt() else None
 
 
 class MetricsShapeChanged(RuntimeError):
@@ -215,11 +256,12 @@ def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -
     """
     import requests
     last = None
+    jwt = None                                  # None = the normal minted token
     for attempt in range(retries):
         try:
             r = requests.get(URL, params={"start_date": start, "end_date": end,
                                           "timezone": TZ, "full_data": "true"},
-                             headers=_headers(), timeout=60)
+                             headers=_headers(jwt) if jwt else _headers(), timeout=60)
         except requests.RequestException as e:
             last = str(e)
             time.sleep(5 * (attempt + 1))
@@ -247,6 +289,21 @@ def fetch_window(start: str, end: str, retries: int = 4, min_records: int = 0) -
             rec["open_rate"] = _pct(x.get("open_rate"))
             out[email] = rec
         if len(out) < min_records:
+            # A blank session (see session_sees_account) will never fill in on
+            # retry with the same token. Mint a new session, and if that one is
+            # blank too, try the static token before giving up.
+            if session_sees_account(jwt) is False:
+                import health_smartlead as hsl
+                if jwt is None:
+                    hsl.get_jwt(force=True)
+                    if session_sees_account() is False:
+                        jwt = _fallback_jwt() or None
+                last = ("only 0 records — an empty result from a BLANK SESSION: "
+                        "the login works but the session sees no account (auth/me "
+                        "is empty), so every read is empty. This is on Smartlead's side and has cleared "
+                        "by itself within the hour before; the CI step retries")
+                time.sleep(5 * (attempt + 1))
+                continue
             # An empty answer here is almost never "nothing happened". Stale
             # Smartlead credentials mint a token that LOOKS valid and then get
             # an empty list instead of a 401 -- which is exactly how this read

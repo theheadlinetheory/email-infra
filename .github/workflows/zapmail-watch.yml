@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     # 15 was not enough: the full-campaign reply scan was cancelled mid-run,
     # which silently left rule 10's safety net stale.
-    timeout-minutes: 30
+    timeout-minutes: 50   # 30 + up to ~20 for the snapshot's retries
     steps:
       - name: Zapmail removal check (deletion-date alerts + removal confirmation)
         env:
@@ -134,9 +134,18 @@ jobs:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
           set -uo pipefail
-          body=$(curl -sS --max-time 290 \
-            "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}")
-          echo "$body" | head -c 2000; echo
+          # Smartlead sometimes hands our login a BLANK session for half an hour
+          # or so (every read empty, auth/me empty; 2026-09-24, 2026-10-22) and
+          # then recovers by itself. One failed attempt per run turned that into
+          # a lost day, so try three times, five minutes apart. Each attempt is
+          # a fresh request, so Vercel mints a fresh login each time.
+          for attempt in 1 2 3; do
+            body=$(curl -sS --max-time 290 \
+              "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}") || body='{"error":"curl failed or timed out"}'
+            echo "attempt ${attempt}: $(echo "$body" | head -c 2000)"
+            if ! echo "$body" | jq -e '.error' >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -lt 3 ]; then sleep 300; fi
+          done
           # This step used to pipe straight to head, so a 200 carrying
           # {"error": "metrics fetch failed ... 401 unauthorized"} was a green
           # tick. The health history stopped being written on 2026-09-17 and
