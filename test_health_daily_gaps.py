@@ -66,3 +66,22 @@ def test_credential_state_never_leaks_a_value(monkeypatch):
     monkeypatch.setenv("SMARTLEAD_JWT", "super-secret-token")
     monkeypatch.delenv("SMARTLEAD_LOGIN_EMAIL", raising=False)
     assert "super-secret-token" not in str(hd.credential_state())
+
+
+def test_history_refetches_only_recent_and_missing_days(monkeypatch):
+    """Re-pulling all 16 days every run pushed the Vercel function at its 300s
+    cap. Settled days already stored are read back, not fetched."""
+    import health_daily as hd
+    dates = hd.complete_days(hd.HISTORY_DAYS, "2026-10-22")
+    stored = [{"email": "a@x.co", "date": d, "sent": 10, "client": "C"}
+              for d in dates[:-1] if d != dates[2]]           # day 2 missing
+    fetched = []
+    monkeypatch.setattr(hd, "_stored_rows", lambda since: stored)
+    monkeypatch.setattr(hd, "daily_rows", lambda ds, attrs: (fetched.extend(ds) or
+        [{"email": "a@x.co", "date": d, "sent": 12, "client": "C"} for d in ds], []))
+    monkeypatch.setattr(hd.store, "upsert_health_daily", lambda rows: None)
+    monkeypatch.setattr(hd, "publish_daily_sends", lambda rows: None)
+    out = hd.refresh_history({}, end_day="2026-10-22", include_today=False)
+    assert fetched == [dates[2]] + dates[-hd.SETTLE_DAYS:]
+    assert set(out["sent_by_date"]) == set(dates)
+    assert out["sent_by_date"][dates[0]] == 10 and out["sent_by_date"][dates[-1]] == 12

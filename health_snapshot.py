@@ -196,11 +196,34 @@ def last_run() -> dict:
         return {}
 
 
+def next_streak(prev, was_burned: bool, today: str, confirm_days: int) -> int:
+    """How many days in a row an inbox has met the burn rule, counting today.
+
+    `prev` is the stored [count, date] (or a bare int from older rows).
+    """
+    prev_count = prev[0] if isinstance(prev, list) else (prev if isinstance(prev, int) else None)
+    prev_date = prev[1] if isinstance(prev, list) else None
+    if prev_date and prev_date >= today:
+        # Already counted today (same-day re-run) -- or stamped with a FUTURE
+        # date by a run on the wrong clock, which must not count as another day
+        # either. Re-stamping it with today then lets tomorrow count normally.
+        return prev_count or 1
+    if prev_count is not None:
+        return prev_count + 1                        # a new day still over the line
+    if was_burned:
+        return confirm_days                          # grandfather already-burned inboxes
+    return 1
+
+
 def snapshot_daily(overview: dict | None = None, today: str | None = None,
                    cfg: dict | None = None) -> dict:
     """Snapshot + score the fleet. Pass `overview` from sync (fresh), otherwise
     it's read from the overview_v2 cache."""
-    today = today or datetime.now().strftime("%Y-%m-%d")
+    # New York's date, never the machine's. Run from the Mac (IST) the machine
+    # date is already tomorrow while Vercel is still on today, and every burn
+    # streak advanced a day: on 2026-10-22 that turned 7 burned into 60.
+    import health_daily as _hd
+    today = today or _hd.today_local()
     cfg = cfg or store.get_health_config("default") or {}
 
     if overview is None:
@@ -283,17 +306,8 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
 
         if status == hm.BURNED:
             email = r["email"]
-            prev = streaks.get(email)
-            prev_count = prev[0] if isinstance(prev, list) else (prev if isinstance(prev, int) else None)
-            prev_date = prev[1] if isinstance(prev, list) else None
-            if prev_date == today:
-                streak = prev_count or 1             # already counted today (same-day re-run)
-            elif prev_count is not None:
-                streak = prev_count + 1              # a new day still over the line
-            elif prev_status.get(email) == hm.BURNED:
-                streak = confirm_days                # grandfather already-burned inboxes
-            else:
-                streak = 1
+            streak = next_streak(streaks.get(email), prev_status.get(email) == hm.BURNED,
+                                 today, confirm_days)
             new_streaks[email] = [streak, today]
             if streak < confirm_days:                # not yet confirmed -> hold at at-risk
                 status = hm.AT_RISK
@@ -348,3 +362,30 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
 if __name__ == "__main__":
     import json
     print(json.dumps(snapshot_daily(), indent=2, default=str))
+
+
+def run() -> dict:
+    """The ONE way to run the snapshot, wherever it runs: the Vercel route and a
+    manual run from a laptop do exactly the same thing.
+
+    A bare snapshot_daily() from the Mac on 2026-10-22 rescored every inbox but
+    left the dashboard showing the old count: cache writes are off by default
+    (db._CACHE_WRITE_ENABLED), so `health_fleet` was never rewritten, and the
+    "snapshot failed" latch was never cleared because record_run was skipped.
+    """
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        out = snapshot_daily()
+    except Exception as e:                           # noqa: BLE001
+        # Record the failure BEFORE re-raising, so "the producer is broken"
+        # is visible even though no rows were written.
+        record_run(False, str(e))
+        raise
+    record_run(not (isinstance(out, dict) and out.get("error")),
+               str((out or {}).get("error") or ""))
+    return out
+
+
+if __name__ == "__main__":
+    import json as _json
+    print(_json.dumps(run(), default=str)[:3000])

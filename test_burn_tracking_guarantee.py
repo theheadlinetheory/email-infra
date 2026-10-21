@@ -109,3 +109,26 @@ def test_the_alert_names_the_consequence_not_just_the_fault(monkeypatch):
     text = posted.get("text", "")
     assert "UNDER-REPORT" in text
     assert "2 time(s)" in text
+
+
+def test_a_rerun_the_same_day_does_not_advance_the_streak():
+    assert hs.next_streak([2, "2026-10-21"], False, "2026-10-21", 3) == 2
+    assert hs.next_streak([2, "2026-10-20"], False, "2026-10-21", 3) == 3
+
+
+def test_a_streak_stamped_with_a_future_date_does_not_advance():
+    """2026-10-22: a run on an IST clock stamped tomorrow's date; the next
+    Vercel run (still today in New York) must not count it as a new day."""
+    assert hs.next_streak([1, "2026-10-22"], False, "2026-10-21", 3) == 1
+
+
+def test_run_writes_the_dashboard_cache_and_records_the_outcome(monkeypatch):
+    """A manual run once rescored everything and left the dashboard unchanged."""
+    import db
+    seen = {}
+    monkeypatch.setattr(db, "_CACHE_WRITE_ENABLED", False)
+    monkeypatch.setattr(hs, "snapshot_daily",
+                        lambda: seen.setdefault("cache", db._CACHE_WRITE_ENABLED) and {"ok": True})
+    monkeypatch.setattr(hs, "record_run", lambda ok, detail="": seen.setdefault("ok", ok))
+    hs.run()
+    assert seen == {"cache": True, "ok": True}

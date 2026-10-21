@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     # 15 was not enough: the full-campaign reply scan was cancelled mid-run,
     # which silently left rule 10's safety net stale.
-    timeout-minutes: 50   # 30 + up to ~20 for the snapshot's retries
+    timeout-minutes: 60   # 30 + up to ~33 for the snapshot's worst case: 3 x (290s + 160s outcome check) + 2 x 300s
     steps:
       - name: Zapmail removal check (deletion-date alerts + removal confirmation)
         env:
@@ -139,9 +139,31 @@ jobs:
           # then recovers by itself. One failed attempt per run turned that into
           # a lost day, so try three times, five minutes apart. Each attempt is
           # a fresh request, so Vercel mints a fresh login each time.
+          #
+          # A curl timeout is NOT a failure by itself: curl gives up at 290s and
+          # Vercel keeps going to 300s, and the route does more work after the
+          # snapshot. So on a timeout, read the outcome the snapshot recorded.
           for attempt in 1 2 3; do
+            started=$(date -u +%Y-%m-%dT%H:%M:%S)
             body=$(curl -sS --max-time 290 \
-              "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}") || body='{"error":"curl failed or timed out"}'
+              "https://email-infra.vercel.app/api/health-snapshot?pw=${PW}") || {
+              echo "attempt ${attempt}: curl gave up — reading the recorded outcome"
+              body='{"error":"snapshot did not record an outcome after the timeout"}'
+              for _ in 1 2 3 4 5 6 7 8; do
+                sleep 20
+                st=$(curl -sS --max-time 30 \
+                  "https://email-infra.vercel.app/api/health-snapshot-status?pw=${PW}") || continue
+                at=$(echo "$st" | jq -r '.at // ""' | cut -c1-19)
+                if [[ "$at" > "$started" || "$at" == "$started" ]]; then
+                  if [ "$(echo "$st" | jq -r '.ok')" = "true" ]; then
+                    body='{"ok":true,"via":"recorded outcome after curl timeout"}'
+                  else
+                    body=$(echo "$st" | jq -c '{error: (.detail // "snapshot failed")}')
+                  fi
+                  break
+                fi
+              done
+            }
             echo "attempt ${attempt}: $(echo "$body" | head -c 2000)"
             if ! echo "$body" | jq -e '.error' >/dev/null 2>&1; then break; fi
             if [ "$attempt" -lt 3 ]; then sleep 300; fi

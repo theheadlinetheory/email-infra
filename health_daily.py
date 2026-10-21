@@ -485,8 +485,18 @@ def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
     back a day.
     """
     dates = complete_days(days, end_day)
-    rows, skipped = daily_rows(dates, attrs)
-    out = {"days": dates, "rows": len(rows), "sent_by_date": _sent_by_date(rows),
+    # Re-fetch only what can still change: the last SETTLE_DAYS (late bounces
+    # and replies land on the day the mail was SENT) plus any day with no stored
+    # rows. Re-pulling all 16 days every run cost ~60s of a Vercel function
+    # capped at 300s, alongside an 86s window call -- and a run that hits the
+    # cap is a red run and a frozen list.
+    stored = _stored_rows(dates[0])
+    have = {r["date"] for r in stored}
+    fetch = [d for d in dates if d in dates[-SETTLE_DAYS:] or d not in have]
+    rows, skipped = daily_rows(fetch, attrs)
+    kept = [r for r in stored if r["date"] in dates and r["date"] not in fetch]
+    out = {"days": dates, "rows": len(rows), "fetched_days": fetch,
+           "sent_by_date": _sent_by_date(kept + rows),
            # Days Smartlead returned nothing for. A weekend belongs here and is
            # harmless; a weekday here means a fetch problem, and the caller must
            # be able to tell the difference rather than seeing a clean run.
@@ -498,15 +508,37 @@ def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
         store.upsert_health_daily(rows + partial)
         out["rows"] += len(partial)
         out["partial_day"] = end_day or today_local()
-        all_rows = rows + partial
+        all_rows = kept + rows + partial
     else:
         store.upsert_health_daily(rows)
-        all_rows = rows
+        all_rows = kept + rows
     try:
         publish_daily_sends(all_rows)
     except Exception:
         pass                                   # a cache miss only costs speed
     return out
+
+
+SETTLE_DAYS = 3                  # recent complete days re-fetched on every run
+
+
+def _stored_rows(since_date: str) -> list[dict]:
+    """(email, date, sent, client) already in inbox_health_daily. Paged past
+    PostgREST's 1000-row cap. [] on any failure, which just means every day is
+    fetched again -- slower, never wrong."""
+    rows, offset = [], 0
+    try:
+        while True:
+            page = store._request("GET", "/inbox_health_daily", params={
+                "select": "email,date,sent,client", "date": f"gte.{since_date}",
+                "order": "date.desc", "limit": "1000", "offset": str(offset)})
+            if not page:
+                break
+            rows.extend(page)
+            offset += len(page)
+    except Exception:                                # noqa: BLE001
+        return []
+    return rows
 
 
 def _sent_by_date(rows: list[dict]) -> dict:
