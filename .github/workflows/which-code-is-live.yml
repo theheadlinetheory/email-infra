@@ -1,0 +1,55 @@
+name: Which code is live
+
+# Answers the question that cost a week: is the code on main actually RUNNING
+# in production?
+#
+# It cannot be answered from GitHub. Vercel stopped writing commit statuses and
+# deployment records for this repo after 2026-10-17, so `gh api .../status`
+# reports `pending/0` and `.../deployments` still shows e849f16 no matter what
+# is deployed. Three sessions read that as "the fix never shipped".
+#
+# Nor can it be answered by curling a route unauthenticated: EVERY path under
+# /api/ returns 401 for an unknown route as readily as a real one, so a 401 is
+# not evidence that a route exists. Only an AUTHENTICATED probe separates
+# "route exists" (200) from "not deployed" (404), which is why this runs in CI
+# where DASHBOARD_PASSWORD lives.
+#
+# /api/health-snapshot-status was added in PR #164 and exists in no earlier
+# revision, so it is the marker for "#164 or later is live".
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe production for a route that only exists in #164 or later
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          base=https://email-infra.vercel.app
+
+          # Control: a route that exists in EVERY revision. If this is not 200
+          # the password is wrong and the real probe below means nothing.
+          ctl=$(curl -s -o /tmp/ctl -w '%{http_code}' --max-time 60 \
+                "$base/api/invariants?pw=${PW}")
+          echo "control  /api/invariants            -> HTTP $ctl"
+
+          # The marker route, added in #164.
+          new=$(curl -s -o /tmp/new -w '%{http_code}' --max-time 60 \
+                "$base/api/health-snapshot-status?pw=${PW}")
+          echo "marker   /api/health-snapshot-status -> HTTP $new"
+          echo "marker body: $(head -c 300 /tmp/new)"
+
+          if [ "$ctl" = "401" ]; then
+            echo "::error::DASHBOARD_PASSWORD is not accepted — probe inconclusive"
+            exit 1
+          fi
+          case "$new" in
+            200) echo "::notice::#164 or later IS live in production" ;;
+            404) echo "::error::production is running code OLDER than #164 — the merge did not deploy" ; exit 1 ;;
+            *)   echo "::error::unexpected HTTP $new — inconclusive" ; exit 1 ;;
+          esac
