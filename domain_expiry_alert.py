@@ -281,12 +281,61 @@ def format_alert(board: dict) -> str | None:
     return "\n".join(out)
 
 
+# This runs inside /api/health-snapshot, which zapmail-watch calls four times a
+# day and retries up to three times per run — and a retry fires even when the
+# first attempt got as far as posting, because the curl gives up at 290s while
+# Vercel keeps going. With no memory of what it last said, the same line landed
+# in Slack three times between 12:01 and 1:27 one night (2026-10-22).
+#
+# So an identical report is suppressed for a while. Live senders about to lapse
+# repeat daily (their day counts change daily anyway); the empty-but-renewing
+# line is a slow leak with nothing new to say tomorrow, so it waits a week.
+LAST_POST_KEY = "domain_expiry_last_post"   # {posted_on, fingerprint}
+REPEAT_DAYS_AT_RISK = 1
+REPEAT_DAYS_WASTING = 7
+
+
+def _last_post() -> dict:
+    try:
+        import db as store
+        return store.get_state(LAST_POST_KEY) or {}
+    except Exception:                                # noqa: BLE001
+        return {}
+
+
+def _record_post(payload: dict) -> None:
+    try:
+        import db as store
+        store.set_state(LAST_POST_KEY, payload)
+    except Exception:                                # noqa: BLE001
+        pass
+
+
+def _is_repeat(text: str, board: dict, today: date) -> tuple[bool, str]:
+    import hashlib
+    fingerprint = hashlib.sha256(text.encode()).hexdigest()[:16]
+    prev = _last_post()
+    try:
+        last_on = date.fromisoformat(prev.get("posted_on") or "")
+    except ValueError:
+        last_on = None
+    window = REPEAT_DAYS_AT_RISK if board["at_risk"] else REPEAT_DAYS_WASTING
+    repeat = (prev.get("fingerprint") == fingerprint and last_on is not None
+              and (today - last_on).days < window)
+    return repeat, fingerprint
+
+
 def post(board: dict, dry_run: bool = True) -> dict:
     text = format_alert(board)
     if not text:
         return {"posted": False, "reason": "nothing at risk"}
     if dry_run:
         return {"dry_run": True, "text": text}
+    today = date.today()
+    repeat, fingerprint = _is_repeat(text, board, today)
+    if repeat:
+        return {"posted": False, "reason": "unchanged since last post",
+                "suppressed": True}
     import requests
     for var in SLACK_WEBHOOK_VARS:
         hook = (os.environ.get(var) or "").strip()
@@ -295,6 +344,10 @@ def post(board: dict, dry_run: bool = True) -> dict:
         try:
             r = requests.post(hook, json={"text": text}, timeout=10)
             if r.status_code in (200, 201):
+                # Recorded only after a send that landed: stamping first would
+                # let a failed post buy a week of silence.
+                _record_post({"posted_on": today.isoformat(),
+                              "fingerprint": fingerprint})
                 return {"posted": True, "via": var}
         except requests.RequestException:
             pass
