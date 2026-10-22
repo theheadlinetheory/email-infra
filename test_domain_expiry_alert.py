@@ -74,3 +74,61 @@ def test_an_unreadable_campaign_list_raises():
 
 def test_the_plausibility_floor_sits_between_one_page_and_the_real_fleet():
     assert 100 < dea.MIN_PLAUSIBLE_ACCOUNTS < 1700
+
+
+# ── repeat suppression ────────────────────────────────────────────────────────
+
+WASTING = {"at_risk": [], "wasting": [{"domain": "x.co"}],
+           "summary": {"empty_renewing": 1, "empty_renewing_cost": 31.2}}
+
+
+class FakeSlack:
+    def __init__(self, status=200):
+        self.sent, self.status = [], status
+
+    def post(self, url, json=None, timeout=None):
+        self.sent.append(json["text"])
+        return type("R", (), {"status_code": self.status})()
+
+
+@pytest.fixture
+def slack(monkeypatch):
+    import requests
+    store = {}
+    fake = FakeSlack()
+    monkeypatch.setenv("SLACK_INFRA_DECISIONS_WEBHOOK", "https://hooks.example/x")
+    monkeypatch.setattr(requests, "post", fake.post)
+    monkeypatch.setattr(dea, "_last_post", lambda: dict(store))
+    monkeypatch.setattr(dea, "_record_post", lambda p: store.update(p))
+    fake.store = store
+    return fake
+
+
+def test_a_retried_snapshot_posts_the_same_report_once(slack):
+    """zapmail-watch retries the snapshot three times; each used to post."""
+    for _ in range(3):
+        dea.post(WASTING, dry_run=False)
+    assert len(slack.sent) == 1
+
+
+def test_an_unchanged_empty_domain_report_resurfaces_after_a_week(slack):
+    from datetime import date, timedelta
+    dea.post(WASTING, dry_run=False)
+    slack.store["posted_on"] = (date.today() - timedelta(days=7)).isoformat()
+    dea.post(WASTING, dry_run=False)
+    assert len(slack.sent) == 2
+
+
+def test_a_changed_report_always_posts(slack):
+    dea.post(WASTING, dry_run=False)
+    more = {**WASTING, "summary": {"empty_renewing": 2, "empty_renewing_cost": 62.4}}
+    dea.post(more, dry_run=False)
+    assert len(slack.sent) == 2
+
+
+def test_a_failed_send_does_not_buy_silence(slack):
+    slack.status = 500
+    dea.post(WASTING, dry_run=False)
+    slack.status = 200
+    dea.post(WASTING, dry_run=False)
+    assert len(slack.sent) == 2 and slack.store.get("fingerprint")
