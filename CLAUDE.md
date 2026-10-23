@@ -1,6 +1,42 @@
 # email-infra — working notes
 
-## Deploys: never put a `Co-Authored-By` trailer on a commit here
+## Deploys: the Git link was severed 2026-10-17, reconnected 2026-10-23
+
+**What actually happened** (an earlier version of this file blamed commit
+trailers; that was wrong and is corrected here). When the fulfillment dashboard
+moved to GitHub Pages, the Vercel GitHub App's access was narrowed and
+`email-infra` was left out. Vercel's project page showed
+`Error: Project Link not found`, and **every merge to `main` from 2026-10-17 to
+2026-10-23 silently did not deploy** — production kept serving `e849f16`. PR
+#164, the burn-tracking fix, merged on 10-21 and never ran. Three sessions
+re-debugged Smartlead instead, because nothing anywhere said "not deployed".
+
+Fixed by an org admin re-granting the Vercel app access to this repo
+specifically (**each repo must be ticked individually** under
+Repository access — adding the org is not enough), then clicking **Reconnect**
+on Vercel → Project → Settings → Git.
+
+### Two traps that made this take a week
+
+1. **GitHub cannot tell you whether a merge deployed.** With the link broken,
+   `gh api .../commits/<sha>/status` returns `pending/0` and
+   `.../deployments` still shows the last good deploy. That reads like "status
+   reporting is flaky", not "nothing is deploying".
+2. **A `401` is not evidence a route exists.** *Every* path under `/api/`
+   returns 401 unauthenticated, including `/api/total-nonsense-xyz`. An
+   unauthenticated curl therefore cannot distinguish deployed from not.
+
+### So: after any merge, confirm it is actually live
+
+```bash
+gh workflow run which-code-is-live.yml      # authenticated; 200 vs 404
+```
+
+It probes a route that exists only in #164 and later, with a control call so a
+wrong password cannot silently produce a meaningless answer. Trust it over
+GitHub's commit status.
+
+## Commit trailers (no longer a deploy concern)
 
 This project is on Vercel **Hobby**, which refuses to build a commit whose
 author *or co-author* is not on the Vercel team. A commit carrying
