@@ -68,7 +68,16 @@ jobs:
       # with "no inboxes in overview", because attribution comes from exactly
       # that cache. The dependency is the constraint, not the priority.
       - name: Rebuild the Overview (sync)
+        id: sync
         if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+        # Loud but not blocking, and gated at the end. This step used to block,
+        # on the reasoning that the snapshot reads the overview_v2 cache sync
+        # writes. That is true only when the cache is EMPTY. On 2026-10-23 sync
+        # timed out while overview_v2 was 10.5h old -- perfectly usable -- and
+        # the snapshot was skipped anyway, so burn scoring was lost to a
+        # freshness problem it did not have. The snapshot now checks the
+        # overview itself (below) instead of inferring it from sync's exit code.
+        continue-on-error: true
         env:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
@@ -134,6 +143,26 @@ jobs:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
           set -uo pipefail
+          # What the snapshot actually requires is a usable overview_v2, not a
+          # successful sync. Check the artefact directly: scoring needs inboxes
+          # to attribute, and a day-old attribution is fine, but an empty or
+          # ancient one would silently produce a wrong fleet.
+          ov=$(curl -sS --max-time 60 \
+            "https://email-infra.vercel.app/api/overview?pw=${PW}") || ov='{}'
+          ov_age=$(echo "$ov" | jq -r '._age_hours // 999')
+          ov_acc=$(echo "$ov" | jq -r '.total_accounts // 0')
+          if [ "$ov_acc" = "0" ]; then
+            echo "::error::overview_v2 has no inboxes — burn scoring would be"
+            echo "::error::built on an empty fleet. Fix the sync first."
+            exit 1
+          fi
+          if [ "$(echo "$ov_age > 36" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
+            echo "::error::overview_v2 is ${ov_age}h old — too stale to attribute"
+            echo "::error::burn to the right clients. Fix the sync first."
+            exit 1
+          fi
+          echo "overview_v2 ok: ${ov_acc} accounts, ${ov_age}h old"
+
           # Smartlead sometimes hands our login a BLANK session for half an hour
           # or so (every read empty, auth/me empty; 2026-09-24, 2026-10-22) and
           # then recovers by itself. One failed attempt per run turned that into
@@ -334,11 +363,17 @@ jobs:
       # no longer taking the rest of the job down with it. Anything that must
       # genuinely block later steps belongs before this, not after.
       - name: Fail the job if a must-not-fail step failed
-        if: always() && (steps.snapshot.outcome == 'failure'
+        if: always() && (steps.sync.outcome == 'failure'
+          || steps.snapshot.outcome == 'failure'
           || steps.replyscan.outcome == 'failure'
           || steps.warmupcheck.outcome == 'failure')
         run: |
           set -uo pipefail
+          if [ "${{ steps.sync.outcome }}" = "failure" ]; then
+            echo "::error::the Overview sync failed — attribution is running on"
+            echo "::error::an older overview_v2. The snapshot still ran if that"
+            echo "::error::cache was usable; if it was not, see its own error."
+          fi
           if [ "${{ steps.snapshot.outcome }}" = "failure" ]; then
             echo "::error::the daily health snapshot failed — burn scoring did not run,"
             echo "::error::so the burned-inbox list is FROZEN at its last good date."
