@@ -1592,6 +1592,33 @@ def rule_fix_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+@app.route("/api/rule10-safety-status")
+def rule10_safety_status():
+    """When the last full-campaign reply scan finished, without running one.
+
+    The scan itself takes longer than curl's 290s cap while Vercel runs on to
+    300s, so CI's socket giving up says nothing about whether the scan worked.
+    On 2026-10-23 the walk finished at 18:10:54 and curl had given up at
+    18:10:49 — five seconds earlier — and the job reported a failure over a
+    scan that had just succeeded. Judge the artefact, not the socket.
+
+    This reads stored state only. It must stay cheap: the whole point is that
+    CI can poll it after a timeout without starting another 496-campaign walk.
+    """
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    import rule10_safety
+    rec = store.get_state(rule10_safety.STATE_KEY) or {}
+    return _cors(jsonify({
+        "ts": rec.get("ts"),
+        "age_hours": rule10_safety._age_hours(rec),
+        "campaigns_scanned": rec.get("campaigns_scanned"),
+        "candidates": len(rec.get("candidates") or []),
+        "positives": len(rec.get("positives") or []),
+    }))
+
+
 @app.route("/api/rule10-reply-scan")
 def rule10_reply_scan():
     """The nightly full-campaign positive-reply walk behind rule 10's fix.
