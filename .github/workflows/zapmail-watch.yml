@@ -290,9 +290,33 @@ jobs:
           PW: ${{ secrets.DASHBOARD_PASSWORD }}
         run: |
           set -uo pipefail
+          # The walk is ~496 campaigns and runs past curl's 290s cap while
+          # Vercel continues to 300s. On 2026-10-23 it finished at 18:10:54
+          # and curl had given up at 18:10:49 -- five seconds earlier -- and
+          # this step failed the job over a scan that had just succeeded.
+          # So a timeout is not a verdict: read what the scan recorded.
+          started=$(date -u +%Y-%m-%dT%H:%M:%S)
+          curl_rc=0
           body=$(curl -sS --max-time 290 \
-            "https://email-infra.vercel.app/api/rule10-reply-scan?pw=${PW}")
-          echo "$body" | head -c 1200; echo
+            "https://email-infra.vercel.app/api/rule10-reply-scan?pw=${PW}") || curl_rc=$?
+          echo "${body:-<no body>}" | head -c 1200; echo
+          if [ "${curl_rc:-0}" != "0" ]; then
+            echo "curl exited ${curl_rc} — reading what the scan recorded"
+            for _ in 1 2 3 4 5 6; do
+              sleep 20
+              st=$(curl -sS --max-time 30 \
+                "https://email-infra.vercel.app/api/rule10-safety-status?pw=${PW}") || continue
+              at=$(echo "$st" | jq -r '.ts // ""' | cut -c1-19)
+              if [[ -n "$at" && ( "$at" > "$started" || "$at" == "$started" ) ]]; then
+                echo "ok - scan completed server-side at ${at}:" \
+                     "campaigns=$(echo "$st" | jq -r '.campaigns_scanned')" \
+                     "holding replies=$(echo "$st" | jq -r '.positives')"
+                exit 0
+              fi
+            done
+            echo "::error::reply scan timed out and recorded nothing newer than ${started}"
+            exit 1
+          fi
           if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
             echo "::error::reply scan failed: $(echo "$body" | jq -r '.error')"
             exit 1
