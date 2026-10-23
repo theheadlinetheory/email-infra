@@ -53,3 +53,26 @@ jobs:
             404) echo "::error::production is running code OLDER than #164 — the merge did not deploy" ; exit 1 ;;
             *)   echo "::error::unexpected HTTP $new — inconclusive" ; exit 1 ;;
           esac
+
+      - name: What the Inboxes tab actually serves
+        # "The dashboard is not updating" is ambiguous: the data can be right
+        # while the page shows nothing, or the page can be right while the data
+        # is stale. This prints the real authenticated response so the two are
+        # never confused again. Local simulation is not enough -- it reads the
+        # same database but not the same code path.
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -uo pipefail
+          body=$(curl -sS --max-time 120 \
+            "https://email-infra.vercel.app/api/inboxes?pw=${PW}")
+          echo "$body" | jq '{
+            loading,
+            error,
+            freshness,
+            summary_burned: .summary.burned,
+            summary_actionable: .summary.actionable_burned,
+            burned_count: (.burned // [] | length),
+            actionable: [ .burned // [] | .[] | select(.actionable) | .email ],
+            not_actionable: [ .burned // [] | .[] | select(.actionable|not) | .email ]
+          }' 2>/dev/null || { echo "NON-JSON RESPONSE:"; echo "$body" | head -c 600; }
