@@ -30,10 +30,11 @@ WORKFLOW = ".github/workflows/zapmail-watch.yml"
 ALLOWED_BLOCKING = {
     # First step; nothing to skip before it.
     "Zapmail removal check (deletion-date alerts + removal confirmation)",
-    # The snapshot reads the overview_v2 cache that THIS writes. Running the
-    # snapshot on a stale overview fails instantly with "no inboxes in
-    # overview", so this one genuinely gates what follows.
-    "Rebuild the Overview (sync)",
+    # NOTE: "Rebuild the Overview (sync)" used to be here, on the reasoning that
+    # the snapshot reads the cache it writes. Removed 2026-10-23: that holds
+    # only when the cache is EMPTY. A sync timeout with a 10.5h-old overview
+    # skipped burn scoring for no reason. The snapshot now checks overview_v2
+    # directly instead of inferring its health from sync's exit code.
 }
 
 
