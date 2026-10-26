@@ -718,6 +718,60 @@ def get_health_daily_bulk(since_date: str) -> dict:
     return out
 
 
+COUNT_COLUMNS = ("replied", "bounced", "positive_replied")
+
+
+def has_daily_counts() -> bool:
+    """True once migration 20261027_burn_counts.sql is applied."""
+    return set(COUNT_COLUMNS) <= health_daily_columns()
+
+
+def get_health_daily_counts(since_date: str, before_date: str | None = None) -> dict:
+    """Days that SENT, with their counts, grouped email -> [rows].
+
+    The burn rule walks up to eight weeks back to find an inbox's latest 200
+    sends. Reading `select=*` for every row over eight weeks is ~84,000 rows;
+    zero-send rows carry nothing the walk needs, and dropping them plus the
+    unused columns cuts the read to the rows that matter. `before_date`
+    excludes today's in-progress row, whose replies have not arrived yet.
+    """
+    cols = ["email", "date", "sent", "client", "reply_rate", "bounce_rate"]
+    if has_daily_counts():
+        cols += list(COUNT_COLUMNS)
+    params = {"select": ",".join(cols), "sent": "gt.0", "order": "date.desc",
+              "limit": "1000"}
+    params["date"] = f"gte.{since_date}"
+    if before_date:
+        params["and"] = f"(date.lt.{before_date})"
+    rows, offset = [], 0
+    while True:
+        page = _request("GET", "/inbox_health_daily", params={**params, "offset": str(offset)})
+        rows.extend(page)
+        if len(page) < 1000:
+            break
+        offset += 1000
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(r["email"], []).append(r)
+    return out
+
+
+_health_status_cols = None
+
+
+def health_status_columns() -> set:
+    """Columns inbox_health_status really has; see health_daily_columns."""
+    global _health_status_cols
+    if _health_status_cols is None:
+        try:
+            probe = _request("GET", "/inbox_health_status",
+                             params={"select": "*", "limit": "1"})
+            _health_status_cols = set(probe[0].keys()) if probe else set()
+        except Exception:
+            _health_status_cols = set()
+    return _health_status_cols
+
+
 def get_health_daily_sends(since_date: str) -> list[dict]:
     """(email, date, sent) only, since `since_date`.
 
@@ -750,8 +804,11 @@ def upsert_health_status(rows: list[dict]) -> None:
     # serialize jsonb columns on COPIES — never mutate the caller's dicts
     # (the same list objects are reused for the health_fleet cache).
     payload = []
+    # Same guard as upsert_health_daily: PostgREST rejects the whole batch over
+    # one unknown column, so the win_* columns are only sent once they exist.
+    cols = health_status_columns()
     for r in rows:
-        row = dict(r)
+        row = {k: v for k, v in r.items() if not cols or k in cols}
         for col in ("reasons", "subscores", "campaigns"):
             if col in row and not isinstance(row[col], str):
                 row[col] = json.dumps(row[col])

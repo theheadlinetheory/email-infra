@@ -48,10 +48,32 @@ def test_credential_state_names_what_is_missing(monkeypatch):
     credential was absent."""
     monkeypatch.delenv("SMARTLEAD_LOGIN_EMAIL", raising=False)
     monkeypatch.delenv("SMARTLEAD_LOGIN_PASSWORD", raising=False)
-    monkeypatch.setenv("SMARTLEAD_JWT", "stale.token.here")
+    monkeypatch.setattr(hd, "session_sees_account", lambda jwt=None: None)
+    monkeypatch.setenv("SMARTLEAD_JWT", _jwt(exp_in=3600))
     st = hd.credential_state()
     assert st["login_pair"] is False and st["static_jwt"] is True
     assert "SMARTLEAD_LOGIN_EMAIL" in st["fix"]
+
+
+def _jwt(exp_in: int) -> str:
+    import base64, json, time
+    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+    return f"{enc({'alg': 'HS256'})}.{enc({'exp': time.time() + exp_in})}.sig"
+
+
+def test_an_expired_static_jwt_is_reported_and_never_used(monkeypatch):
+    """2026-10-24..26: the fallback on Vercel was an expired token, so every
+    blank-session retry became "401 unauthorized" and six runs froze the list."""
+    import health_smartlead as hsl
+    monkeypatch.delenv("SMARTLEAD_LOGIN_EMAIL", raising=False)
+    monkeypatch.delenv("SMARTLEAD_LOGIN_PASSWORD", raising=False)
+    monkeypatch.delenv("SMARTLEAD_LOGIN_EMAIL_2", raising=False)
+    monkeypatch.setenv("SMARTLEAD_JWT", _jwt(exp_in=-60))
+    st = hd.credential_state()
+    assert st["static_jwt"] is False and st["static_jwt_expired"] is True
+    assert hsl.get_jwt() == ""
+    assert hd._fallback_jwt() is None
+    assert hd.jwt_expired(_jwt(exp_in=3600)) is False
 
 
 def test_credential_state_with_nothing_set_says_so(monkeypatch):

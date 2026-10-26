@@ -32,11 +32,12 @@ _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 _token_cache = {"jwt": "", "ts": 0}
 
 
-def _mint_jwt() -> str:
+def _mint_jwt(suffix: str = "") -> str:
     """Log into SmartLead and return a fresh JWT (auto-refresh).
-    Needs SMARTLEAD_LOGIN_EMAIL / SMARTLEAD_LOGIN_PASSWORD env vars."""
-    email = os.environ.get("SMARTLEAD_LOGIN_EMAIL", "").strip()
-    pw = os.environ.get("SMARTLEAD_LOGIN_PASSWORD", "").strip()
+    Needs SMARTLEAD_LOGIN_EMAIL / SMARTLEAD_LOGIN_PASSWORD env vars (or the
+    `_2` pair when suffix="_2")."""
+    email = os.environ.get(f"SMARTLEAD_LOGIN_EMAIL{suffix}", "").strip()
+    pw = os.environ.get(f"SMARTLEAD_LOGIN_PASSWORD{suffix}", "").strip()
     if not email or not pw:
         return ""
     import requests
@@ -64,7 +65,17 @@ def get_jwt(force: bool = False) -> str:
                 _token_cache["ts"] = time.time()
         if _token_cache["jwt"]:
             return _token_cache["jwt"]
-    return os.environ.get("SMARTLEAD_JWT", "").strip()
+    static = os.environ.get("SMARTLEAD_JWT", "").strip()
+    # An expired static token is worse than none: it turns "could not log in"
+    # into a 401 that reads like a credentials problem.
+    import health_daily as _hd
+    return "" if (static and _hd.jwt_expired(static)) else static
+
+
+def mint_secondary_jwt() -> str:
+    """A token from the optional second login, for when Smartlead blanks the
+    first account's session. "" when no second login is configured."""
+    return _mint_jwt("_2")
 
 
 def login_diag() -> dict:

@@ -312,9 +312,14 @@ def test_an_old_list_is_stale_regardless_of_the_producer(monkeypatch):
     assert hd.health_freshness(today="2026-09-25")["stale"] is True
 
 
-def test_a_blank_session_is_named_and_tries_the_static_token(monkeypatch):
-    """2026-10-22: a minted token whose auth/me is empty. The error must say
-    'blank session', not 'credentials fine', and the static token gets a try."""
+def _live_jwt(name: str) -> str:
+    import base64, json, time
+    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+    return f"{enc({'alg': 'HS256'})}.{enc({'exp': time.time() + 3600, 'n': name})}.sig"
+
+
+def _blank_unless(good_token):
+    """A Smartlead that blanks every session except `good_token`'s."""
     used = []
 
     class R:
@@ -324,26 +329,61 @@ def test_a_blank_session_is_named_and_tries_the_static_token(monkeypatch):
 
     def fake_get(url, headers=None, **k):
         used.append(headers.get("Authorization"))
-        owner = headers.get("Authorization") == "Bearer OWNER"
+        good = headers.get("Authorization") == f"Bearer {good_token}"
         if url == hd.ME_URL:
-            if owner:
+            if good:
                 me = R(None)
                 me.json = lambda: {"user": {"id": 1}}     # the real healthy shape
                 return me
             return R([])                                  # the real blank shape
-        return R([{"from_email": f"i{n}@x.co"} for n in range(60)] if owner else [])
+        return R([{"from_email": f"i{n}@x.co"} for n in range(60)] if good else [])
+    return fake_get, used
 
+
+def test_a_blank_session_is_named_and_tries_the_static_token(monkeypatch):
+    """2026-10-22: a minted token whose auth/me is empty. The error must say
+    'blank session', not 'credentials fine', and the static token gets a try."""
     import requests
     import health_smartlead as hsl
+    owner = _live_jwt("owner")
+    fake_get, used = _blank_unless(owner)
     monkeypatch.setattr(requests, "get", fake_get)
     monkeypatch.setattr(hd.time, "sleep", lambda *_: None)
     monkeypatch.setattr(hsl, "get_jwt", lambda force=False: "MINTED")
-    monkeypatch.setenv("SMARTLEAD_JWT", "OWNER")
+    monkeypatch.setattr(hsl, "mint_secondary_jwt", lambda: "")
+    monkeypatch.setenv("SMARTLEAD_JWT", owner)
     out = hd.fetch_window("2026-10-19", "2026-10-20", retries=3, min_records=50)
     assert len(out) == 60
-    assert "Bearer OWNER" in used
+    assert f"Bearer {owner}" in used
 
     monkeypatch.delenv("SMARTLEAD_JWT")
     with pytest.raises(RuntimeError) as e:
         hd.fetch_window("2026-10-19", "2026-10-20", retries=2, min_records=50)
     assert "BLANK SESSION" in str(e.value)
+
+
+def test_a_blank_session_falls_back_to_the_second_login(monkeypatch):
+    """Blanking is per Smartlead ACCOUNT, so the fallback that actually works is
+    a different login -- tried before any static token."""
+    import requests
+    import health_smartlead as hsl
+    second = _live_jwt("second")
+    fake_get, used = _blank_unless(second)
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(hd.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(hsl, "get_jwt", lambda force=False: "MINTED")
+    monkeypatch.setattr(hsl, "mint_secondary_jwt", lambda: second)
+    monkeypatch.delenv("SMARTLEAD_JWT", raising=False)
+    assert len(hd.fetch_window("2026-10-19", "2026-10-20", retries=3, min_records=50)) == 60
+    assert f"Bearer {second}" in used
+
+
+def test_an_expired_static_token_is_never_the_fallback(monkeypatch):
+    import base64, json, time
+    import health_smartlead as hsl
+    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+    dead = f"{enc({'alg': 'HS256'})}.{enc({'exp': time.time() - 60})}.sig"
+    monkeypatch.setattr(hsl, "get_jwt", lambda force=False: "MINTED")
+    monkeypatch.setattr(hsl, "mint_secondary_jwt", lambda: "")
+    monkeypatch.setenv("SMARTLEAD_JWT", dead)
+    assert hd._fallback_jwt() is None

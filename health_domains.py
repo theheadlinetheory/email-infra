@@ -128,6 +128,7 @@ def domain_view() -> dict:
                 "idle": bool(camps) and not active,    # only in paused/completed campaigns
                 "bounce_3d": r.get("bounce_3d"),
                 "reply_3d": r.get("reply_3d"),
+                "sent_3d": r.get("sent_3d"),
                 "streak_days": (streaks.get(r.get("email")) or [None])[0]
                 if isinstance(streaks.get(r.get("email")), list) else streaks.get(r.get("email")),
                 "has_job": r.get("email") in handled,

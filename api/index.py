@@ -533,10 +533,15 @@ def inboxes_route():
                 "vertical": _vertical_of(i.get("domain")),
                 "bounce_3d": i.get("bounce_3d"),
                 "reply_3d": i.get("reply_3d"),
-                "reason": (i.get("reasons") or [None])[0],
+                "sends": i.get("win_sends"), "replies": i.get("win_replies"),
+                "bounces": i.get("win_bounces"), "since": i.get("win_from"),
+                "reason": "; ".join(i.get("reasons") or []) or None,
                 # Only a live client's burned inbox needs replacing. One sitting
                 # in a Cleanup bucket is already cancelled.
                 "actionable": is_client,
+                # Acquisition is THT's own outreach: it has no live-client row,
+                # but its burns are just as real and are shown in their own list.
+                "acquisition": owner == "(acquisition)",
             })
         burned.sort(key=lambda b: (not b["actionable"], b["client"] or "", b["email"] or ""))
         act = [b for b in burned if b["actionable"]]
@@ -654,7 +659,38 @@ def inboxes_route():
             jobs = []
 
         need = Counter(b["vertical"] for b in act)
+
+        # EVERY inbox that is sending, ranked worst first -- not only the burned
+        # ones. "Low volume" used to be a bucket you could not look inside; now
+        # each row says how many sends it has towards the 200 and since when.
+        rank_order = {"burned": 0, "at_risk": 1, "watch": 2, "insufficient": 3,
+                      "healthy": 4}
+        ranking = sorted(
+            ({"email": i.get("email"), "client": i.get("client"),
+              "domain": i.get("domain"), "status": i.get("status"),
+              "sends": i.get("win_sends"), "replies": i.get("win_replies"),
+              "bounces": i.get("win_bounces"), "positives": i.get("win_positives"),
+              "reply": i.get("reply_3d"), "bounce": i.get("bounce_3d"),
+              "since": i.get("win_from"),
+              "why": (i.get("reasons") or [None])[0]}
+             for i in (fleet.get("inboxes") or [])
+             if i.get("status") in rank_order),
+            key=lambda x: (rank_order[x["status"]],
+                           x["reply"] if x["reply"] is not None else 99,
+                           -(x["bounce"] or 0)))
+
+        try:
+            import health_snapshot as _hs
+            run = _hs.last_run()
+        except Exception:                            # noqa: BLE001
+            run = {}
         return _cors(jsonify({
+            "ranking": ranking,
+            "client_weeks": fleet.get("client_weeks") or [],
+            "rule": fleet.get("rule") or {},
+            "pipeline": {**(fleet.get("pipeline") or {}),
+                         "built_at": fleet.get("generated_at"),
+                         "last_run": run},
             "counts": fleet.get("counts") or {},
             "alerts": fleet.get("alert_summary") or {},
             "burned": burned,
@@ -669,6 +705,7 @@ def inboxes_route():
                 "inboxes": len(fleet.get("inboxes") or []),
                 "burned": len(burned),
                 "actionable_burned": len(act),
+                "acquisition_burned": sum(1 for b in burned if b["acquisition"]),
                 "needed_by_vertical": dict(need),
                 "reserve": reserve,
                 "replacement": replacement,
