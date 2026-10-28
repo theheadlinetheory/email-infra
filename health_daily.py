@@ -129,8 +129,14 @@ def credential_state() -> dict:
     import os as _os
     has_login = bool(_os.environ.get("SMARTLEAD_LOGIN_EMAIL")
                      and _os.environ.get("SMARTLEAD_LOGIN_PASSWORD"))
-    has_static = bool((_os.environ.get("SMARTLEAD_JWT") or "").strip())
-    out = {"login_pair": has_login, "static_jwt": has_static, "minted": False}
+    static = (_os.environ.get("SMARTLEAD_JWT") or "").strip()
+    has_static = bool(static) and not jwt_expired(static)
+    out = {"login_pair": has_login, "static_jwt": has_static, "minted": False,
+           # Set but expired = ignored. Said out loud, because "static_jwt: True"
+           # over an expired token is how a 401 got misread for two days.
+           "static_jwt_expired": bool(static) and jwt_expired(static),
+           "second_login": bool(_os.environ.get("SMARTLEAD_LOGIN_EMAIL_2")
+                                and _os.environ.get("SMARTLEAD_LOGIN_PASSWORD_2"))}
     if has_login:
         try:
             import health_smartlead as hsl
@@ -188,13 +194,39 @@ def session_sees_account(jwt: str | None = None) -> bool | None:
         return None
 
 
+def jwt_expired(token: str) -> bool:
+    """True when a JWT's `exp` is in the past (or it cannot be read at all)."""
+    import base64
+    import json as _json
+    try:
+        part = token.split(".")[1]
+        claims = _json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+        return float(claims.get("exp") or 0) < time.time()
+    except Exception:                                # noqa: BLE001
+        return True
+
+
 def _fallback_jwt() -> str | None:
-    """A token to try when the minted session comes back blank: the static
-    SMARTLEAD_JWT, if one is set and it is a different token."""
+    """A token to try when the minted session comes back blank.
+
+    1. A second Smartlead login (SMARTLEAD_LOGIN_EMAIL_2 / _PASSWORD_2). The
+       blanking is per ACCOUNT: on 2026-10-22 Tim's minted tokens were blank
+       while Lars's owner session read normally, and re-minting the same login
+       returned the same blank session. Only a different login gets around it.
+    2. The static SMARTLEAD_JWT, but ONLY if it has not expired. From
+       2026-10-24 to 10-26 the fallback on Vercel was an expired token, so every
+       blank-session retry turned into "401 unauthorized" and six runs in a row
+       froze the burned list.
+    """
     import os as _os
     import health_smartlead as hsl
+    second = hsl.mint_secondary_jwt()
+    if second and second != hsl.get_jwt():
+        return second
     static = (_os.environ.get("SMARTLEAD_JWT") or "").strip()
-    return static if static and static != hsl.get_jwt() else None
+    if static and static != hsl.get_jwt() and not jwt_expired(static):
+        return static
+    return None
 
 
 class MetricsShapeChanged(RuntimeError):
@@ -493,10 +525,17 @@ def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
     stored = _stored_rows(dates[0])
     have = {r["date"] for r in stored}
     fetch = [d for d in dates if d in dates[-SETTLE_DAYS:] or d not in have]
+    # Plus older weekdays whose rows sent mail but carry no counts (written
+    # before the count columns existed, or by a run that failed mid-way). The
+    # burn walk stops at such a hole, so it is filled here -- a few per run, so
+    # a long backlog can never push a run past Vercel's 300s.
+    backfill = [d for d in count_holes(end_day) if d not in fetch][:BACKFILL_PER_RUN]
+    fetch = sorted(set(fetch) | set(backfill))
     rows, skipped = daily_rows(fetch, attrs)
     kept = [r for r in stored if r["date"] in dates and r["date"] not in fetch]
     out = {"days": dates, "rows": len(rows), "fetched_days": fetch,
-           "sent_by_date": _sent_by_date(kept + rows),
+           "backfilled_days": backfill,
+           "sent_by_date": _sent_by_date([r for r in kept + rows if r["date"] in dates]),
            # Days Smartlead returned nothing for. A weekend belongs here and is
            # harmless; a weekday here means a fetch problem, and the caller must
            # be able to tell the difference rather than seeing a clean run.
@@ -520,6 +559,29 @@ def refresh_history(attrs: dict, days: int = HISTORY_DAYS,
 
 
 SETTLE_DAYS = 3                  # recent complete days re-fetched on every run
+BACKFILL_DAYS = 56               # = health_model burn_lookback_days
+BACKFILL_PER_RUN = 6             # ~5s each; keeps a backlog inside the 300s cap
+
+
+def count_holes(end_day: str | None = None) -> list[str]:
+    """Weekdays in the burn lookback that sent mail but have no stored counts,
+    newest first (the burn walk reads newest first, so those matter most).
+    [] before the count columns exist -- there is nothing to fill yet."""
+    if not store.has_daily_counts():
+        return []
+    holes = []
+    for d in reversed(complete_days(BACKFILL_DAYS, end_day)):
+        if datetime.strptime(d, "%Y-%m-%d").weekday() >= 5:
+            continue
+        try:
+            probe = store._request("GET", "/inbox_health_daily", params={
+                "select": "email", "date": f"eq.{d}", "sent": "gt.0",
+                "replied": "is.null", "limit": "1"})
+        except Exception:                            # noqa: BLE001
+            continue
+        if probe:
+            holes.append(d)
+    return holes
 
 
 def _stored_rows(since_date: str) -> list[dict]:

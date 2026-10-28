@@ -704,16 +704,29 @@ function renderInboxes(){
   // it was zero sat below the fold. A frozen burn list and a clean one are the
   // same picture; whichever one it is has to be said before the number.
   const fr = d.freshness || {};
+  const pl = d.pipeline || {}, lr = pl.last_run || {};
   let html = reallocResultHtml();
-  if (fr.stale) {
-    html += `<div class="banner bad">⚠ <b>Burn scoring has stopped — the counts below
-      are frozen, not clean.</b><br>${esc(fr.reason || 'health data freshness could not be established')}
+  // Scoring now runs from stored history even when Smartlead is unreachable,
+  // so "stale" means the NEWEST DAY is old, not that the list stopped moving.
+  if (pl.fetch_error) {
+    html += `<div class="banner bad">⚠ <b>Smartlead did not answer on the last run</b> —
+      every inbox was still re-scored, from stored data through
+      <b>${esc(pl.newest_data_day || 'unknown')}</b>. Days after that are missing until it
+      answers again; the next run fills them in by itself.<br>
+      <span class="dim">${esc(String(pl.fetch_error).slice(0, 260))}</span></div>`;
+  } else if (fr.stale) {
+    html += `<div class="banner bad">⚠ <b>Health data is old — burns after
+      ${esc(fr.latest || 'the newest stored day')} are not counted yet.</b><br>
+      ${esc(fr.reason || 'health data freshness could not be established')}
       ${fr.latest ? `<br><span class="dim">Newest health data: ${esc(fr.latest)}${
         fr.age_days != null ? ` (${fr.age_days} day(s) old)` : ''}.</span>` : ''}</div>`;
   }
+  html += burnRuleHtml(d.rule || {}, pl, lr);
   html += '<div class="cards">'
     + card('Needs replacing', fr.stale ? '?' : (s.actionable_burned ?? '–'),
            fr.stale ? 'warn' : (s.actionable_burned ? 'bad' : 'ok'))
+    + card('Burned · acquisition', s.acquisition_burned ?? '–',
+           s.acquisition_burned ? 'bad' : 'ok')
     + card('Burn rate', b.measured ? `${rate}<span class="dim" style="font-size:13px">/wk</span>` : '?',
            !b.measured ? 'warn' : rate >= 5 ? 'bad' : rate > 0 ? 'warn' : 'ok')
     + card('Replacement pool', s.replacement ?? '–', (s.replacement ?? 0) ? '' : 'bad')
@@ -793,7 +806,8 @@ function renderInboxes(){
         ${dsum.domains ?? 0} domains · ${dsum.burned_mailboxes ?? 0} burned mailboxes ·
         ${dsum.fully_dead ?? 0} fully dead · ${dsum.cancelable_now ?? 0} clean to cancel ·
         ${dsum.already_scheduled ?? 0} already scheduled.
-        Inboxes burned (bounce ≥3% and reply ≤0.5%) while actively sending, grouped by domain.
+        Inboxes burned under the rule above while actively sending, grouped by domain.
+        <b>2 or 3 of 3 burned = cancel the domain</b>; 1 of 3 = replace that inbox only.
       </div>`;
     html += dv.domains.map(x => {
       const c = x.counts || {};
@@ -806,7 +820,7 @@ function renderInboxes(){
         const job = m.has_job ? ' · <span class="good">reallocated</span>' : '';
         return `<div class="drow"><span class="bad">✖</span>
           <span class="em">${esc(m.email)}</span>
-          <span class="dim">b ${m.bounce_3d == null ? '—' : m.bounce_3d + '%'} ·
+          <span class="dim">${m.sent_3d != null ? m.sent_3d + ' sends · ' : ''}b ${m.bounce_3d == null ? '—' : m.bounce_3d + '%'} ·
             r ${m.reply_3d == null ? '—' : m.reply_3d + '%'}${job}${where}</span></div>`;
       }).join('');
       const collat = (c.collateral
@@ -869,11 +883,13 @@ function renderInboxes(){
       <div id="rp-out"></div>
       <div class="wrap"><table>
       <tr><th style="width:28px"></th><th>Inbox</th><th>Client</th><th>Domain type</th>
-          <th>Bounce 3d</th><th>Reply 3d</th><th>Positives</th><th>Why</th></tr>
+          <th>Sends</th><th>Replies</th><th>Bounce</th><th>Since</th><th>Positives</th><th>Why</th></tr>
       ${act.map(b => `<tr><td><input type="checkbox" class="rp" data-e="${esc(b.email)}"></td>
         <td>${esc(b.email)}</td><td>${esc(b.client)}</td>
         <td><span class="tag">${esc(b.vertical)}</span></td>
-        <td class="n bad">${b.bounce_3d ?? ''}</td><td class="n dim">${b.reply_3d ?? ''}</td>
+        <td class="n">${b.sends ?? ''}</td><td class="n">${b.replies ?? ''}</td>
+        <td class="n">${b.bounce_3d == null ? '' : b.bounce_3d + '%'}</td>
+        <td class="dim">${esc(b.since || '')}</td>
         <td class="n" id="pos-${esc(b.email)}"><span class="dim">?</span></td>
         <td class="dim">${esc(b.reason || '')}</td></tr>`).join('')}
     </table></div>
@@ -930,13 +946,114 @@ function renderInboxes(){
       <div class="meta" style="margin-top:8px">Only jobs still needing something are listed —
         swapped and cancelled ones are history. A replacement warms for 14 days before it can go in.</div>`;
 
-  if (dead.length)
-    html += `<h2>Burned but already cancelled — ${dead.length}</h2>
+  const acqB = (d.burned || []).filter(b => b.acquisition);
+  if (acqB.length)
+    html += `<h2 class="bad">Burned on acquisition — ${acqB.length}</h2>
+      <div class="meta" style="margin-bottom:8px">THT's own outreach. There is no acquisition
+        reserve, so these are removed rather than replaced — check positives first, same as clients.</div>
+      <div class="wrap"><table>
+        <tr><th>Inbox</th><th>Sends</th><th>Replies</th><th>Bounce</th><th>Since</th><th>Why</th></tr>
+        ${acqB.map(b => `<tr><td>${esc(b.email)}</td><td class="n">${b.sends ?? ''}</td>
+          <td class="n">${b.replies ?? ''}</td>
+          <td class="n">${b.bounce_3d == null ? '' : b.bounce_3d + '%'}</td>
+          <td class="dim">${esc(b.since || '')}</td><td class="dim">${esc(b.reason || '')}</td></tr>`).join('')}
+      </table></div>`;
+
+  if (dead.filter(b => !b.acquisition).length)
+    html += `<h2>Burned but already cancelled — ${dead.filter(b => !b.acquisition).length}</h2>
       <div class="meta">No action: these sit in a cleanup bucket and disappear on their billing date.</div>`;
+
+  html += clientWeeksHtml(d.client_weeks || []);
+  html += '<div id="rank-box"></div>';
   el.innerHTML = html;
+  renderRanking(d.ranking || []);
   const rx = document.getElementById('rr-x');
   if (rx) rx.onclick = () => { REALLOC_RESULT = null; showTab('inboxes'); };
   wireReplace(act);
+}
+
+// What "burned" means, written out on the page, plus whether the pipeline that
+// produces the verdicts is actually running. Both used to live only in a chat.
+function burnRuleHtml(rule, pl, lr){
+  const ok = lr.ok === true;
+  const fails = lr.consecutive_failures || 0;
+  const r = rule.burn_rule === 'latest_sends'
+    ? `<b>Burned</b> = over its latest <b>${rule.burn_min_sends}</b> sends (looking back up to
+       ${rule.burn_lookback_days} days): replies below <b>${rule.burn_reply_below}%</b> in whole replies
+       (0 of 200, ≤1 of 400) <b>or</b> bounce ≥ <b>${rule.burn_bounce_at}%</b>.
+       Fewer than ${rule.burn_min_sends} sends = Low volume, and each row below says how many it has.`
+    : 'Burned = bounce ≥3% and reply ≤0.5% over the last 10 sending days (legacy rule).';
+  return `<div class="c" style="margin-bottom:14px;font-size:12px;line-height:1.7">${r}<br>
+    <span class="${ok ? 'good' : 'bad'}">●</span>
+    Last run ${lr.at ? esc(String(lr.at).slice(0, 16).replace('T', ' ')) + ' UTC' : 'unknown'}
+    — ${ok ? 'ok' : 'failed' + (fails ? ` (${fails} in a row)` : '')}
+    · newest data <b>${esc(pl.newest_data_day || '—')}</b>
+    · scored ${pl.built_at ? esc(String(pl.built_at).slice(0, 16).replace('T', ' ')) : '—'}
+    ${(pl.backfilled_days || []).length ? ` · backfilled ${pl.backfilled_days.map(esc).join(', ')}` : ''}
+    ${!ok && lr.detail ? `<br><span class="dim">${esc(String(lr.detail).slice(0, 220))}</span>` : ''}</div>`;
+}
+
+// Per-client weekly trend from the same stored rows the burn verdicts use.
+// Reply % and positives side by side: a falling reply rate with steady volume
+// points at the inboxes; a steady reply rate with fewer positives points at the list.
+function clientWeeksHtml(cw){
+  if (!cw.length) return '';
+  const weeks = (cw[0].weeks || []).map(w => w.week);
+  const pct = (a, b) => b ? (100 * a / b).toFixed(2) : '–';
+  const rows = cw.filter(c => c.weeks.some(w => w.sent))
+    .sort((a, b) => a.client.localeCompare(b.client))
+    .map(c => {
+      const ws = c.weeks;
+      const last = ws.slice(-2), prev = ws.slice(-6, -2);
+      const rate = xs => { const s = xs.reduce((t, w) => t + w.sent, 0);
+                           return s ? xs.reduce((t, w) => t + w.replied, 0) / s : null; };
+      const lr = rate(last), pr = rate(prev);
+      const drop = lr != null && pr ? (lr - pr) / pr : null;
+      const flag = drop != null && drop <= -0.3 ? 'bad' : drop != null && drop <= -0.15 ? 'warn' : '';
+      return `<tr><td>${esc(c.client)}</td>${ws.map(w => `<td class="n">${w.sent
+          ? `${pct(w.replied, w.sent)}%<span class="dim"> · ${w.positive}p</span>` : '<span class="dim">–</span>'}</td>`).join('')}
+        <td class="n ${flag}">${drop == null ? '–' : (drop > 0 ? '+' : '') + Math.round(100 * drop) + '%'}</td></tr>`;
+    }).join('');
+  return `<h2>Clients — reply rate and positives by week</h2>
+    <div class="meta" style="margin-bottom:8px">All sends (first touches and follow-ups), by who owns
+      the inbox now. Last column: reply rate of the last 2 weeks vs the 4 before.</div>
+    <div class="wrap"><table><tr><th>Client</th>${weeks.map(w => `<th>wk ${esc(w.slice(5))}</th>`).join('')}
+      <th>2wk vs 4wk</th></tr>${rows}</table></div>`;
+}
+
+let RANK_FILTER = {client: '', status: '', limit: 150};
+function renderRanking(rows){
+  const box = document.getElementById('rank-box');
+  if (!box) return;
+  const clients = [...new Set(rows.map(r => r.client || ''))].sort();
+  const sts = ['burned', 'at_risk', 'watch', 'insufficient', 'healthy'];
+  const f = rows.filter(r => (!RANK_FILTER.client || r.client === RANK_FILTER.client)
+                          && (!RANK_FILTER.status || r.status === RANK_FILTER.status));
+  const cnt = s => f.filter(r => r.status === s).length;
+  box.innerHTML = `<h2>Every sending inbox, ranked — ${f.length}</h2>
+    <div class="arow" style="margin-bottom:8px">
+      <select id="rk-c"><option value="">All clients</option>${clients.map(c =>
+        `<option ${c === RANK_FILTER.client ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+      <select id="rk-s"><option value="">All statuses</option>${sts.map(s =>
+        `<option value="${s}" ${s === RANK_FILTER.status ? 'selected' : ''}>${s.replace('_', ' ')} (${cnt(s)})</option>`).join('')}</select>
+    </div>
+    <div class="wrap"><table>
+      <tr><th>#</th><th>Inbox</th><th>Client</th><th>Status</th><th>Sends</th><th>Replies</th>
+          <th>Reply</th><th>Bounce</th><th>Pos</th><th>Since</th><th>Why</th></tr>
+      ${f.slice(0, RANK_FILTER.limit).map((r, i) => `<tr><td class="n dim">${i + 1}</td>
+        <td>${esc(r.email)}</td><td class="dim">${esc(r.client || '')}</td>
+        <td class="${r.status === 'burned' ? 'bad' : r.status === 'at_risk' ? 'warn' : r.status === 'healthy' ? 'good' : 'dim'}">${esc(r.status.replace('_', ' '))}</td>
+        <td class="n">${r.sends ?? ''}</td><td class="n">${r.replies ?? ''}</td>
+        <td class="n">${r.reply == null ? '' : r.reply + '%'}</td>
+        <td class="n">${r.bounce == null ? '' : r.bounce + '%'}</td>
+        <td class="n">${r.positives ?? ''}</td><td class="dim">${esc(r.since || '')}</td>
+        <td class="dim">${esc(r.why || '')}</td></tr>`).join('')}
+    </table></div>
+    ${f.length > RANK_FILTER.limit ? `<button class="act" id="rk-more" style="margin-top:8px">Show all ${f.length}</button>` : ''}`;
+  document.getElementById('rk-c').onchange = e => { RANK_FILTER.client = e.target.value; renderRanking(rows); };
+  document.getElementById('rk-s').onchange = e => { RANK_FILTER.status = e.target.value; renderRanking(rows); };
+  const m = document.getElementById('rk-more');
+  if (m) m.onclick = () => { RANK_FILTER.limit = 1e9; renderRanking(rows); };
 }
 
 function wireAcqBlocked(){

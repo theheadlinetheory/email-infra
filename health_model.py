@@ -83,6 +83,24 @@ DEFAULT_CONFIG = {
     # trend: reply drop (pts) vs the prior 3-day window that pulls a HEALTHY
     # inbox down into WATCH even before absolute thresholds are hit
     "trend_watch_drop": 0.6,
+
+    # THE BURN RULE since 2026-10-27 (Tim). Judged over each inbox's own LATEST
+    # `burn_min_sends` sends, however far back that reaches, instead of a fixed
+    # 10-day window. The fixed window could not see 738 of 1,200 sending inboxes:
+    # they send ~2-9 a day because their campaigns are lead-bound, so they never
+    # reached 105 sends in 10 days and sat in "Low volume" forever.
+    #
+    # Burned when EITHER:
+    #   * replies < burn_reply_below % of those sends, counted in WHOLE replies
+    #     (0.5% of 200 is one reply, so "below" means zero; of 400 it means <=1), or
+    #   * bounces >= burn_bounce_at % of those sends.
+    # A perfectly healthy inbox at the fleet's ~1.5% reply rate gets zero replies
+    # in 200 sends about 5% of the time. Tim accepted that risk explicitly.
+    "burn_rule": "latest_sends",
+    "burn_min_sends": 200,
+    "burn_reply_below": 0.5,
+    "burn_bounce_at": 3.0,
+    "burn_lookback_days": 56,   # stored history searched for those 200 sends
 }
 
 
@@ -134,6 +152,109 @@ def window_sending_days(cfg=None) -> int:
     return int(cfg.get("window_sending_days") or 3)
 
 
+def latest_sends_window(daily_rows, min_sends: int):
+    """Sum an inbox's most recent days, newest first, until they hold `min_sends`.
+
+    Counts are ADDED, never averaged, and that is only possible because the
+    daily rows carry them (replied/bounced/positive_replied). A row that sent
+    mail but has no counts is a hole: the walk stops there rather than guessing,
+    and the window reports `complete: False` so the inbox is shown as
+    unscoreable instead of being scored on a partial window.
+
+    Returns {sends, replies, bounces, positives, from, to, complete, holes}.
+    """
+    rows = sorted([r for r in daily_rows if r.get("date")], key=lambda r: r["date"],
+                  reverse=True)
+    out = {"sends": 0, "replies": 0, "bounces": 0, "positives": 0,
+           "from": None, "to": None, "complete": True, "holes": 0}
+    for r in rows:
+        sent = int(r.get("sent") or 0)
+        if not sent:
+            continue
+        if r.get("replied") is None or r.get("bounced") is None:
+            out["holes"] += 1
+            out["complete"] = False
+            break
+        out["sends"] += sent
+        out["replies"] += int(r.get("replied") or 0)
+        out["bounces"] += int(r.get("bounced") or 0)
+        out["positives"] += int(r.get("positive_replied") or 0)
+        out["from"] = r["date"]
+        out["to"] = out["to"] or r["date"]
+        if out["sends"] >= min_sends:
+            break
+    return out
+
+
+def replies_needed(sends: int, cfg=None) -> int:
+    """Whole replies an inbox must have in `sends` to NOT be burned.
+
+    0.5% of 200 is exactly one reply, so "below 0.5%" means zero. Rounding down
+    keeps the rule in whole replies at every size: 1 at 200-399, 2 at 400-599.
+    Without it, one reply in 210 sends (0.48%) would burn an inbox that met the
+    one-reply-per-200 standard the rule is written in."""
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    return int(sends * float(cfg["burn_reply_below"]) / 100.0)
+
+
+def score_latest_sends(signals, cfg=None):
+    """The 2026-10-27 burn rule. See `burn_rule` in DEFAULT_CONFIG.
+
+    signals carries the usual warmup/in_campaign/smtp keys plus `win`, the
+    latest_sends_window() result. BURNED is final here: the window already
+    spans 200 sends (two to five weeks for most inboxes), so the old 3-day
+    confirmation streak would only add delay, not certainty.
+    """
+    cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    age = signals.get("age_days")
+    if signals.get("in_warmup") or (age is not None and age < cfg["warmup_days"]):
+        return {"score": None, "status": WARMING, "label": STATUS_LABEL[WARMING],
+                "subscores": {}, "reasons": ["in warmup period"]}
+    if signals.get("in_campaign") is False:
+        return {"score": None, "status": IDLE, "label": STATUS_LABEL[IDLE],
+                "subscores": {}, "reasons": ["not in a campaign — idle"]}
+
+    win = signals.get("win") or {}
+    sends = int(win.get("sends") or 0)
+    floor = int(cfg["burn_min_sends"])
+    since = f" since {win['from']}" if win.get("from") else ""
+    if sends == 0:
+        return {"score": None, "status": IDLE, "label": STATUS_LABEL[IDLE],
+                "subscores": {}, "reasons": ["no sends — idle"]}
+    if sends < floor:
+        why = (f"only {sends} sends{since} (need {floor})" if win.get("complete", True)
+               else f"{sends} sends{since}, then a day with no stored counts — "
+                    f"history is being backfilled")
+        return {"score": None, "status": INSUFFICIENT, "label": STATUS_LABEL[INSUFFICIENT],
+                "subscores": {}, "reasons": [why]}
+
+    replies, bounces = int(win.get("replies") or 0), int(win.get("bounces") or 0)
+    reply = round(100.0 * replies / sends, 2)
+    bounce = round(100.0 * bounces / sends, 2)
+    need = replies_needed(sends, cfg)
+    reasons = []
+    if replies < need:
+        reasons.append(f"{replies} replies in the latest {sends} sends{since} "
+                       f"(needs {need}) — burned")
+    if bounce >= float(cfg["burn_bounce_at"]):
+        reasons.append(f"bounce {bounce:.1f}% ({bounces}/{sends}){since} "
+                       f">= {cfg['burn_bounce_at']}% — burned")
+    subs = sub_scores({"reply": reply, "bounce": bounce}, cfg)
+    score = blended_score(subs, cfg)
+    if reasons:
+        status = BURNED
+    else:
+        status = (HEALTHY if score >= cfg["band_healthy"]
+                  else WATCH if score >= cfg["band_watch"] else AT_RISK)
+        if signals.get("smtp_ok") is False:
+            status = _worse(status, AT_RISK); reasons.append("SMTP disconnected")
+        reasons.append(f"{replies} replies, {bounces} bounces in the latest "
+                       f"{sends} sends{since}")
+    return {"score": score, "status": status, "label": STATUS_LABEL[status],
+            "subscores": {k: round(v) for k, v in subs.items()}, "reasons": reasons,
+            "reply": reply, "bounce": bounce}
+
+
 def score_inbox(signals, cfg=None):
     """Score one inbox.
 
@@ -151,6 +272,8 @@ def score_inbox(signals, cfg=None):
     returns: {score, status, label, subscores, reasons[]}
     """
     cfg = {**DEFAULT_CONFIG, **(cfg or {})}
+    if cfg.get("burn_rule") == "latest_sends" and "win" in signals:
+        return score_latest_sends(signals, cfg)
     reasons = []
 
     # --- warmup: don't judge a warming inbox on production rates ---

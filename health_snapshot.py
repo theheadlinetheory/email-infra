@@ -245,7 +245,26 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     #    IDENTICAL numbers (which also flatlined health_alerts' day-over-day
     #    comparison). See health_daily for the full account.
     import health_daily as hd
-    hist_info = hd.refresh_history(attrs_from_overview(overview))
+    cfgm = {**hm.DEFAULT_CONFIG, **cfg}
+    latest_rule = cfgm.get("burn_rule") == "latest_sends"
+    if latest_rule and not store.has_daily_counts():
+        raise RuntimeError("inbox_health_daily has no count columns — apply "
+                           "supabase/migrations/20261027_burn_counts.sql")
+
+    # FETCHING AND SCORING ARE SEPARATE, so a Smartlead outage cannot freeze the
+    # list. Under the latest-sends rule every verdict is a sum over STORED daily
+    # rows, so when today's fetch fails (a blank session, as for 45 hours from
+    # 2026-10-24) the fleet is still re-scored from everything already stored
+    # and the run says how old its newest day is. Before this, one failed call
+    # meant no scoring at all and a burned list frozen at its last good day.
+    fetch_error = None
+    try:
+        hist_info = hd.refresh_history(attrs_from_overview(overview))
+    except Exception as e:                           # noqa: BLE001
+        if not latest_rule:
+            raise
+        fetch_error = str(e)
+        hist_info = {"sent_by_date": {}, "no_data_days": [], "rows": 0}
 
     # A WEEKDAY WITH NO DATA IS A FAULT, NOT A QUIET DAY. Smartlead returns
     # nothing for a Saturday and also for a request that failed upstream, and
@@ -261,14 +280,23 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         except ValueError:
             weekday_gaps.append(d)
     hist_info["weekday_gaps"] = weekday_gaps
-    window_sig, window_dates = hd.window_signals(days=hm.window_sending_days(cfg),
-                                                 sent_by_date=hist_info["sent_by_date"])
-
-    # 2) re-score each inbox off that window
-    #    (one bulk fetch of recent history, not one query per inbox)
     from datetime import timedelta
-    since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
-    history = store.get_health_daily_bulk(since)
+    if latest_rule:
+        # No windowed Smartlead call: the window is each inbox's own latest
+        # 200 sends, summed from stored rows. Today is excluded -- its replies
+        # have not arrived yet, so it would read as sends with no replies.
+        window_sig, window_dates = {}, []
+        since = (datetime.strptime(today, "%Y-%m-%d")
+                 - timedelta(days=int(cfgm["burn_lookback_days"]))).strftime("%Y-%m-%d")
+        history = store.get_health_daily_counts(since, before_date=today)
+    else:
+        window_sig, window_dates = hd.window_signals(days=hm.window_sending_days(cfg),
+                                                     sent_by_date=hist_info["sent_by_date"])
+        # 2) re-score each inbox off that window
+        #    (one bulk fetch of recent history, not one query per inbox)
+        since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=14)).strftime("%Y-%m-%d")
+        history = store.get_health_daily_bulk(since)
+    newest_day = max((r["date"] for rs in history.values() for r in rs), default=None)
 
     status_rows = []
     counts: dict[str, int] = {}
@@ -284,8 +312,34 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     streaks = store.get_state("burn_streaks") or {}
     new_streaks: dict[str, list] = {}
 
+    min_burn = int(cfgm["burn_min_sends"])
     for r in fleet:
         rows = history.get(r["email"], [])
+        if latest_rule:
+            win = hm.latest_sends_window(rows, min_burn)
+            res = hm.score_inbox({"win": win, "in_warmup": r["in_warmup"],
+                                  "smtp_ok": r["smtp_ok"],
+                                  "in_campaign": r["in_campaign"]}, cfg)
+            counts[res["status"]] = counts.get(res["status"], 0) + 1
+            status_rows.append({
+                "email": r["email"],
+                "score": res["score"], "status": res["status"],
+                "reasons": res["reasons"], "subscores": res["subscores"],
+                "client": r["client"], "group_letter": r["group_letter"],
+                "source": r["source"], "domain": r["domain"],
+                # The *_3d names are kept so every existing reader works; they
+                # now hold the latest-sends window, not three days.
+                "reply_3d": res.get("reply"), "bounce_3d": res.get("bounce"),
+                "ooo_3d": None, "placement": None,
+                "sent_3d": win["sends"],
+                "win_sends": win["sends"], "win_replies": win["replies"],
+                "win_bounces": win["bounces"], "win_positives": win["positives"],
+                "win_from": win["from"],
+                "smtp_ok": r["smtp_ok"], "warmup_reputation": r["warmup_reputation"],
+                "campaigns": r["campaigns"],
+                "updated_at": datetime.now().isoformat(),
+            })
+            continue
         # Prefer SmartLead's OWN aggregate for the scoring window: one call over
         # the whole range means the rates are computed against its de-duplicated
         # lead set. Re-pooling our stored daily rows would double-count any lead
@@ -328,7 +382,8 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
             "updated_at": datetime.now().isoformat(),
         })
     store.upsert_health_status(status_rows)
-    store.set_state("burn_streaks", new_streaks)
+    if not latest_rule:
+        store.set_state("burn_streaks", new_streaks)
 
     # 3) build the top-of-page "what just sank" alert feed from the same history
     try:
@@ -348,15 +403,62 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         # window reaches back over a weekend to find three real sending days.
         "window_dates": window_dates,
         "window_sent": hist_info["sent_by_date"],
+        "rule": ({k: cfgm[k] for k in ("burn_rule", "burn_min_sends", "burn_reply_below",
+                                       "burn_bounce_at", "burn_lookback_days")}
+                 if latest_rule else {"burn_rule": "legacy"}),
+        # How current the numbers are, independent of when this cache was
+        # built: the cache is now rebuilt even when Smartlead is unreachable.
+        "pipeline": {"newest_data_day": newest_day, "fetch_error": fetch_error,
+                     "backfilled_days": hist_info.get("backfilled_days") or []},
+        "client_weeks": client_weeks(fleet, history) if latest_rule else [],
     })
 
-    return {"ok": True, "date": today, "inboxes": len(status_rows), "counts": counts,
-            "window_dates": window_dates, "daily_rows_written": hist_info["rows"],
-            "no_data_days": hist_info.get("no_data_days") or [],
-            # Non-empty means the caller should treat this run as degraded, even
-            # though everything else succeeded.
-            "weekday_gaps": weekday_gaps,
-            "degraded": bool(weekday_gaps)}
+    out = {"ok": True, "date": today, "inboxes": len(status_rows), "counts": counts,
+           "window_dates": window_dates, "daily_rows_written": hist_info["rows"],
+           "no_data_days": hist_info.get("no_data_days") or [],
+           "newest_data_day": newest_day,
+           # Non-empty means the caller should treat this run as degraded, even
+           # though everything else succeeded.
+           "weekday_gaps": weekday_gaps,
+           "degraded": bool(weekday_gaps)}
+    if fetch_error:
+        # Scored, but on stored data only -- still an error, so CI retries and
+        # Slack hears about it, but the dashboard did NOT freeze.
+        out["scored"] = True
+        out["error"] = (f"Smartlead fetch failed; the fleet was re-scored from "
+                        f"stored history through {newest_day}: {fetch_error}")
+    return out
+
+
+def client_weeks(fleet: list[dict], history: dict, weeks: int = 8) -> list[dict]:
+    """Per-client weekly sends, replies, bounces and positives, newest week
+    last. Built from the same stored rows as the burn verdicts, so the trend a
+    client is judged on and the inboxes it is judged by can never disagree.
+    Clients are attributed by who the inbox belongs to NOW."""
+    from datetime import date as _date, timedelta
+    owner = {r["email"]: r["client"] or "(unassigned)" for r in fleet}
+    agg: dict = {}
+    for email, rows in history.items():
+        c = owner.get(email)
+        if not c:
+            continue
+        for x in rows:
+            d = _date.fromisoformat(x["date"])
+            wk = (d - timedelta(days=d.weekday())).isoformat()
+            a = agg.setdefault((c, wk), [0, 0, 0, 0])
+            a[0] += int(x.get("sent") or 0)
+            a[1] += int(x.get("replied") or 0)
+            a[2] += int(x.get("bounced") or 0)
+            a[3] += int(x.get("positive_replied") or 0)
+    keep = sorted({wk for _, wk in agg})[-weeks:]
+    out = []
+    for c in sorted({c for c, _ in agg}):
+        out.append({"client": c, "weeks": [
+            {"week": wk, "sent": agg.get((c, wk), [0] * 4)[0],
+             "replied": agg.get((c, wk), [0] * 4)[1],
+             "bounced": agg.get((c, wk), [0] * 4)[2],
+             "positive": agg.get((c, wk), [0] * 4)[3]} for wk in keep]})
+    return out
 
 
 if __name__ == "__main__":
