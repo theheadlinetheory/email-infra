@@ -59,7 +59,7 @@ def domain_view() -> dict:
     streaks = store.get_state("burn_streaks") or {}
     jobs = hr.list_jobs()
     handled = {j["old_email"] for j in jobs if j.get("status") not in ("cancelled", None)}
-    rs = hr.reserve_summary()
+    rs = hr.reserve_summary(max_age=600)
 
     # Campaign STATUS map — only ACTIVE campaigns are actively sending; inboxes that
     # sit only in paused/completed campaigns aren't really in use, so they don't need

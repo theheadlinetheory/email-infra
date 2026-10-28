@@ -50,7 +50,7 @@ def _wallet_balance():
 
 def plan_replenish(target: int = DEFAULT_TARGET) -> dict:
     """Dry-run plan to bring the warmed reserve up to `target`."""
-    rs = hr.reserve_summary()
+    rs = hr.reserve_summary(max_age=600)
     reserve = rs["available"]
     deficit = max(0, target - reserve)
     domains_needed = math.ceil(deficit / INBOXES_PER_DOMAIN)

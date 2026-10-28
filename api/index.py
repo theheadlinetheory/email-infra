@@ -616,7 +616,7 @@ def inboxes_route():
         reserve_by_niche = {}
         try:
             import health_replace as hr
-            reserve_by_niche = hr.reserve_summary() or {}
+            reserve_by_niche = hr.reserve_summary(max_age=600) or {}
         except Exception:
             reserve_by_niche = {}
 

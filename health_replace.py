@@ -517,8 +517,44 @@ def _is_holiday(name: str) -> bool:
     return bool(_HOLIDAY_RE.search(name or ""))
 
 
-def live_reserve(force: bool = False) -> list[dict]:
-    """Every reserve inbox, read from Smartlead tags.
+_RESERVE_MEMO: list = []                  # [fetched_at, rows] — this process only
+RESERVE_CACHE_KEY = "reserve_live_cache"  # {ts, rows} — shared across instances
+
+
+def live_reserve(force: bool = False, max_age: int = 60) -> list[dict]:
+    """Every reserve inbox, read from Smartlead tags — reused if read within
+    `max_age` seconds.
+
+    The full walk takes ~11s, and it ran on every Inboxes page load and again
+    for every inbox in a reallocation, which put the tab at ~28s and made a
+    dropped connection mid-load leave it on "loading…". Display callers pass a
+    long max_age (the stored copy, shared across instances); anything that
+    PICKS a reserve inbox uses the 60s default, so it reads Smartlead fresh
+    but only once per request. A partial walk is never cached.
+    """
+    import time as _t
+    now = _t.time()
+    if not force and _RESERVE_MEMO and now - _RESERVE_MEMO[0] < max_age:
+        return _RESERVE_MEMO[1]
+    if not force and max_age > 60:
+        try:
+            c = store.get_state(RESERVE_CACHE_KEY) or {}
+            if c.get("rows") and now - float(c.get("ts") or 0) < max_age:
+                return c["rows"]
+        except Exception:                            # noqa: BLE001
+            pass
+    rows, complete = _fetch_live_reserve()
+    if complete:
+        _RESERVE_MEMO[:] = [now, rows]
+        try:
+            store.set_state(RESERVE_CACHE_KEY, {"ts": now, "rows": rows})
+        except Exception:                            # noqa: BLE001
+            pass
+    return rows
+
+
+def _fetch_live_reserve() -> tuple[list[dict], bool]:
+    """Every reserve inbox, read from Smartlead tags. Returns (rows, complete).
 
     NOT from overview_v2. That cache lists ONE generic group holding 3 accounts
     with warmup_days None, so reserve_summary skipped it and reported zero —
@@ -534,7 +570,7 @@ def live_reserve(force: bool = False) -> list[dict]:
     import requests as _rq
     key = (_os.environ.get("SMARTLEAD_API_KEY") or "").strip()
     if not key:
-        return []
+        return [], False
     DATETAG = _re.compile(r"^\d{1,2}/\d{1,2}/\d{2}$")
     SKIP = ("cleanup", "retired")
     POOL = ("generic", "replacement group", "reserve")
@@ -545,12 +581,12 @@ def live_reserve(force: bool = False) -> list[dict]:
             r = _rq.get("https://server.smartlead.ai/api/v1/email-accounts/",
                         params={"api_key": key, "offset": offset, "limit": 100}, timeout=60)
         except Exception:                            # noqa: BLE001
-            return out
+            return out, False
         if r.status_code != 200:
-            return out
+            return out, False
         batch = r.json() if r.text.strip() else []
         if not isinstance(batch, list):
-            return out
+            return out, False
         for a in batch:
             pool = None
             for t in (a.get("tags") or []):
@@ -578,7 +614,7 @@ def live_reserve(force: bool = False) -> list[dict]:
         if len(batch) < 100:
             break
         offset += 100
-    return out
+    return out, True
 
 
 def acceptable_niches(want_niche: str) -> tuple:
@@ -595,7 +631,7 @@ def acceptable_niches(want_niche: str) -> tuple:
     return (want_niche, "generic")
 
 
-def reserve_summary() -> dict:
+def reserve_summary(max_age: int = 60) -> dict:
     """How many warmed reserve inboxes are ready to deploy right now, broken down
     by niche. Reads generic groups from the overview cache; 'ready' = warmed >=
     WARMUP_DAYS. 'available' subtracts inboxes already claimed by reserved jobs."""
@@ -611,7 +647,7 @@ def reserve_summary() -> dict:
     ready, available, groups = 0, 0, []
     ready_by, avail_by = Counter(), Counter()
     by_group = {}
-    for c in live_reserve():
+    for c in live_reserve(max_age=max_age):
         if not c.get("ready") or not c.get("email"):
             continue
         by_group.setdefault(c["group"], []).append(c)
