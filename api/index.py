@@ -835,6 +835,16 @@ def health_snapshot():
     except Exception as ze:
         out["zapmail_removals"] = {"error": str(ze)}
 
+    # Which burned domains to cancel. The removal watcher above only speaks
+    # about domains already scheduled; this is what says which to schedule.
+    # Runs here, not at the end: the invariants check below takes ~210s and
+    # the function is killed at 300s, so anything after it never ran.
+    try:
+        import burn_cancel_alert as bca
+        out["burn_cancel_alert"] = bca.post(dry_run=False)
+    except Exception as ce:
+        out["burn_cancel_alert"] = {"error": str(ce)}
+
     # The infra-decision countdown: the only thing that says "you have 7 days to
     # decide on Galaxy" before the mailboxes silently re-bill. Isolated so a CRM
     # outage cannot take the health snapshot down with it.
@@ -875,13 +885,6 @@ def health_snapshot():
     except Exception as be:
         out["billing_followup"] = {"error": str(be)}
 
-    # Which burned domains to cancel. The removal watcher above only speaks
-    # about domains already scheduled; this is what says which to schedule.
-    try:
-        import burn_cancel_alert as bca
-        out["burn_cancel_alert"] = bca.post(dry_run=False)
-    except Exception as ce:
-        out["burn_cancel_alert"] = {"error": str(ce)}
     return _cors(jsonify(out)), status
 
 
