@@ -316,7 +316,7 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
     for r in fleet:
         rows = history.get(r["email"], [])
         if latest_rule:
-            win = hm.latest_sends_window(rows, min_burn)
+            win = hm.latest_sends_window(rows, min_burn, cfgm.get("burn_window_days"))
             res = hm.score_inbox({"win": win, "in_warmup": r["in_warmup"],
                                   "smtp_ok": r["smtp_ok"],
                                   "in_campaign": r["in_campaign"]}, cfg)
@@ -403,7 +403,8 @@ def snapshot_daily(overview: dict | None = None, today: str | None = None,
         # window reaches back over a weekend to find three real sending days.
         "window_dates": window_dates,
         "window_sent": hist_info["sent_by_date"],
-        "rule": ({k: cfgm[k] for k in ("burn_rule", "burn_min_sends", "burn_reply_below",
+        "rule": ({k: cfgm[k] for k in ("burn_rule", "burn_combine", "burn_window_days",
+                                       "burn_min_sends", "burn_reply_below",
                                        "burn_bounce_at", "burn_lookback_days")}
                  if latest_rule else {"burn_rule": "legacy"}),
         # How current the numbers are, independent of when this cache was

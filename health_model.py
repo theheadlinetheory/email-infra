@@ -90,17 +90,22 @@ DEFAULT_CONFIG = {
     # they send ~2-9 a day because their campaigns are lead-bound, so they never
     # reached 105 sends in 10 days and sat in "Low volume" forever.
     #
-    # Burned when EITHER:
-    #   * replies < burn_reply_below % of those sends, counted in WHOLE replies
-    #     (0.5% of 200 is one reply, so "below" means zero; of 400 it means <=1), or
-    #   * bounces >= burn_bounce_at % of those sends.
-    # A perfectly healthy inbox at the fleet's ~1.5% reply rate gets zero replies
-    # in 200 sends about 5% of the time. Tim accepted that risk explicitly.
+    # 2026-10-29 (Tim): back to the OLD dashboard's rule — burned only when BOTH
+    # bounce >= burn_bounce_at AND reply <= burn_reply_below, over the last
+    # `burn_window_days` sending days with at least `burn_min_sends` sends.
+    # Either half alone is AT_RISK. The 10-27 EITHER rule over 200 sends called
+    # 197 inboxes burned, 130 of them on bounce alone at 3-5% — a bounce rate the
+    # whole campaign's list shares, which is why 2 of 3 on a domain tipped
+    # together. It is still scored from stored counts, so a blank Smartlead
+    # session cannot freeze it the way the old live-window path did.
+    # burn_combine "or" + burn_window_days None + burn_min_sends 200 restores 10-27.
     "burn_rule": "latest_sends",
-    "burn_min_sends": 200,
+    "burn_combine": "and",
+    "burn_window_days": 10,
+    "burn_min_sends": 105,
     "burn_reply_below": 0.5,
     "burn_bounce_at": 3.0,
-    "burn_lookback_days": 56,   # stored history searched for those 200 sends
+    "burn_lookback_days": 56,   # stored history searched for the window
 }
 
 
@@ -152,7 +157,7 @@ def window_sending_days(cfg=None) -> int:
     return int(cfg.get("window_sending_days") or 3)
 
 
-def latest_sends_window(daily_rows, min_sends: int):
+def latest_sends_window(daily_rows, min_sends: int, max_days: int | None = None):
     """Sum an inbox's most recent days, newest first, until they hold `min_sends`.
 
     Counts are ADDED, never averaged, and that is only possible because the
@@ -160,6 +165,9 @@ def latest_sends_window(daily_rows, min_sends: int):
     mail but has no counts is a hole: the walk stops there rather than guessing,
     and the window reports `complete: False` so the inbox is shown as
     unscoreable instead of being scored on a partial window.
+
+    With `max_days`, the window is instead the latest `max_days` sending days,
+    whatever they add up to (the old dashboard's 10-sending-day window).
 
     Returns {sends, replies, bounces, positives, from, to, complete, holes}.
     """
@@ -181,7 +189,11 @@ def latest_sends_window(daily_rows, min_sends: int):
         out["positives"] += int(r.get("positive_replied") or 0)
         out["from"] = r["date"]
         out["to"] = out["to"] or r["date"]
-        if out["sends"] >= min_sends:
+        out["days"] = out.get("days", 0) + 1
+        if max_days is not None:
+            if out["days"] >= max_days:
+                break
+        elif out["sends"] >= min_sends:
             break
     return out
 
@@ -231,17 +243,32 @@ def score_latest_sends(signals, cfg=None):
     replies, bounces = int(win.get("replies") or 0), int(win.get("bounces") or 0)
     reply = round(100.0 * replies / sends, 2)
     bounce = round(100.0 * bounces / sends, 2)
-    need = replies_needed(sends, cfg)
+    both = cfg.get("burn_combine") == "and"
+    if both:
+        low_reply = reply <= float(cfg["burn_reply_below"])
+    else:
+        need = replies_needed(sends, cfg)
+        low_reply = replies < need
+    high_bounce = bounce >= float(cfg["burn_bounce_at"])
     reasons = []
-    if replies < need:
-        reasons.append(f"{replies} replies in the latest {sends} sends{since} "
+    if low_reply:
+        reasons.append(f"reply {reply:.1f}% ({replies}/{sends}){since}"
+                       f" <= {cfg['burn_reply_below']}%" if both else
+                       f"{replies} replies in the latest {sends} sends{since} "
                        f"(needs {need}) — burned")
-    if bounce >= float(cfg["burn_bounce_at"]):
+    if high_bounce:
         reasons.append(f"bounce {bounce:.1f}% ({bounces}/{sends}){since} "
-                       f">= {cfg['burn_bounce_at']}% — burned")
+                       f">= {cfg['burn_bounce_at']}%" + ("" if both else " — burned"))
     subs = sub_scores({"reply": reply, "bounce": bounce}, cfg)
     score = blended_score(subs, cfg)
-    if reasons:
+    if both and reasons and not (low_reply and high_bounce):
+        # one half alone: a weak campaign or a bad list, not a burned inbox
+        status = AT_RISK
+        if signals.get("smtp_ok") is False:
+            reasons.append("SMTP disconnected")
+    elif reasons:
+        if both:
+            reasons.append("both together — burned")
         status = BURNED
     else:
         status = (HEALTHY if score >= cfg["band_healthy"]
