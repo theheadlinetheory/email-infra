@@ -91,8 +91,10 @@ DEFAULT_CONFIG = {
     # reached 105 sends in 10 days and sat in "Low volume" forever.
     #
     # 2026-10-29 (Tim): back to the OLD dashboard's rule — burned only when BOTH
-    # bounce >= burn_bounce_at AND reply <= burn_reply_below, over the last
-    # `burn_window_days` sending days with at least `burn_min_sends` sends.
+    # bounce >= burn_bounce_at AND reply <= burn_reply_below — but judged over
+    # each inbox's latest `burn_min_sends` (150) sends, however far back that
+    # reaches. Not 10 sending days: a follow-up-only inbox sends 1-2 a day, so
+    # 10 days can be 10-20 emails, too few for a reply rate to mean anything.
     # Either half alone is AT_RISK. The 10-27 EITHER rule over 200 sends called
     # 197 inboxes burned, 130 of them on bounce alone at 3-5% — a bounce rate the
     # whole campaign's list shares, which is why 2 of 3 on a domain tipped
@@ -101,8 +103,8 @@ DEFAULT_CONFIG = {
     # burn_combine "or" + burn_window_days None + burn_min_sends 200 restores 10-27.
     "burn_rule": "latest_sends",
     "burn_combine": "and",
-    "burn_window_days": 10,
-    "burn_min_sends": 105,
+    "burn_window_days": None,   # None = window by sends; N = last N sending days
+    "burn_min_sends": 150,
     "burn_reply_below": 0.5,
     "burn_bounce_at": 3.0,
     "burn_lookback_days": 56,   # stored history searched for the window

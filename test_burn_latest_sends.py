@@ -178,7 +178,7 @@ def test_old_rule_window_is_ten_sending_days():
     assert win["days"] == 10 and win["sends"] == 150 and win["from"] == "2026-10-05"
 
 
-def test_old_rule_under_105_in_ten_days_is_low_volume():
+def test_under_150_sends_is_low_volume():
     rows = _rows(*[(f"2026-10-{d:02d}", 10, 0, 1) for d in range(1, 11)])
     assert _old(rows)[0]["status"] == hm.INSUFFICIENT
 
@@ -197,3 +197,14 @@ def test_old_rule_still_scores_when_smartlead_is_down(monkeypatch):
     assert out["scored"] is True
     by = {r["email"]: r["status"] for r in st.status}
     assert by == {"a@x.co": hm.BURNED, "b@x.co": hm.AT_RISK}
+
+
+def test_default_window_is_the_latest_150_sends_not_10_days():
+    """A follow-up-only inbox sending 2 a day: 10 sending days is 20 emails."""
+    rows = _rows(*[(f"2026-{9 + (d > 30):02d}-{(d - 1) % 30 + 1:02d}", 2, 0, 0)
+                   for d in range(1, 41)])
+    win = hm.latest_sends_window(rows, hm.DEFAULT_CONFIG["burn_min_sends"],
+                                 hm.DEFAULT_CONFIG["burn_window_days"])
+    assert win["sends"] == 80
+    res = hm.score_inbox({"win": win, "in_campaign": True, "in_warmup": False, "smtp_ok": True})
+    assert res["status"] == hm.INSUFFICIENT and "need 150" in res["reasons"][0]

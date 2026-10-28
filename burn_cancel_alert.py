@@ -49,7 +49,7 @@ def format_alert(board: dict) -> str | None:
         return None
     lines = [f":fire: *Burned inboxes — decision needed* "
              f"(data through {board.get('newest_data_day') or '?'})",
-             "_Burned = bounce ≥3% and reply ≤0.5% together, over the last 10 sending days._", ""]
+             "_Burned = bounce ≥3% and reply ≤0.5% together, over each inbox's latest 150 sends._", ""]
     if board.get("fetch_error"):
         lines += [":warning: Smartlead did not answer this run; scored from stored history.", ""]
     if cancel:
