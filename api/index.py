@@ -874,6 +874,14 @@ def health_snapshot():
         out["billing_followup"] = bf.post(dry_run=False)
     except Exception as be:
         out["billing_followup"] = {"error": str(be)}
+
+    # Which burned domains to cancel. The removal watcher above only speaks
+    # about domains already scheduled; this is what says which to schedule.
+    try:
+        import burn_cancel_alert as bca
+        out["burn_cancel_alert"] = bca.post(dry_run=False)
+    except Exception as ce:
+        out["burn_cancel_alert"] = {"error": str(ce)}
     return _cors(jsonify(out)), status
 
 
