@@ -979,8 +979,9 @@ function burnRuleHtml(rule, pl, lr){
   const fails = lr.consecutive_failures || 0;
   const r = rule.burn_rule === 'latest_sends' && rule.burn_combine === 'and'
     ? `<b>Burned</b> = bounce ≥ <b>${rule.burn_bounce_at}%</b> <b>and</b> reply ≤ <b>${rule.burn_reply_below}%</b>
-       together, over the last <b>${rule.burn_window_days}</b> sending days. Either one alone = At risk.
-       Fewer than ${rule.burn_min_sends} sends in those days = Low volume.`
+       together, over its latest <b>${rule.burn_min_sends}</b> sends (looking back up to
+       ${rule.burn_lookback_days} days). Either one alone = At risk.
+       Fewer than ${rule.burn_min_sends} sends = Low volume, and each row says how many it has.`
     : rule.burn_rule === 'latest_sends'
     ? `<b>Burned</b> = over its latest <b>${rule.burn_min_sends}</b> sends (looking back up to
        ${rule.burn_lookback_days} days): replies below <b>${rule.burn_reply_below}%</b> in whole replies
