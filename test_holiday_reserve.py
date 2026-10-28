@@ -47,7 +47,7 @@ def test_each_trade_may_still_take_generic():
 # ── the picker ───────────────────────────────────────────────────────────
 
 def _pool(monkeypatch, rows):
-    monkeypatch.setattr(hr, "live_reserve", lambda force=False: rows)
+    monkeypatch.setattr(hr, "live_reserve", lambda force=False, max_age=60: rows)
 
 
 def _inbox(email, niche, ready=True, smtp=True):
@@ -83,3 +83,20 @@ def test_an_already_claimed_inbox_is_skipped(monkeypatch):
                         _inbox("free@lawncrew.info", "landscaping")])
     got = hr.pick_reserve_inbox(exclude={"taken@lawncrew.info"}, want_niche="holiday")
     assert got["email"] == "free@lawncrew.info"
+
+
+def test_live_reserve_is_read_once_and_a_partial_walk_is_never_cached(monkeypatch):
+    """The ~11s Smartlead walk ran on every page load and per reallocated inbox."""
+    calls = []
+    hr._RESERVE_MEMO.clear()
+    monkeypatch.setattr(hr.store, "get_state", lambda k: None)
+    monkeypatch.setattr(hr.store, "set_state", lambda k, v: None)
+    monkeypatch.setattr(hr, "_fetch_live_reserve",
+                        lambda: calls.append(1) or ([{"email": "a@x.co"}], len(calls) > 1))
+    hr.live_reserve(); hr.live_reserve()          # first walk was partial: not cached
+    assert len(calls) == 2
+    hr.live_reserve(); hr.live_reserve()          # second walk complete: reused
+    assert len(calls) == 2
+    hr.live_reserve(force=True)
+    assert len(calls) == 3
+    hr._RESERVE_MEMO.clear()
