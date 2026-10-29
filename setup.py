@@ -58,7 +58,7 @@ ZAPMAIL_KEY = (ENV.get("ZAPMAIL_API_KEY", "") or os.environ.get("ZAPMAIL_API_KEY
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
 SMARTLEAD_KEY = (ENV.get("SMARTLEAD_API_KEY", "") or os.environ.get("SMARTLEAD_API_KEY", "")).strip()
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
-SMARTLEAD_GQL = ENV.get("SMARTLEAD_GQL", "") or os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+SMARTLEAD_GQL = ENV.get("SMARTLEAD_GQL", "") or os.environ.get("SMARTLEAD_GQL", "https://gql.smartlead.ai/v1/graphql")
 SMARTLEAD_JWT = ENV.get("SMARTLEAD_JWT", "") or os.environ.get("SMARTLEAD_JWT", "")
 
 # Domain Registrars

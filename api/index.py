@@ -2808,7 +2808,7 @@ def unassign_group():
 
     live_ids = set()
     jwt = os.environ.get("SMARTLEAD_JWT", "").strip()
-    gql_url = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql").strip()
+    gql_url = os.environ.get("SMARTLEAD_GQL", "https://gql.smartlead.ai/v1/graphql").strip()
     if jwt:
         try:
             sl_h = {"Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
@@ -2957,7 +2957,7 @@ def assign_generic_to_client():
         import health_smartlead as _hsl
         jwt = (_hsl.get_jwt() or "").strip()
         gql_url = (os.environ.get("SMARTLEAD_GQL", "").strip()
-                   or "https://fe-gql.smartlead.ai/v1/graphql")
+                   or "https://gql.smartlead.ai/v1/graphql")
         sl_key = os.environ.get("SMARTLEAD_API_KEY", "").strip()
         if not jwt:
             return _cors(jsonify({"error": "could not obtain a Smartlead token — "
@@ -4672,7 +4672,7 @@ def group_setup_tags():
             return _cors(jsonify({"error": "letter required"})), 400
 
         SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
-        SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+        SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://gql.smartlead.ai/v1/graphql")
         def sl_h():
             return {"Authorization": f"Bearer {SMARTLEAD_JWT}", "Content-Type": "application/json"}
         def _gql(query, variables=None):
@@ -4906,7 +4906,7 @@ def finalize_generic_group():
         SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
         SMARTLEAD_INTERNAL = "https://server.smartlead.ai/api"
         SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
-        SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+        SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://gql.smartlead.ai/v1/graphql")
 
         def zm_h():
             return {"x-auth-zapmail": ZAPMAIL_KEY, "Content-Type": "application/json"}

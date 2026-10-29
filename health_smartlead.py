@@ -21,7 +21,11 @@ import re
 
 import db as store
 
-GQL = (os.environ.get("SMARTLEAD_GQL", "") or "https://fe-gql.smartlead.ai/v1/graphql")
+GQL = (os.environ.get("SMARTLEAD_GQL", "") or "https://gql.smartlead.ai/v1/graphql")
+# 2026-10-29: fe-gql started answering every request with an nginx 503 page,
+# which surfaced on the dashboard as "Expecting value: line 1 column 1".
+# gql.smartlead.ai serves the same schema; try the other host before failing.
+GQL_HOSTS = ("https://gql.smartlead.ai/v1/graphql", "https://fe-gql.smartlead.ai/v1/graphql")
 SL_INTERNAL = "https://server.smartlead.ai/api"
 ZAPMAIL_TAG_ID = 262254
 _DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
@@ -100,9 +104,17 @@ def _headers():
 
 def _gql(query, variables=None):
     import requests
-    r = requests.post(GQL, headers=_headers(),
-                      json={"query": query, "variables": variables or {}}, timeout=30)
-    return r.json()
+    tried = []
+    for url in dict.fromkeys((GQL,) + GQL_HOSTS):
+        try:
+            r = requests.post(url, headers=_headers(),
+                              json={"query": query, "variables": variables or {}}, timeout=30)
+            return r.json()
+        except ValueError:
+            tried.append(f"{url.split('/')[2]} HTTP {r.status_code}")
+        except requests.RequestException as e:
+            tried.append(f"{url.split('/')[2]} {type(e).__name__}")
+    raise RuntimeError("Smartlead GraphQL unavailable (" + "; ".join(tried) + ")")
 
 
 def jwt_ok() -> bool:

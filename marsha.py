@@ -219,7 +219,7 @@ CLIENT_TAGS = {
 
 SMARTLEAD_API_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
 SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
-GQL_URL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+GQL_URL = os.environ.get("SMARTLEAD_GQL", "https://gql.smartlead.ai/v1/graphql")
 SL_BASE = "https://server.smartlead.ai/api"
 
 from setup import _RateLimiter
