@@ -24,7 +24,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 SMARTLEAD_API = "https://server.smartlead.ai/api/v1"
 SMARTLEAD_INTERNAL_API = "https://server.smartlead.ai/api"
-SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://fe-gql.smartlead.ai/v1/graphql")
+SMARTLEAD_GQL = os.environ.get("SMARTLEAD_GQL", "https://gql.smartlead.ai/v1/graphql")
 SMARTLEAD_KEY = os.environ.get("SMARTLEAD_API_KEY", "")
 SMARTLEAD_JWT = os.environ.get("SMARTLEAD_JWT", "")
 
