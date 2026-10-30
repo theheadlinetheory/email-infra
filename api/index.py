@@ -1314,6 +1314,67 @@ def buy_provision_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+def _cold_call_caller():
+    """The dashboard password, or a signed-in CRM staff session (the Won modal
+    has no password to send). Returns None when allowed, else the refusal."""
+    if _check_auth():
+        return None
+    import crm_auth
+    v = crm_auth.verify_crm_user(request.headers.get("Authorization"))
+    if v.get("ok"):
+        return None
+    return _cors(jsonify({"error": v["error"]})), v["status"]
+
+
+@app.route("/api/cold-call-inbox", methods=["GET", "POST", "OPTIONS"])
+def cold_call_inbox_route():
+    """The client's contact@<brand>.info cold-calling inbox.
+
+    POST {crm_client_id, client_name, website} — SPENDS: buys the .info domain
+    and opens a one-mailbox order (the CRM's "Include cold calling" tick is the
+    approval). Idempotent per crm_client_id, so the Won modal's Retry is safe.
+    GET ?crm_client_id= — where that order has got to.
+    The order then finishes on its own via /api/cold-call-inbox/advance.
+    """
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    refused = _cold_call_caller()
+    if refused:
+        return refused
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import cold_call_inbox as cci
+        if request.method == "GET":
+            order = cci.find_order(request.args.get("crm_client_id", ""))
+            if not order:
+                return _cors(jsonify({"error": "no cold-calling inbox for that client"})), 404
+            return _cors(jsonify({"ok": True, **cci.summary(order)}))
+        res = cci.start(request.get_json(silent=True) or {})
+        return _cors(jsonify(res)), (400 if res.get("error") else 200)
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
+@app.route("/api/cold-call-inbox/advance", methods=["GET", "POST", "OPTIONS"])
+def cold_call_inbox_advance_route():
+    """Push every unfinished cold-calling order forward. Called by
+    .github/workflows/cold-call-inbox.yml (Vercel crons never fire here)."""
+    if request.method == "OPTIONS":
+        return _cors(make_response("", 200))
+    if not _check_auth():
+        return _cors(jsonify({"error": "Unauthorized"})), 401
+    import db as store
+    store._CACHE_WRITE_ENABLED = True
+    try:
+        import cold_call_inbox as cci
+        return _cors(jsonify(cci.advance_all()))
+    except Exception as e:
+        import traceback
+        return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
+
+
 @app.route("/api/health-resolve", methods=["GET", "POST", "OPTIONS"])
 def health_resolve():
     """Auto-resolve flagged SmartLead inboxes: reconnect (re-export) the ones with a
