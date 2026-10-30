@@ -130,7 +130,8 @@ def test_the_order_provisions_exactly_one_contact_mailbox_end_to_end(monkeypatch
     assert out["advanced"][0]["status"] == "live"
     assert io.mailboxes["woodyslandcare.info"] == [{"id": "mb-contact@woodyslandcare.info",
                                                     "email": "contact@woodyslandcare.info"}]
-    assert io.forwarded and io.tagged and io.warmed
+    assert io.forwarded and io.tagged
+    assert io.warmed == []                         # contact@ never warms
     assert io.tag_name == ["Woody's Landcare LLC", "Zapmail", cci.date_tag()]
     assert io.client_assigned == "Woody's Landcare LLC"
     assert list(io.zapmail_tags.values()) == ["Woody's Landcare"]
@@ -144,7 +145,7 @@ def test_a_missing_logo_never_holds_the_inbox_back_from_smartlead(monkeypatch):
     cci.start(BODY, buy=f.buy, pick=lambda b: "woodyslandcare.info")
     io = ColdIO(["woodyslandcare.info"], logo_url=None)
     out = cci.advance_all(io=io)["advanced"][0]
-    assert io.tagged and io.warmed                 # in SmartLead and warming
+    assert io.tagged and io.warmed == []           # in SmartLead, never warming
     assert out["step"] == "profile" and "logo" in out["blocked_reason"]
     io.logo_url = "https://x/client_logos/woodyslandcare.png"   # dropped in by hand
     assert cci.advance_all(io=io)["advanced"][0]["status"] == "live"
@@ -205,3 +206,36 @@ def test_only_internal_crm_sessions_are_accepted():
     def boom(*a, **k):
         raise OSError("down")
     assert crm_auth.verify_crm_user("Bearer t", get=boom)["status"] == 503
+
+
+# ── warm-up stays off on contact@ (Tim, 2026-10-31) ───────────────────────
+
+def _accts(*rows):
+    return [{"id": i, "from_email": e, "warmup_details": {"status": st}}
+            for i, (e, st) in enumerate(rows, 1)]
+
+
+def test_enforcer_turns_off_only_warming_contact_inboxes():
+    saved, off = {}, []
+    out = cci.enforce_warmup_off(
+        list_accounts=lambda: _accts(("contact@a.info", "ACTIVE"), ("contact@b.info", "INACTIVE"),
+                                     ("s.reynolds@a.info", "ACTIVE")),
+        disable=lambda aid: off.append(aid) or True,
+        state=(lambda k: None, lambda k, v: saved.update({k: v})), now=10_000)
+    assert out["turned_off"] == ["contact@a.info"] and off == [1]
+    assert saved[cci.WARMUP_OFF_KEY]["ran_at"] == 10_000
+
+
+def test_enforcer_runs_at_most_hourly():
+    state = ({cci.WARMUP_OFF_KEY: {"ran_at": 10_000}}.get, lambda k, v: None)
+    called = []
+    out = cci.enforce_warmup_off(list_accounts=lambda: called.append(1) or [],
+                                 state=state, now=10_000 + 600)
+    assert out["ran"] is False and not called
+
+
+def test_enforcer_unreadable_roster_is_not_all_clear():
+    saved = {}
+    out = cci.enforce_warmup_off(list_accounts=lambda: None,
+                                 state=(lambda k: None, lambda k, v: saved.update({k: v})), now=10_000)
+    assert out["ran"] is False and "unreadable" in out["error"] and not saved

@@ -572,7 +572,19 @@ def sl_create_email_account(from_name, from_email, username, password,
     return r.json()
 
 def sl_set_warmup(account_id):
-    """Set warmup via internal save-warmup endpoint (full control over all settings)."""
+    """Set warmup via internal save-warmup endpoint (full control over all settings).
+
+    Refuses a warm-up-exempt mailbox (contact@ — check_invariants.is_warmup_exempt):
+    this is the one function nearly every warm-up path goes through.
+    """
+    import check_invariants as _civ
+    try:
+        email = (sl_get_account(account_id) or {}).get("from_email") or ""
+    except Exception:
+        email = ""
+    if _civ.is_warmup_exempt_mailbox(email):
+        return {"ok": True, "skipped": f"{email} is never warmed"}
+
     def _public_warmup():
         _sl_rest_limiter.wait()
         r = requests.post(sl_url(f"/email-accounts/{account_id}/warmup"),

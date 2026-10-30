@@ -377,7 +377,11 @@ def _step_tag(order, j, io):
 
 
 def _step_warmup(order, j, io):
-    ids = [v for v in (j.get("smartlead") or {}).values()]
+    import check_invariants as civ
+    # contact@ cold-calling inboxes never warm (check_invariants.WARMUP_EXEMPT_MAILBOXES).
+    sl = j.get("smartlead") or {}
+    exempt = sorted(e for e in sl if civ.is_warmup_exempt_mailbox(e))
+    ids = [v for e, v in sl.items() if e not in exempt]
     done = set(j.get("warmed") or [])
     failed = []
     for aid in ids:
@@ -393,7 +397,10 @@ def _step_warmup(order, j, io):
         _note(j, f"warmup: {j['blocked_reason']}")
         return False, True
     j.pop("blocked_reason", None)
-    _note(j, f"warmup: started on {len(done)} accounts — 14 days from now they are ready")
+    if exempt:
+        _note(j, f"warmup: left off on {', '.join(exempt)} (never warmed)")
+    if ids:
+        _note(j, f"warmup: started on {len(done)} accounts — 14 days from now they are ready")
     return True, False
 
 

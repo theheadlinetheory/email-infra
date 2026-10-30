@@ -13,6 +13,7 @@ from here, with the plan printed before anything is written.
 It refuses to touch:
   - retirement buckets (cleanup / retired / burnt) — on their way out
   - anything `check_invariants.is_warmup_exempt` names, with its reason
+    (Landy Rose by tag; every contact@ cold-calling inbox by mailbox name)
 
 Usage:
     python scripts/warmup_sweep.py              # plan only, writes nothing
@@ -63,7 +64,7 @@ def classify(accounts, only_group=None):
         if any(k in low for k in civ.RETIREMENT_TAG_HINTS):
             skipped["retired"] += 1
             continue
-        if civ.is_warmup_exempt(tag):
+        if civ.is_warmup_exempt(tag, a.get("from_email")):
             skipped["exempt"] += 1
             continue
         if ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE":
