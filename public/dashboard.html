@@ -634,9 +634,13 @@ function reallocResultHtml(){
   if (failed.length) parts.push(`<span class="bad">${failed.length} failed</span>`);
   const unaccounted = asked - swapped - held.length - failed.length;
   if (unaccounted > 0) parts.push(`<span class="warn">${unaccounted} already had a job</span>`);
+  // "1 failed" with no reason left nothing to act on.
+  const why = failed.length ? `<ul style="margin:6px 0 0 18px">${failed.map(f =>
+      `<li>${esc(f.email)} — ${esc(f.stage || '')}: ${esc(f.error || 'no reason given')}</li>`).join('')}</ul>` : '';
   return `<div class="banner ${failed.length ? 'bad' : 'ok'}">
     ${parts.join(' · ')}
     <button class="act" id="rr-x" style="margin-left:8px">Dismiss</button>
+    ${why}
     ${camps.length ? `<div style="margin-top:8px">
         <b>Now click “Reallocate mailboxes” in SmartLead</b> — once per campaign:
         <ul style="margin:6px 0 0 18px">${camps.map(c => `<li>${
