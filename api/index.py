@@ -41,8 +41,11 @@ def _check_auth():
         return True
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        from server_auth import verify_firebase_token
+        # The import lives inside the try: server_auth.py is not in this repo,
+        # so outside it every Bearer request — the CRM's session token on
+        # /api/cold-call-inbox — died here as a 500 instead of being checked.
         try:
+            from server_auth import verify_firebase_token
             if verify_firebase_token(auth[7:]):
                 return True
         except Exception:
