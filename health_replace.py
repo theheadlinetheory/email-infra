@@ -24,6 +24,33 @@ import db as store
 WARMUP_DAYS = 14
 STATE_KEY = "health_replacements"
 _ACTIVE = ("flagged", "warming", "ready", "reserved")
+# A job that never got as far as moving anything. Reallocate resumes it instead
+# of treating the inbox as done: a failed attempt used to lock the inbox out of
+# every later click (nextworkteam.info, 2026-10-29).
+_UNSTARTED = ("flagged", "reserved")
+
+
+def _same_client(a, b) -> bool:
+    if not a or not b:
+        return True
+    import health_smartlead as hsl
+    return hsl._norm(a) == hsl._norm(b)
+
+
+def handled_emails(jobs: list, client_of: dict) -> set:
+    """Inboxes whose replacement is done or under way, so Reallocate skips them.
+
+    Inboxes get reused across clients: s.reynolds@landscapecarespecialists.info
+    was swapped out of Ecological Improvements in July, then put to work for PC
+    Landscape and burned again. That July job is history, not a claim on the
+    inbox, so a job only counts for the client it was opened for."""
+    out = set()
+    for j in jobs:
+        if j.get("status") in (None, "cancelled") + _UNSTARTED:
+            continue
+        if _same_client(j.get("client"), client_of.get(j["old_email"])):
+            out.add(j["old_email"])
+    return out
 
 
 def _sl_key() -> str:
@@ -699,8 +726,18 @@ def pick_reserve_inbox(exclude=None, want_niche=None) -> dict | None:
 def create_jobs(emails: list[str]) -> dict:
     """Flag burned inboxes for replacement (idempotent on active jobs)."""
     st = _load()
-    active = {j["old_email"] for j in st["jobs"] if j["status"] in _ACTIVE}
     status_by = {r["email"]: r for r in store.get_health_status_all()}
+    active = set()
+    for j in st["jobs"]:
+        if j["status"] not in _ACTIVE:
+            continue
+        if _same_client(j.get("client"), (status_by.get(j["old_email"]) or {}).get("client")):
+            active.add(j["old_email"])
+        elif j["old_email"] in emails:
+            # opened for the inbox's previous client; its campaigns and reserve
+            # pick no longer apply
+            j["status"] = "cancelled"
+            j["cancel_reason"] = "superseded: inbox now belongs to another client"
     made = 0
     now = datetime.now().strftime("%Y-%m-%d")
     next_id = max([j.get("id", 0) for j in st["jobs"]], default=0)
@@ -824,9 +861,9 @@ def _burned_for_client(client: str) -> list[str]:
     re-scores it (it's out of the campaign but its status is stale) — without this
     guard a second run would replace it AGAIN, wasting reserve and over-provisioning
     the campaign. Cancelled jobs don't count (that inbox is fair game again)."""
-    handled = {j["old_email"] for j in _load().get("jobs", [])
-               if j.get("status") != "cancelled"}
-    return [r["email"] for r in store.get_health_status_all()
+    rows = store.get_health_status_all()
+    handled = handled_emails(_load().get("jobs", []), {r["email"]: r.get("client") for r in rows})
+    return [r["email"] for r in rows
             if r.get("status") == "burned" and (r.get("client") or "") == client
             and r["email"] not in handled]
 
@@ -911,14 +948,13 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
     'idle acquisition reserve' — THT inboxes sitting in paused/completed campaigns
     (real unused capacity), so acquisition is reserve-driven, never 'cancel only'.
     Dry-run reports reserve sufficiency for both."""
-    handled = {j["old_email"] for j in _load().get("jobs", [])
-               if j.get("status") != "cancelled"}
+    status_by = {r["email"]: r for r in store.get_health_status_all()}
+    handled = handled_emails(_load().get("jobs", []),
+                             {e: r.get("client") for e, r in status_by.items()})
     emails = [e for e in emails if e and e not in handled]
     if not emails:
         return {"dry_run": not confirm, "error": "nothing to reallocate (all already have jobs)",
                 "reallocatable": 0}
-
-    status_by = {r["email"]: r for r in store.get_health_status_all()}
     status_map = campaign_status_map()
 
     def _is_acq(e):
@@ -974,7 +1010,9 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
     try:
         store.log_monitor_event("health_reallocate", {"swapped": swapped,
                                                       "failed": len(failed),
-                                                      "held": len(held)})
+                                                      "held": len(held),
+                                                      "emails": emails,
+                                                      "failures": failed})
     except Exception:
         pass
     note = (f"Reallocated {swapped} inbox(es). Now hit 'Reallocate mailboxes' once per "
