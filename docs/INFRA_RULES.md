@@ -225,6 +225,12 @@ Retirement buckets (Cleanup, Retired, Burnt) are exempt. They are on their way
 out and should not be warming; demanding it would fire 337 times and train
 everyone to ignore the rule.
 
+Deliberately exempt, and never warmed by any path (`check_invariants.is_warmup_exempt`):
+Landy Rose (by tag), and every `contact@` mailbox — the cold-calling inboxes,
+which carry their client's tag. Tim, 2026-10-31: warm-up off on all contact@
+inboxes, now and in future. `cold_call_inbox.enforce_warmup_off` switches it
+back off hourly if anything turns it on.
+
 **Why it exists.** 42 service inboxes sat six weeks with warm-up never switched
 on. Provisioning stalls at `forwarding` and `warmup` is the step AFTER it, so a
 missing forwarding target silently meant no warm-up. The order's journal read

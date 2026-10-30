@@ -6,7 +6,7 @@ opens a buy-order for a single `contact@` mailbox. That is the inbox a cold-call
 lead's follow-up email goes from (the CRM's `clients.cold_call_email`).
 
 The rest — DNS, the mailbox, forwarding, Zapmail tag, SmartLead export, tags,
-warm-up, profile picture — is the ordinary buy_provision step machine. It takes
+profile picture — is the ordinary buy_provision step machine. It takes
 an hour or more, so nobody waits on it: `advance_all()` is called on a schedule
 (.github/workflows/cold-call-inbox.yml) and pushes every unfinished
 cold-calling order as far as it will go.
@@ -19,7 +19,11 @@ Built exactly like the seven made by hand on 2026-10-27 (contact@woodyslandcare
   - photo: the client's logo (client_logo.py)
   - Zapmail: forwarded to their website, filed under their Zapmail tag
   - SmartLead: tags [client, "Zapmail", M/D/YY], assigned to their SmartLead
-    client, warm-up on — and no Group tag, so it never joins a campaign
+    client, and no Group tag, so it never joins a campaign
+  - warm-up OFF, always (Tim, 2026-10-31). buy_provision skips the warmup step
+    for contact@, setup.sl_set_warmup refuses it, and `enforce_warmup_off()`
+    switches it back off hourly if anything — the SmartLead UI included — turns
+    it on.
 """
 from __future__ import annotations
 
@@ -48,6 +52,10 @@ _LEGAL_TAIL = re.compile(r"[\s,]+(llc|l\.l\.c\.|inc\.?|ltd\.?|corp\.?|co\.?|limi
 
 # One scheduled call must answer inside Vercel's 300s.
 ADVANCE_BUDGET_SECONDS = 220
+
+# enforce_warmup_off() reads the whole fleet (~15 calls), so not every 15 minutes.
+WARMUP_OFF_KEY = "cold_call_warmup_off"
+WARMUP_OFF_EVERY_SECONDS = 3600
 
 
 def display_name(client_name: str) -> str:
@@ -273,3 +281,58 @@ def advance_all(io=None, clock=time.monotonic) -> dict:
             bi._save_orders(orders)
             bi.provision_lock_release(int(order["id"]))
     return {"ok": True, "pending": len(todo), "advanced": results, "skipped": skipped}
+
+
+def enforce_warmup_off(list_accounts=None, disable=None, state=None, now=None,
+                       force: bool = False) -> dict:
+    """Switch warm-up off on every contact@ inbox that has it on. At most hourly.
+
+    The provisioning paths all refuse to warm a contact@, but a click in the
+    SmartLead UI or a one-off script does not go through them. This is what
+    makes "never warmed" true rather than merely intended.
+    """
+    import check_invariants as civ
+    import db as store
+    get_state, set_state = state or (store.get_state, store.set_state)
+    now = time.time() if now is None else now
+    last = (get_state(WARMUP_OFF_KEY) or {}).get("ran_at") or 0
+    if not force and now - last < WARMUP_OFF_EVERY_SECONDS:
+        return {"ran": False, "next_in_s": int(WARMUP_OFF_EVERY_SECONDS - (now - last))}
+
+    accounts = (list_accounts or _all_accounts)()
+    if accounts is None:
+        # A short read is not "none warming" — say so and try again next run.
+        return {"ran": False, "error": "SmartLead roster unreadable"}
+    warm = [a for a in accounts
+            if civ.is_warmup_exempt_mailbox(a.get("from_email"))
+            and ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE"]
+    turned_off, failed = [], []
+    for a in warm:
+        (turned_off if (disable or _disable_warmup)(a["id"]) else failed).append(a["from_email"])
+    set_state(WARMUP_OFF_KEY, {"ran_at": now, "turned_off": turned_off, "failed": failed})
+    return {"ran": True, "checked": len(accounts), "turned_off": turned_off, "failed": failed}
+
+
+def _all_accounts():
+    out, offset = [], 0
+    while True:
+        try:
+            batch = S.sl_list_accounts(offset=offset, limit=100)
+        except Exception:                            # noqa: BLE001
+            return None
+        if not isinstance(batch, list):
+            return None
+        out.extend(batch)
+        if len(batch) < 100:
+            return out
+        offset += 100
+
+
+def _disable_warmup(account_id) -> bool:
+    import requests
+    try:
+        r = requests.post(S.sl_url(f"/email-accounts/{account_id}/warmup"),
+                          json={"warmup_enabled": False}, timeout=30)
+        return r.status_code == 200
+    except Exception:                                # noqa: BLE001
+        return False
