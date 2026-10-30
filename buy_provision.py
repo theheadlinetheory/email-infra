@@ -38,10 +38,12 @@ itself and asks to be resumed:
   slots      enough Google mailbox slots bought to cover what we will create
   mailboxes  create up to three per domain
   forwarding point every domain at the site it is selling for
+  zapmail_tag file the domains under the client's Zapmail tag (orders that name one)
   export     hand the mailboxes to SmartLead
   find       locate the SmartLead accounts (the export lands asynchronously)
   tag        tag them into their group
   warmup     start warm-up
+  profile    set the mailbox profile picture (orders that carry a logo)
   done
 
 All I/O goes through an injected `io` object, so the whole machine is testable
@@ -49,13 +51,14 @@ without touching Zapmail, Spaceship or SmartLead.
 """
 from __future__ import annotations
 
+import re
 import time
 
 MAX_PER_DOMAIN = 3
 ALLOWED_PROVIDER = "GOOGLE"
 
-STEPS = ("dns", "slots", "mailboxes", "forwarding", "export", "find", "tag",
-         "warmup", "done")
+STEPS = ("dns", "slots", "mailboxes", "forwarding", "zapmail_tag", "export", "find",
+         "tag", "warmup", "profile", "done")
 
 # A call gives up its remaining work at this point and asks to be resumed. Well
 # under Vercel's 300s so the response itself always gets out.
@@ -104,6 +107,18 @@ def mailbox_specs(domain: str, count: int, persona: dict | None = None) -> list[
     fl, ll = f.lower(), l.lower()
     names = [f"{fl[0]}.{ll}", f"{fl}.{ll[0]}", f"{fl}.{ll}"]
     return [{"firstName": f, "lastName": l, "mailboxUsername": u} for u in names[:count]]
+
+
+def specs_for(order: dict, domain: str, count: int) -> list[dict]:
+    """The order's own mailboxes when it names them, else the persona's three.
+
+    A cold-calling order is one `contact@` mailbox, not s.reynolds/sean.r/
+    sean.reynolds. Stored on the order, so a resume asks for the same names.
+    """
+    own = order.get("mailbox_specs")
+    if own:
+        return [dict(s) for s in own][:count]
+    return mailbox_specs(domain, count)
 
 
 def _journal(order: dict) -> dict:
@@ -221,7 +236,7 @@ def _step_mailboxes(order, j, io):
             rec["mailboxes"] = live[:per]
             _note(j, f"{d}: {have} mailboxes already exist")
             continue
-        specs = mailbox_specs(d, per)[have:]
+        specs = specs_for(order, d, per)[have:]
         res = io.zapmail_create_mailboxes(rec.get("zapmail_id"), d, specs)
         if not res.get("ok"):
             rec["error"] = res.get("error")
@@ -341,12 +356,16 @@ def _step_tag(order, j, io):
     ids = [v for v in (j.get("smartlead") or {}).values()]
     if not ids:
         return False, True
-    tag = order.get("tag") or ("Acquisition" if order.get("owner") == "acquisition"
-                               else order.get("client_name"))
+    # An order may carry several tags and the SmartLead client to assign
+    # (cold-calling: [client, "Zapmail", date] — no Group tag, so it is never
+    # picked up for a campaign).
+    tag = order.get("tags") or order.get("tag") or (
+        "Acquisition" if order.get("owner") == "acquisition" else order.get("client_name"))
     if not tag:
         j["blocked_reason"] = "no tag to file these under"
         return False, False
-    res = io.smartlead_tag(ids, tag)
+    res = (io.smartlead_tag(ids, tag, client_name=order["sl_client_name"])
+           if order.get("sl_client_name") else io.smartlead_tag(ids, tag))
     if not res.get("ok"):
         j["blocked_reason"] = res.get("error") or "tagging failed"
         _note(j, f"tag: {j['blocked_reason']}")
@@ -378,10 +397,56 @@ def _step_warmup(order, j, io):
     return True, False
 
 
+def _step_zapmail_tag(order, j, io):
+    """File the domains under the client's tag in Zapmail, as setup.py does."""
+    name = order.get("zapmail_tag")
+    if not name or j.get("zapmail_tagged"):
+        return True, False
+    ids = [_dom(j, d).get("zapmail_id") for d in order.get("domains") or []
+           if _dom(j, d).get("dns_ready") and _dom(j, d).get("zapmail_id")]
+    if not ids:
+        return False, True
+    res = io.zapmail_tag_domains(ids, name)
+    if not res.get("ok"):
+        _note(j, f"zapmail_tag: {res.get('error')}")
+        return False, True
+    j["zapmail_tagged"] = res.get("tag") or name
+    _note(j, f"zapmail_tag: {len(ids)} domain(s) under {j['zapmail_tagged']}")
+    return True, False
+
+
+def _step_profile(order, j, io):
+    """The client's logo as the mailbox photo. Last, so a site we cannot read
+    a logo from never holds the inbox back from SmartLead; it blocks here with
+    the reason, and is retried every pass (a logo dropped into the bucket by
+    hand is picked up on the next one)."""
+    logo = order.get("logo")
+    if not logo or j.get("profile_done"):
+        return True, False
+    ids = [m["id"] for m in _all_mailboxes(order, j) if m.get("id")]
+    if not ids:
+        return False, True
+    found = io.client_logo_url(logo)
+    if not found.get("url"):
+        j["blocked_reason"] = found.get("error") or "no logo found"
+        _note(j, f"profile: {j['blocked_reason']}")
+        return False, True
+    res = io.set_profile_picture(ids, found["url"])
+    if not res.get("ok"):
+        j["blocked_reason"] = res.get("error") or "could not set the profile picture"
+        _note(j, f"profile: {j['blocked_reason']}")
+        return False, True
+    j.pop("blocked_reason", None)
+    j["profile_done"] = found["url"]
+    _note(j, f"profile: logo set ({found['url']})")
+    return True, False
+
+
 _HANDLERS = {
     "dns": _step_dns, "slots": _step_slots, "mailboxes": _step_mailboxes,
     "forwarding": _step_forwarding, "export": _step_export, "find": _step_find,
     "tag": _step_tag, "warmup": _step_warmup,
+    "zapmail_tag": _step_zapmail_tag, "profile": _step_profile,
 }
 
 
@@ -432,6 +497,37 @@ def advance(order: dict, io, budget_seconds: int = DEFAULT_BUDGET_SECONDS,
 
 
 # ── the real world ────────────────────────────────────────────────────────
+
+_LEGAL = re.compile(r"\b(llc|inc|ltd|corp|co|limited)\b\.?", re.I)
+
+
+def _norm_name(s) -> str:
+    return re.sub(r"[^a-z0-9]+", "", _LEGAL.sub("", str(s or "").lower()))
+
+
+def match_client(name, rows, key="name", return_row=False):
+    """Find `name` among SmartLead clients / Zapmail tags. "Clear Heating & Air,
+    Inc." is SmartLead's "Clear Heating & Air, " and Zapmail's "Clear Heating &
+    Air", so compare without legal suffixes and punctuation: exact first, then
+    the closest containment. None when nothing fits — never a guess."""
+    n = _norm_name(name)
+    if not n:
+        return None
+    best, best_len = None, 0
+    for r in rows or []:
+        c = _norm_name(r.get(key))
+        if not c:
+            continue
+        if c == n:
+            return r if return_row else r.get("id")
+        if (c in n or n in c) and min(len(c), len(n)) >= 4:
+            score = min(len(c), len(n)) / max(len(c), len(n))
+            if score > best_len:
+                best, best_len = r, score
+    if best is None:
+        return None
+    return best if return_row else best.get("id")
+
 
 class LiveIO:
     """The `io` the route uses: Zapmail + SmartLead through setup.py.
@@ -573,16 +669,64 @@ class LiveIO:
                 return found
             offset += 100
 
-    def smartlead_tag(self, account_ids, tag_name):
+    def smartlead_tag(self, account_ids, tag_name, client_name=None):
+        """Tag the accounts (one name or a list). With `client_name`, also
+        assign them to that SmartLead client — matched by name, never created:
+        creating one here squats the portal the CRM makes for the client."""
+        names = [tag_name] if isinstance(tag_name, str) else list(tag_name)
         try:
-            tag = self.S.sl_find_or_create_tag(tag_name)
-            tid = tag.get("id") if isinstance(tag, dict) else tag
-            if not tid:
-                return {"ok": False, "error": f"could not resolve tag {tag_name!r}"}
-            self.S.sl_tag_accounts_bulk(list(account_ids), [tid])
+            tids = []
+            for n in names:
+                tag = self.S.sl_find_or_create_tag(n)
+                tid = tag.get("id") if isinstance(tag, dict) else tag
+                if not tid:
+                    return {"ok": False, "error": f"could not resolve tag {n!r}"}
+                tids.append(tid)
+            cid = self.smartlead_client_id(client_name) if client_name else None
+            if client_name:
+                _, failed = self.S.sl_tag_accounts_bulk(list(account_ids), tids, client_id=cid)
+                if failed:
+                    return {"ok": False, "error": f"tagging failed on {failed} account(s)"}
+            else:
+                self.S.sl_tag_accounts_bulk(list(account_ids), tids)
         except Exception as e:                       # noqa: BLE001
             return {"ok": False, "error": str(e)[:160]}
         return {"ok": True}
+
+    def smartlead_client_id(self, name):
+        import requests
+        r = requests.get(f"{self.S.SMARTLEAD_API}/client?api_key={self.S.SMARTLEAD_KEY}", timeout=30)
+        return match_client(name, r.json() if r.ok else [])
+
+    def zapmail_tag_domains(self, domain_ids, tag_name):
+        """The client's existing Zapmail tag (matched by name), or a new one."""
+        try:
+            tags = (self.S.zm_list_domain_tags() or {}).get("data") or []
+            tag = match_client(tag_name, tags, key="name", return_row=True)
+            if not tag:
+                self.S.zm_create_domain_tag(tag_name)
+                tags = (self.S.zm_list_domain_tags() or {}).get("data") or []
+                tag = next((t for t in tags if t.get("name") == tag_name), None)
+            if not tag:
+                return {"ok": False, "error": f"could not create Zapmail tag {tag_name!r}"}
+            self.S.zm_assign_domain_tag(list(domain_ids), [tag["id"]])
+        except Exception as e:                       # noqa: BLE001
+            return {"ok": False, "error": str(e)[:160]}
+        return {"ok": True, "tag": tag.get("name")}
+
+    def client_logo_url(self, logo):
+        import client_logo
+        return client_logo.ensure(logo)
+
+    def set_profile_picture(self, mailbox_ids, url):
+        try:
+            r = self.S.zm_put("/v2/mailboxes", {"mailboxData": [
+                {"mailboxId": m, "profilePicture": url} for m in mailbox_ids]})
+        except Exception as e:                       # noqa: BLE001
+            return {"ok": False, "error": str(e)[:160]}
+        if isinstance(r, dict) and r.get("status") == 200:
+            return {"ok": True}
+        return {"ok": False, "error": str(r)[:160]}
 
     def smartlead_start_warmup(self, account_id):
         try:

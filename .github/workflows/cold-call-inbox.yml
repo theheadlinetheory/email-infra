@@ -1,0 +1,36 @@
+name: Cold-calling inbox provisioning
+
+# A client won with "Include cold calling" gets a contact@<brand>.info inbox
+# (cold_call_inbox.py). The purchase happens in the Won modal; DNS, the
+# mailbox, SmartLead export, tag and warm-up take an hour or more and nobody
+# is waiting on them, so this pushes every unfinished order along. Vercel
+# crons never fire on this project (see zapmail-watch.yml), hence Actions.
+#
+# Cheap when idle: with no unfinished cold-calling order it reads one state row.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: cold-call-inbox
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Advance cold-calling inbox orders
+        env:
+          PW: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          set -euo pipefail
+          body=$(curl -sS --max-time 290 -X POST \
+            "https://email-infra.vercel.app/api/cold-call-inbox/advance?pw=${PW}")
+          echo "$body" | jq -c '{pending, skipped, advanced: [.advanced[]? | {order_id, email, step, status, blocked_reason, error}]}' || echo "$body"
+          if echo "$body" | jq -e '.error' >/dev/null 2>&1; then
+            echo "advance failed: $(echo "$body" | jq -r '.error')" >&2
+            exit 1
+          fi

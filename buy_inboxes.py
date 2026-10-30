@@ -574,6 +574,17 @@ def buy_domains(spec, confirm=False):
         # Where these domains point once live. Carried on the order so the
         # provisioning forwarding step has it without guessing.
         "forward_to": (spec.get("forward_to") or "").strip() or None,
+        # Optional overrides, read by buy_provision: the order's own mailboxes,
+        # SmartLead tags + client, Zapmail tag and profile logo, and what it is
+        # for. A cold-calling order (cold_call_inbox.py) sets them all.
+        "mailbox_specs": spec.get("mailbox_specs") or None,
+        "tag": spec.get("tag") or None,
+        "tags": spec.get("tags") or None,
+        "sl_client_name": spec.get("sl_client_name") or None,
+        "zapmail_tag": spec.get("zapmail_tag") or None,
+        "logo": spec.get("logo") or None,
+        "purpose": spec.get("purpose") or None,
+        "crm_client_id": spec.get("crm_client_id") or None,
         "nameserver_failed": ns_failed,
         "connect_pending": [p["domain"] for p in pending],
         "connect_failed": connect_failed,
