@@ -1402,16 +1402,13 @@ def run_pipeline(config, config_path):
 
         if new_inboxes_needed > 0:
             # Check how many unassigned slots we already have (always fetch fresh)
-            total_purchased = 0
-            total_assigned = 0
+            from zapmail_slots import free_slots
+            unassigned = 0
             ws_result = zm_get("/v2/workspaces", workspace_id)
             if isinstance(ws_result, dict):
                 ws_data = ws_result.get("data", {}).get("currentWorkspace", {})
                 if ws_data:
-                    total_purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-                    total_assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-
-            unassigned = total_purchased - total_assigned
+                    unassigned = free_slots(ws_data) or 0  # workspace totals, not Google-only
             slots_to_buy = max(0, new_inboxes_needed - unassigned)
 
             if slots_to_buy <= 0:

@@ -4291,9 +4291,8 @@ def group_connect_domains():
             for buy_attempt in range(3):
                 ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
                 ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
-                purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-                assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-                free_slots = purchased - assigned
+                from zapmail_slots import free_slots as _zm_free
+                free_slots = _zm_free(ws_data) or 0  # workspace totals, not Google-only
                 if free_slots >= inboxes_needed:
                     log.append(f"Have {free_slots} free slots (need {inboxes_needed})")
                     break
@@ -4407,9 +4406,8 @@ def group_setup_domain():
                 try:
                     ws_resp = req.get(f"{ZAPMAIL_API}/v2/workspaces", headers=zm_h(), timeout=30)
                     ws_data = ws_resp.json().get("data", {}).get("currentWorkspace", {})
-                    purchased = int(ws_data.get("totalMailboxesPurchasedGoogle", "0"))
-                    assigned = int(ws_data.get("assignedMailboxesCountGoogle", "0"))
-                    free_slots = purchased - assigned
+                    from zapmail_slots import free_slots as _zm_free
+                    free_slots = _zm_free(ws_data) or 0  # workspace totals, not Google-only
                     if free_slots >= needed:
                         result["checks"].append(f"slot_check: OK ({free_slots} free, need {needed})")
                         buy_ok = True
