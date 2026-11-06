@@ -145,8 +145,9 @@ def get_mailbox_quota():
         h = zm_headers(WID)
         r = requests.get("https://api.zapmail.ai/api/v2/workspaces", headers=h, timeout=30)
         ws = r.json().get("data", {}).get("currentWorkspace", {})
-        purchased = int(ws.get("totalMailboxesPurchasedGoogle", 0))
-        assigned = int(ws.get("assignedMailboxesCountGoogle", 0))
+        # Workspace totals, not Google-only: add-on slots only show in the totals.
+        purchased = int(ws.get("totalMailboxesPurchased", ws.get("totalMailboxesPurchasedGoogle", 0)))
+        assigned = int(ws.get("assignedMailboxesCount", ws.get("assignedMailboxesCountGoogle", 0)))
         return purchased, assigned
     except Exception:
         return None, None

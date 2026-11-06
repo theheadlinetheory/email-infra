@@ -54,6 +54,8 @@ from __future__ import annotations
 import re
 import time
 
+from zapmail_slots import free_slots
+
 MAX_PER_DOMAIN = 3
 ALLOWED_PROVIDER = "GOOGLE"
 
@@ -561,11 +563,9 @@ class LiveIO:
     def zapmail_free_slots(self):
         try:
             ws = ((self.S.zm_list_workspaces() or {}).get("data") or {}).get("currentWorkspace") or {}
-            bought = int(ws.get("totalMailboxesPurchasedGoogle") or 0)
-            used = int(ws.get("assignedMailboxesCountGoogle") or 0)
         except (AttributeError, TypeError, ValueError):
             return None
-        return bought - used
+        return free_slots(ws)
 
     def zapmail_buy_slots(self, n):
         try:

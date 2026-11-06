@@ -189,9 +189,8 @@ def step_create_inboxes(pipeline_id: str, config: dict) -> bool:
         needed = len(domains_needing_inboxes) * INBOXES_PER_DOMAIN
         ws = zm_get("/v2/workspaces")
         cw = ws.get("data", {}).get("currentWorkspace", {}) if isinstance(ws, dict) else {}
-        total_purchased = int(cw.get("totalMailboxesPurchasedGoogle", "0"))
-        total_assigned = int(cw.get("assignedMailboxesCountGoogle", "0"))
-        unassigned = total_purchased - total_assigned
+        from zapmail_slots import free_slots
+        unassigned = free_slots(cw) or 0  # workspace totals, not Google-only
         slots_to_buy = max(0, needed - unassigned)
 
         if slots_to_buy > 0:
