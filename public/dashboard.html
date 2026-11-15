@@ -616,6 +616,10 @@ function renderOnboarding(){
 // operator dismisses it, so the campaign links stay clickable long enough to
 // actually use them.
 let REALLOC_RESULT = null;
+// One reallocation at a time. Parallel clicks each grabbed the same reserve
+// inboxes and put them in two clients' campaigns (2026-11-15). The server now
+// refuses overlapping runs too; this just stops the second click being sent.
+let REALLOC_BUSY = '';
 
 function reallocResultHtml(){
   const r = REALLOC_RESULT;
@@ -1721,6 +1725,7 @@ function wireDomainCards(){
   };
   document.querySelectorAll('button[data-dreal]').forEach(b => b.onclick = async () => {
     const dom = b.dataset.dreal;
+    if (REALLOC_BUSY) { dmsg(dom, `<span class="bad">Wait — ${esc(REALLOC_BUSY)} is still reallocating.</span>`); return; }
     const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
     const emails = (row.need_reallocate || []).map(m => m.email);
     dmsg(dom, 'checking reserve…');
@@ -1745,7 +1750,12 @@ function wireDomainCards(){
                        + `the replacement still goes in.\n\n` : '')
                + `Each is swapped for a niche-matched reserve inbox.`)) { dmsg(dom, ''); return; }
     dmsg(dom, 'reallocating…');
-    const r = await post('/api/health-reallocate', {emails, confirm: true});
+    REALLOC_BUSY = dom;
+    let r;
+    try { r = await post('/api/health-reallocate', {emails, confirm: true}); }
+    finally { REALLOC_BUSY = ''; }
+    if (r.error && /failed: /.test(r.error))
+      r.error += ' — the connection dropped, but the swap may still have gone through. Reload and check before clicking again.';
     // Keep the result OUTSIDE the domain card. dmsg writes into #dm-<domain>,
     // which showTab destroys when it re-renders — so the outcome of the one
     // action that moves live senders flashed up and vanished, and the tab came
@@ -1847,8 +1857,12 @@ function wireReplace(act){
                + `Each is removed from its ACTIVE campaign and a niche-matched reserve `
                + `inbox goes in. After this you must hit Reallocate mailboxes on the `
                + `campaign in SmartLead — the checklist below will show which.`)) return;
+    if (REALLOC_BUSY) return rpNote(`<div class="banner">Wait — ${esc(REALLOC_BUSY)} is still reallocating.</div>`);
     rpNote('<div class="meta">reallocating…</div>');
-    const r = await post('/api/health-reallocate', {emails, confirm: true});
+    REALLOC_BUSY = 'selected inboxes';
+    let r;
+    try { r = await post('/api/health-reallocate', {emails, confirm: true}); }
+    finally { REALLOC_BUSY = ''; }
     rpNote(r.error ? `<div class="banner">${esc(r.error)}</div>`
                    : `<div class="banner">Reallocated ${r.reallocated ?? n}. Now hit
                       <b>Reallocate mailboxes</b> on the campaigns listed below.</div>`);

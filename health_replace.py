@@ -939,7 +939,82 @@ def _run_acq_swaps(emails, cands, status_by, status_map) -> dict:
             "old_to_cancel": old_to_cancel, "reserve_used": reserve_used}
 
 
+# ---------------------------------------------------------------------------
+# One reallocation at a time, across every serverless instance.
+#
+# Job + reserve-claim state is one JSON blob read-modify-written per request.
+# Six domain "Reallocate" clicks fired within a minute on 2026-11-15 each read
+# the same unclaimed reserve list, picked the same inboxes and overwrote each
+# other's saves — three reserve inboxes landed in two clients' live campaigns.
+# The lock is a row in `state` inserted WITHOUT merge-duplicates: the unique key
+# makes the insert atomic, so a second request gets a conflict and is refused.
+# A lock older than the function's max runtime is stale and gets taken over.
+# ---------------------------------------------------------------------------
+REALLOC_LOCK_KEY = "realloc_lock"
+REALLOC_LOCK_STALE_S = 330          # vercel maxDuration is 300s
+
+
+class ReallocBusy(Exception):
+    pass
+
+
+def _take_realloc_lock(what: str) -> None:
+    import json as _json
+    import time as _t
+    row = {"key": REALLOC_LOCK_KEY,
+           "data": _json.dumps({"ts": _t.time(), "what": what}),
+           "updated_at": datetime.now().isoformat()}
+    for _ in range(2):
+        try:
+            store._request("POST", "/state", json_body=row)
+            return
+        except Exception as e:                       # noqa: BLE001
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code != 409:
+                raise
+        cur = store.get_state(REALLOC_LOCK_KEY) or {}
+        age = _t.time() - float(cur.get("ts") or 0)
+        if age < REALLOC_LOCK_STALE_S:
+            raise ReallocBusy(f"another reallocation is running ({cur.get('what') or '?'}, "
+                              f"started {int(age)}s ago) — wait for it to finish, then retry")
+        _release_realloc_lock()                      # stale: a crashed run left it
+    raise ReallocBusy("could not take the reallocation lock — retry in a minute")
+
+
+def _release_realloc_lock() -> None:
+    try:
+        store._request("DELETE", "/state", params={"key": f"eq.{REALLOC_LOCK_KEY}"})
+    except Exception:                                # noqa: BLE001
+        pass
+
+
+def _locked(what: str, fn, *a, **kw) -> dict:
+    try:
+        _take_realloc_lock(what)
+    except ReallocBusy as e:
+        return {"error": str(e), "busy": True}
+    try:
+        return fn(*a, **kw)
+    finally:
+        _release_realloc_lock()
+
+
 def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
+    """Locked wrapper — see _reallocate_emails. Dry runs move nothing and skip the lock."""
+    if not confirm:
+        return _reallocate_emails(emails, confirm=False)
+    dom = ",".join(sorted({(e or "").split("@")[-1] for e in emails if e}))
+    return _locked(f"reallocate {dom}", _reallocate_emails, emails, confirm=True)
+
+
+def replace_all_burned(client: str, confirm: bool = False) -> dict:
+    """Locked wrapper — see _replace_all_burned."""
+    if not confirm:
+        return _replace_all_burned(client, confirm=False)
+    return _locked(f"replace-all {client}", _replace_all_burned, client, confirm=True)
+
+
+def _reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
     """Reallocate an explicit set of burned inboxes (any client/domain/acquisition)
     — remove each from its ACTIVE campaign(s) and swap in compatible reserve. Drives
     the domain-priority view's 'Reallocate' button (frontend, no Claude session).
@@ -1045,7 +1120,7 @@ def reallocate_emails(emails: list[str], confirm: bool = False) -> dict:
             "note": note}
 
 
-def replace_all_burned(client: str, confirm: bool = False) -> dict:
+def _replace_all_burned(client: str, confirm: bool = False) -> dict:
     """One-shot: for every burned inbox of a client, flag -> assign niche-matched
     reserve -> swap (re-tag + campaign add/remove + forwarding). Dry-run reports
     the plan + whether there's enough compatible reserve."""
