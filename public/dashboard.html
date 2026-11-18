@@ -181,9 +181,10 @@ async function api(path){
   const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
   return r.ok ? j : {error: j.error || ('HTTP ' + r.status)};
 }
-async function post(path, body){
+async function post(path, body, timeoutMs){
+  const ms = timeoutMs || FETCH_TIMEOUT_MS;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(), ms);
   let r;
   try {
     r = await fetch(path, {method: 'POST', credentials: 'same-origin', signal: ctl.signal,
@@ -196,7 +197,7 @@ async function post(path, body){
     // instead of reporting an error the server never gave.
     if (e.name === 'AbortError') {
       return {timedOut: true,
-              error: `${path} took longer than ${FETCH_TIMEOUT_MS / 1000}s. It may still have `
+              error: `${path} took longer than ${ms / 1000}s. It may still have `
                    + `gone through — reload and check before trying again.`};
     }
     return {error: `${path} failed: ${e.message}`};
@@ -213,7 +214,7 @@ async function post(path, body){
     return {error: 'not signed in — nothing was changed.'};
   }
   const j = await r.json().catch(() => ({error: 'bad JSON from ' + path}));
-  return r.ok ? j : {error: j.error || ('HTTP ' + r.status), refused: j.refused};
+  return r.ok ? j : {...j, error: j.error || ('HTTP ' + r.status), refused: j.refused};
 }
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const money = n => '$' + Number(n || 0).toLocaleString();
@@ -612,51 +613,252 @@ function renderOnboarding(){
   });
 }
 
-// Survives the re-render that follows a reallocation. Cleared only when the
-// operator dismisses it, so the campaign links stay clickable long enough to
-// actually use them.
-let REALLOC_RESULT = null;
-// One reallocation at a time. Parallel clicks each grabbed the same reserve
-// inboxes and put them in two clients' campaigns (2026-11-15). The server now
-// refuses overlapping runs too; this just stops the second click being sent.
-let REALLOC_BUSY = '';
+// ── Reallocation queue ────────────────────────────────────────────────
+// Click Reallocate on as many domains as you like: each click joins a queue
+// and they run ONE AT A TIME, in click order. The server refuses overlapping
+// runs (parallel clicks double-assigned reserve on 2026-11-15, see #184), and
+// that refusal used to surface as "Reallocation failed — another reallocation
+// is running", which made you wait and click again. Now a job that meets a
+// busy server waits and retries itself.
+//
+// Retrying is safe: the server skips inboxes that already have a job, so a
+// retry after a dropped connection swaps only what the first try didn't.
+//
+// Finished jobs (and their "go click Reallocate mailboxes" campaign links) are
+// kept in localStorage for 24h, so a reload doesn't lose the list. Queued jobs
+// survive a reload too and resume.
+const RQ_STORE = 'reallocJobs.v1', RQ_TICK_STORE = 'reallocTicked.v1';
+const RQ_KEEP_MS = 24 * 3600e3;
+const RQ_RETRY_MS = 20000;            // wait between tries while the server is busy
+const RQ_MAX_WAIT_MS = 10 * 60e3;     // give up waiting on someone else's run after this
+const RQ_POST_MS = 310000;            // the swap can take up to Vercel's 300s
+const RQ_LIVE = ['queued', 'running', 'waiting'];
+const REALLOC_JOBS = {};              // key -> {key, domain, label, emails, state, msg, result, error, at}
+const REALLOC_ORDER = [];
+let REALLOC_RUNNING = false;
+const rqGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? d; } catch (e) { return d; } };
+const rqSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const REALLOC_TICKED = new Set(rqGet(RQ_TICK_STORE, []));
+const rqSleep = ms => new Promise(r => setTimeout(r, ms));
+const dmId = dom => 'dm-' + String(dom).replace(/[^a-z0-9]/gi, '-');
 
-function reallocResultHtml(){
-  const r = REALLOC_RESULT;
-  if (!r) return '';
-  if (r.error) {
-    return `<div class="banner bad"><b>Reallocation failed on ${esc(r.domain)}</b> —
-      ${esc(r.error)}<button class="act" id="rr-x" style="margin-left:8px">Dismiss</button></div>`;
+function rqPersist(){
+  rqSet(RQ_STORE, REALLOC_ORDER.map(k => REALLOC_JOBS[k]).filter(Boolean));
+  rqSet(RQ_TICK_STORE, [...REALLOC_TICKED].slice(-300));
+}
+(function rqRestore(){
+  const cutoff = Date.now() - RQ_KEEP_MS;
+  for (const j of rqGet(RQ_STORE, [])) {
+    if (!j || !j.key || (j.at || 0) < cutoff || REALLOC_JOBS[j.key]) continue;
+    if (RQ_LIVE.includes(j.state)) { j.state = 'queued'; j.msg = 'resumed after reload'; }
+    REALLOC_JOBS[j.key] = j; REALLOC_ORDER.push(j.key);
   }
-  const swapped = r.swapped || 0, asked = r.asked || 0;
+  if (REALLOC_ORDER.some(k => REALLOC_JOBS[k].state === 'queued'))
+    setTimeout(reallocWorker, 1500);
+})();
+window.addEventListener('beforeunload', e => {
+  if (REALLOC_ORDER.some(k => RQ_LIVE.includes(REALLOC_JOBS[k].state))) {
+    e.preventDefault(); e.returnValue = '';
+  }
+});
+
+function rqLive(key){ const j = REALLOC_JOBS[key]; return !!(j && RQ_LIVE.includes(j.state)); }
+
+function enqueueRealloc(key, emails, label, domain){
+  if (rqLive(key)) return false;
+  const i = REALLOC_ORDER.indexOf(key);
+  if (i >= 0) REALLOC_ORDER.splice(i, 1);          // re-queue a finished/failed one at the back
+  REALLOC_JOBS[key] = {key, domain: domain || null, label, emails, state: 'queued',
+                       msg: '', at: Date.now()};
+  REALLOC_ORDER.push(key);
+  rqPersist(); reallocRerender();
+  reallocWorker();
+  return true;
+}
+
+async function reallocWorker(){
+  if (REALLOC_RUNNING) return;
+  REALLOC_RUNNING = true;
+  let ran = 0;
+  try {
+    let key;
+    while ((key = REALLOC_ORDER.find(k => REALLOC_JOBS[k] && REALLOC_JOBS[k].state === 'queued'))) {
+      await runReallocJob(REALLOC_JOBS[key]);
+      ran++;
+      rqPersist(); reallocRerender();
+    }
+  } finally { REALLOC_RUNNING = false; }
+  // Queue drained: pull fresh data once, so the cards and the "Waiting on a
+  // manual Reallocate" list reflect every swap. Not between jobs: a full
+  // re-render would wipe ticked checkboxes mid-queue.
+  if (ran && CURRENT === 'inboxes') showTab('inboxes', true);
+}
+
+async function runReallocJob(j){
+  const t0 = Date.now();
+  let drops = 0, tries = 0;
+  for (;;) {
+    j.state = 'running'; j.msg = 'reallocating…'; reallocRerender();
+    tries++;
+    const r = await post('/api/health-reallocate', {emails: j.emails, confirm: true}, RQ_POST_MS);
+    const dropped = !r.busy && (r.timedOut || /failed: /.test(r.error || ''));
+    if (r.busy || dropped) {
+      if (dropped && ++drops > 3) {
+        j.state = 'failed';
+        j.error = 'the connection dropped 4 times. The swap may still have gone through: reload and check before re-queueing.';
+        return;
+      }
+      if (Date.now() - t0 > RQ_MAX_WAIT_MS) {
+        j.state = 'failed';
+        j.error = `still busy after ${Math.round(RQ_MAX_WAIT_MS / 60000)} min: ${r.error || ''}. Re-queue it once the other run finishes.`;
+        return;
+      }
+      j.state = 'waiting';
+      j.msg = r.busy
+        ? `waiting for the run ahead to finish (${(r.error || '').replace(/ — wait for it.*$/, '')}), retrying automatically`
+        : 'connection dropped, the swap may still be running. Checking again shortly; inboxes already swapped are skipped.';
+      reallocRerender();
+      await rqSleep(RQ_RETRY_MS);
+      continue;
+    }
+    j.at = Date.now();
+    if (r.error && /already have jobs/.test(r.error)) {
+      j.state = 'done';
+      j.result = {swapped: 0, asked: j.emails.length, already: true, campaigns_to_reallocate: []};
+      j.msg = tries > 1
+        ? 'The earlier attempt swapped them. Its campaigns are in "Waiting on a manual Reallocate in SmartLead" below.'
+        : 'Already reallocated earlier. Its campaigns are in "Waiting on a manual Reallocate in SmartLead" below.';
+      return;
+    }
+    if (r.error) { j.state = 'failed'; j.error = r.error; return; }
+    j.state = 'done'; j.msg = '';
+    j.result = {swapped: r.swapped || 0, asked: j.emails.length, held: r.held || [],
+                failed: r.failed || [], old_to_cancel: r.old_to_cancel || [],
+                campaigns_to_reallocate: (r.campaigns_to_reallocate || [])
+                  .map(c => ({name: c.name, url: c.url}))};
+    return;
+  }
+}
+
+function rqCampLinks(camps){
+  const open = camps.filter(c => !REALLOC_TICKED.has(c.name));
+  if (!open.length) return '';
+  return `<ul style="margin:6px 0 0 18px">${open.map(c => `<li style="margin:3px 0">${
+      c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(c.name)}</a>`
+            : esc(c.name)}
+      <button class="act" data-realdone="${esc(c.name)}" style="margin-left:6px;padding:1px 8px">Done — tick off</button></li>`).join('')}</ul>`;
+}
+
+function rqJobSummary(j){
+  const r = j.result || {};
+  if (j.state === 'queued') {
+    const ahead = REALLOC_ORDER.filter(k => rqLive(k)).indexOf(j.key);
+    return `<span class="warn">⏳ Queued${ahead > 0 ? ` (#${ahead + 1} in line)` : ''}</span>${j.msg ? ` <span class="dim">· ${esc(j.msg)}</span>` : ''}`;
+  }
+  if (j.state === 'running') return '<span class="warn">⟳ Reallocating…</span>';
+  if (j.state === 'waiting') return `<span class="warn">⟳ ${esc(j.msg)}</span>`;
+  if (j.state === 'failed') return `<span class="bad">✖ Reallocation failed: ${esc(j.error || '')}</span>`;
+  if (r.already) return `<span class="good">✓</span> <span class="dim">${esc(j.msg)}</span>`;
   const held = r.held || [], failed = r.failed || [];
-  const camps = r.campaigns_to_reallocate || [];
-  // Say what happened to EVERY inbox asked about. "2 of 3" with no account of
-  // the third is why this looked broken.
-  let parts = [`<b>${swapped} of ${asked} swapped</b> on ${esc(r.domain)}`];
+  const parts = [`<b>${r.swapped || 0} of ${r.asked || 0} swapped</b>`];
   if (held.length) parts.push(`${held.length} kept in campaign (own a positive reply)`);
   if (failed.length) parts.push(`<span class="bad">${failed.length} failed</span>`);
-  const unaccounted = asked - swapped - held.length - failed.length;
-  if (unaccounted > 0) parts.push(`<span class="warn">${unaccounted} already had a job</span>`);
-  // "1 failed" with no reason left nothing to act on.
-  const why = failed.length ? `<ul style="margin:6px 0 0 18px">${failed.map(f =>
+  const un = (r.asked || 0) - (r.swapped || 0) - held.length - failed.length;
+  if (un > 0) parts.push(`<span class="warn">${un} already had a job</span>`);
+  const why = failed.length ? `<ul style="margin:4px 0 0 18px">${failed.map(f =>
       `<li>${esc(f.email)} — ${esc(f.stage || '')}: ${esc(f.error || 'no reason given')}</li>`).join('')}</ul>` : '';
-  return `<div class="banner ${failed.length ? 'bad' : 'ok'}">
-    ${parts.join(' · ')}
-    <button class="act" id="rr-x" style="margin-left:8px">Dismiss</button>
-    ${why}
-    ${camps.length ? `<div style="margin-top:8px">
-        <b>Now click “Reallocate mailboxes” in SmartLead</b> — once per campaign:
-        <ul style="margin:6px 0 0 18px">${camps.map(c => `<li>${
-          c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a>`
-                : esc(c.name)}</li>`).join('')}</ul>
-        <div class="dim" style="margin-top:4px">Until that click the replacements hold no
-          leads — the swap is only half done.</div>
-      </div>`
-      : '<div class="dim" style="margin-top:6px">No ACTIVE campaign needs the manual click.</div>'}
-    ${(r.old_to_cancel || []).length ? `<div class="dim" style="margin-top:6px">${
-      r.old_to_cancel.length} old inbox(es) are now safe to cancel.</div>` : ''}
+  return `<span class="${failed.length ? 'bad' : 'good'}">✓</span> ${parts.join(' · ')}${why}`;
+}
+
+// Under the domain card's buttons: where this domain's job is, and once it is
+// done, the campaigns that need SmartLead's "Reallocate mailboxes" click.
+function reallocCardHtml(dom){
+  const j = REALLOC_JOBS[dom];
+  if (!j) return '';
+  const camps = (j.result || {}).campaigns_to_reallocate || [];
+  const links = j.state === 'done' ? rqCampLinks(camps) : '';
+  const allTicked = j.state === 'done' && camps.length && !links;
+  return `<div style="font-size:12.5px;color:inherit">${rqJobSummary(j)}
+    ${!RQ_LIVE.includes(j.state) ? `<button class="act" data-rqx="${esc(j.key)}" style="margin-left:6px;padding:1px 8px">Dismiss</button>` : ''}
+    ${links ? `<div style="margin-top:6px"><b>Now open each campaign and click “Reallocate mailboxes”:</b>${links}</div>` : ''}
+    ${allTicked ? '<div class="good" style="margin-top:4px">All campaigns ticked off.</div>' : ''}
+    ${j.state === 'done' && !camps.length && !(j.result || {}).already
+        ? '<div class="dim" style="margin-top:4px">No ACTIVE campaign needs the manual click.</div>' : ''}
   </div>`;
+}
+
+// Top of the Inboxes tab: the whole queue at a glance, plus every campaign
+// from this queue's runs that still needs the manual click, in one list.
+function reallocQueueHtml(){
+  const jobs = REALLOC_ORDER.map(k => REALLOC_JOBS[k]).filter(Boolean);
+  if (!jobs.length) return '';
+  const n = s => jobs.filter(j => j.state === s).length;
+  const live = jobs.filter(j => RQ_LIVE.includes(j.state)).length;
+  const seen = new Set(), camps = [];
+  for (const j of jobs) for (const c of ((j.result || {}).campaigns_to_reallocate || []))
+    if (!seen.has(c.name)) { seen.add(c.name); camps.push(c); }
+  camps.sort((a, b) => a.name.localeCompare(b.name));
+  const links = rqCampLinks(camps);
+  const failed = jobs.filter(j => j.state === 'failed');
+  return `<div class="banner ${failed.length ? 'bad' : (live ? '' : 'ok')}">
+    <b>Reallocation queue</b> —
+    ${live ? `${n('running') + n('waiting')} running · ${n('queued')} queued · ` : ''}${n('done')} done${failed.length ? ` · <span class="bad">${failed.length} failed</span>` : ''}
+    ${live ? '<span class="dim"> · runs one at a time; keep this tab open</span>' : ''}
+    ${!live ? `<button class="act" id="rq-clear" style="margin-left:8px">Clear finished</button>` : ''}
+    <ul style="margin:6px 0 0 18px">${jobs.map(j => `<li style="margin:2px 0"><b>${esc(j.label)}</b> — ${rqJobSummary(j)}</li>`).join('')}</ul>
+    ${links ? `<div style="margin-top:8px"><b>Campaigns to “Reallocate mailboxes” in SmartLead</b> (${
+        camps.filter(c => !REALLOC_TICKED.has(c.name)).length}):${links}
+        <div class="dim" style="margin-top:4px">Until that click the replacements hold no leads, so the swap is only half done.</div></div>` : ''}
+  </div>`;
+}
+
+function wireReallocBits(root){
+  (root || document).querySelectorAll('button[data-realdone]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    REALLOC_TICKED.add(b.dataset.realdone); rqPersist();
+    await post('/api/health-reallocate-campaigns', {done: b.dataset.realdone});
+    if (REALLOC_RUNNING) reallocRerender(); else showTab('inboxes', true);
+  });
+  (root || document).querySelectorAll('button[data-rqx]').forEach(b => b.onclick = () => {
+    const k = b.dataset.rqx;
+    delete REALLOC_JOBS[k];
+    const i = REALLOC_ORDER.indexOf(k); if (i >= 0) REALLOC_ORDER.splice(i, 1);
+    rqPersist(); reallocRerender();
+  });
+  const clr = document.getElementById('rq-clear');
+  if (clr) clr.onclick = () => {
+    for (const k of [...REALLOC_ORDER]) if (!rqLive(k)) {
+      delete REALLOC_JOBS[k]; REALLOC_ORDER.splice(REALLOC_ORDER.indexOf(k), 1);
+    }
+    rqPersist(); reallocRerender();
+  };
+}
+
+function reallocBtnLabel(b){
+  const j = REALLOC_JOBS[b.dataset.dreal];
+  if (!b.dataset.label) b.dataset.label = b.textContent;
+  if (j && RQ_LIVE.includes(j.state)) {
+    b.disabled = true;
+    b.textContent = j.state === 'queued' ? 'Queued…' : 'Reallocating…';
+  } else { b.disabled = false; b.textContent = b.dataset.label; }
+}
+
+// Patch the live page in place: the summary, each card's status and its button.
+// Deliberately not a full re-render, which would clear ticked checkboxes.
+function reallocRerender(){
+  const top = document.getElementById('rq-top');
+  if (top) { top.innerHTML = reallocQueueHtml(); wireReallocBits(top); }
+  for (const k of REALLOC_ORDER) {
+    const j = REALLOC_JOBS[k];
+    if (!j || !j.domain) continue;
+    const el = document.getElementById(dmId(j.domain));
+    if (el) { el.innerHTML = reallocCardHtml(j.domain); wireReallocBits(el); }
+  }
+  document.querySelectorAll('button[data-dreal]').forEach(reallocBtnLabel);
+  // dismissed jobs: blank their card slot
+  document.querySelectorAll('.dmsg[data-dom]').forEach(el => {
+    if (!REALLOC_JOBS[el.dataset.dom] && el.dataset.rq === '1') el.innerHTML = '';
+  });
 }
 
 // Warm-up state for every inbox group — Tim's rule: an inbox is sending on an
@@ -713,7 +915,7 @@ function renderInboxes(){
   // same picture; whichever one it is has to be said before the number.
   const fr = d.freshness || {};
   const pl = d.pipeline || {}, lr = pl.last_run || {};
-  let html = reallocResultHtml();
+  let html = `<div id="rq-top">${reallocQueueHtml()}</div>`;
   // Scoring now runs from stored history even when Smartlead is unreachable,
   // so "stale" means the NEWEST DAY is old, not that the list stopped moving.
   if (pl.fetch_error) {
@@ -857,7 +1059,7 @@ function renderInboxes(){
         <div style="margin-top:5px">${rows}</div>
         ${collat}
         <div class="dacts">${reBtn} ${canBtn}</div>
-        <div class="dmsg" id="dm-${esc(x.domain).replace(/[^a-z0-9]/gi, '-')}"></div>
+        <div class="dmsg" id="${dmId(x.domain)}" data-dom="${esc(x.domain)}" data-rq="1">${reallocCardHtml(x.domain)}</div>
       </div>`;
     }).join('');
   } else {
@@ -975,9 +1177,8 @@ function renderInboxes(){
   html += '<div id="rank-box"></div>';
   el.innerHTML = html;
   renderRanking(d.ranking || []);
-  const rx = document.getElementById('rr-x');
-  if (rx) rx.onclick = () => { REALLOC_RESULT = null; showTab('inboxes'); };
   wireReplace(act);
+  reallocRerender();
 }
 
 // What "burned" means, written out on the page, plus whether the pipeline that
@@ -1725,13 +1926,16 @@ function wireDomainCards(){
   };
   document.querySelectorAll('button[data-dreal]').forEach(b => b.onclick = async () => {
     const dom = b.dataset.dreal;
-    if (REALLOC_BUSY) { dmsg(dom, `<span class="bad">Wait — ${esc(REALLOC_BUSY)} is still reallocating.</span>`); return; }
+    if (rqLive(dom)) return;                          // already queued / running
     const row = ((DATA.inboxes || {}).domain_view || {}).domains.find(x => x.domain === dom);
     const emails = (row.need_reallocate || []).map(m => m.email);
-    dmsg(dom, 'checking reserve…');
+    b.disabled = true;
+    dmsg(dom, 'checking replies…');
     // Positive-reply pre-flight first, same order as every other path here:
-    // a reply is welded to the mailbox that sent it.
+    // a reply is welded to the mailbox that sent it. Read-only, so it can run
+    // while another domain's swap is in flight.
     const pre = await post('/api/health-positive-check', {emails});
+    b.disabled = false;
     if (pre.error) { dmsg(dom, `<span class="bad">${esc(pre.error)}</span>`); return; }
     // positive_total === null means the reply check could not complete. That is
     // NOT zero: detaching an inbox that owns a live thread freezes the
@@ -1741,28 +1945,18 @@ function wireDomainCards(){
     const unsure = res1.filter(r => r.unknown).length;
     if (unsure) {
       dmsg(dom, `<span class="bad">Reply check could not complete for ${unsure}
-        inbox(es), so nothing was reallocated. An unknown reply state is treated
+        inbox(es), so nothing was queued. An unknown reply state is treated
         as "owns a reply" — retry once Smartlead responds.</span>`);
       return;
     }
+    const ahead = REALLOC_ORDER.filter(k => rqLive(k)).length;
     if (!confirm(`Reallocate ${emails.length} burned inbox(es) on ${dom}?\n\n`
                + (held ? `${held} own a positive reply and will be HELD in their campaign — `
                        + `the replacement still goes in.\n\n` : '')
-               + `Each is swapped for a niche-matched reserve inbox.`)) { dmsg(dom, ''); return; }
-    dmsg(dom, 'reallocating…');
-    REALLOC_BUSY = dom;
-    let r;
-    try { r = await post('/api/health-reallocate', {emails, confirm: true}); }
-    finally { REALLOC_BUSY = ''; }
-    if (r.error && /failed: /.test(r.error))
-      r.error += ' — the connection dropped, but the swap may still have gone through. Reload and check before clicking again.';
-    // Keep the result OUTSIDE the domain card. dmsg writes into #dm-<domain>,
-    // which showTab destroys when it re-renders — so the outcome of the one
-    // action that moves live senders flashed up and vanished, and the tab came
-    // back looking like nothing had happened.
-    REALLOC_RESULT = r.error ? {error: r.error, domain: dom, asked: emails.length}
-                             : {...r, domain: dom, asked: emails.length};
-    await showTab('inboxes', true);
+               + `Each is swapped for a niche-matched reserve inbox.`
+               + (ahead ? `\n\n${ahead} reallocation(s) ahead of it, so this one is queued and runs after them.` : '')))
+      { dmsg(dom, ''); return; }
+    enqueueRealloc(dom, emails, dom, dom);
   });
   document.querySelectorAll('button[data-dcancel]').forEach(b => b.onclick = async () => {
     const dom = b.dataset.dcancel;
@@ -1780,10 +1974,7 @@ function wireDomainCards(){
                       : '<span class="good">scheduled — #zapmail-billing will confirm</span>');
     showTab('inboxes', true);
   });
-  document.querySelectorAll('button[data-realdone]').forEach(b => b.onclick = async () => {
-    await post('/api/health-reallocate-campaigns', {done: b.dataset.realdone});
-    showTab('inboxes', true);
-  });
+  wireReallocBits(document);
 }
 
 function wireReplace(act){
@@ -1857,16 +2048,9 @@ function wireReplace(act){
                + `Each is removed from its ACTIVE campaign and a niche-matched reserve `
                + `inbox goes in. After this you must hit Reallocate mailboxes on the `
                + `campaign in SmartLead — the checklist below will show which.`)) return;
-    if (REALLOC_BUSY) return rpNote(`<div class="banner">Wait — ${esc(REALLOC_BUSY)} is still reallocating.</div>`);
-    rpNote('<div class="meta">reallocating…</div>');
-    REALLOC_BUSY = 'selected inboxes';
-    let r;
-    try { r = await post('/api/health-reallocate', {emails, confirm: true}); }
-    finally { REALLOC_BUSY = ''; }
-    rpNote(r.error ? `<div class="banner">${esc(r.error)}</div>`
-                   : `<div class="banner">Reallocated ${r.reallocated ?? n}. Now hit
-                      <b>Reallocate mailboxes</b> on the campaigns listed below.</div>`);
-    showTab('inboxes', true);
+    enqueueRealloc('sel-' + Date.now(), emails, `${emails.length} selected inbox(es)`);
+    rpNote(`<div class="banner">Queued. Progress, and the campaigns to click
+      <b>Reallocate mailboxes</b> on, are at the top of this tab.</div>`);
   };
 
   document.getElementById('rp-flag').onclick = async () => {
@@ -2087,8 +2271,8 @@ async function showTab(t, force){
     // refresh it triggers takes ~10s, and blanking the tab to "loading…" hid
     // the only confirmation that the swap had happened — so the action looked
     // like it had done nothing.
-    const keep = (t === 'inboxes' && typeof reallocResultHtml === 'function')
-      ? reallocResultHtml() : '';
+    const keep = (t === 'inboxes' && typeof reallocQueueHtml === 'function')
+      ? reallocQueueHtml() : '';
     el.innerHTML = keep + '<div class="empty">loading…</div>';
   }
   try {
