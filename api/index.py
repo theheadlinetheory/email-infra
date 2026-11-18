@@ -1366,13 +1366,31 @@ def cold_call_inbox_route():
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
 
 
+def _cron_token_ok():
+    """The pg_cron caller's token. It lives in the `state` row
+    cold_call_cron_token (anon has no access to `state`), so the database job
+    and this route share it without a password in either place."""
+    sent = request.headers.get("X-Cron-Token", "")
+    if len(sent) < 32:
+        return False
+    try:
+        import hmac
+        import db as store
+        want = (store.get_state("cold_call_cron_token") or {}).get("token") or ""
+        return len(want) >= 32 and hmac.compare_digest(sent, want)
+    except Exception:
+        return False
+
+
 @app.route("/api/cold-call-inbox/advance", methods=["GET", "POST", "OPTIONS"])
 def cold_call_inbox_advance_route():
-    """Push every unfinished cold-calling order forward. Called by
-    .github/workflows/cold-call-inbox.yml (Vercel crons never fire here)."""
+    """Push every unfinished cold-calling order forward. Called every 10 min by
+    pg_cron in this project's Supabase (cold-call-inbox-advance, X-Cron-Token),
+    and by .github/workflows/cold-call-inbox.yml as a backup: GitHub fires that
+    */15 schedule only every ~8 hours, and Vercel crons never fire here."""
     if request.method == "OPTIONS":
         return _cors(make_response("", 200))
-    if not _check_auth():
+    if not (_check_auth() or _cron_token_ok()):
         return _cors(jsonify({"error": "Unauthorized"})), 401
     import db as store
     store._CACHE_WRITE_ENABLED = True

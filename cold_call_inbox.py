@@ -86,9 +86,11 @@ def sender_name(client_name: str, website: str = "") -> dict:
         return {"firstName": " ".join(words[:cut]), "lastName": " ".join(words[cut:])}
     # One word ("Timesavers"): the trade from their domain if it carries one
     # (timesaverslandscaping), else a neutral "Team".
+    # Only a trade word counts: managemowedcoloradosprings.com would otherwise
+    # name the mailbox "ManageMowed Coloradosprings".
     one = words[0]
     rest = whole_brand(website)[len(one):] if whole_brand(website).startswith(one.lower()) else ""
-    return {"firstName": one, "lastName": rest.title() if len(rest) >= 3 else "Team"}
+    return {"firstName": one, "lastName": rest.title() if rest in TRADE else "Team"}
 
 
 def date_tag(today=None) -> str:
@@ -100,7 +102,8 @@ def date_tag(today=None) -> str:
 
 def normalise_site(website: str) -> str:
     """Zapmail forwarding wants a full URL; the CRM holds 'lightdmv.com'."""
-    w = (website or "").strip().rstrip("/")
+    # The CRM sometimes holds a deep link ("…com/#areas"); forward to the site.
+    w = re.split(r"[#?]", (website or "").strip())[0].rstrip("/")
     if not w:
         return ""
     return w if re.match(r"^https?://", w, re.I) else f"https://{w}"
@@ -255,6 +258,128 @@ def _retry_nameservers(order: dict) -> None:
         order["connect_failed"] = []
 
 
+def _keep_nameservers(order: dict, io) -> None:
+    """Spaceship's asynchronous registration silently puts its own nameservers
+    back after the purchase-time update "succeeded" (ManageMowed sat at `dns`
+    for six days; it hit Deeter and Greenblock within minutes). While the
+    domain has not reached Zapmail, check what is really set and re-point it."""
+    if not hasattr(io, "nameservers_ok"):
+        return
+    j = order.get("journal") or {}
+    if j.get("step", "dns") != "dns":
+        return
+    for d in order.get("domains") or []:
+        if (j.get("domains") or {}).get(d, {}).get("dns_ready"):
+            continue
+        if io.nameservers_ok(d) is False and io.set_nameservers(d):
+            pend = set(order.get("connect_pending") or [])
+            pend.add(d)
+            order["connect_pending"] = sorted(pend)
+            bp._note(bp._journal(order), f"dns: {d} had reverted to the registrar's nameservers; re-pointed")
+
+
+def _repair_mailbox_emails(order: dict) -> None:
+    """Orders made before the `username` fix journaled "@domain" for the
+    mailbox, so `find` could never match it (Quantum, AirLast)."""
+    for d, rec in ((order.get("journal") or {}).get("domains") or {}).items():
+        for m in rec.get("mailboxes") or []:
+            if isinstance(m, dict) and str(m.get("email") or "").startswith("@"):
+                m["email"] = f"{USERNAME}@{d}".lower()
+
+
+def _hold_find_until_active(order: dict, io) -> None:
+    """Zapmail can sit IN_PROGRESS for 8-14 hours before the mailbox exists,
+    and `find` gave up after 40 checks while it was still being made. Hold
+    `find` open until the mailbox is ACTIVE, then export it once more (the first
+    export, made before it was active, often never lands)."""
+    if not hasattr(io, "zapmail_mailbox_statuses"):
+        return
+    j = order.get("journal") or {}
+    if j.get("step") != "find":
+        return
+    want = [m for m in bp._all_mailboxes(order, j) if m.get("email")]
+    if want and len(j.get("smartlead") or {}) >= len(want):
+        return
+    statuses = []
+    for d in order.get("domains") or []:
+        got = io.zapmail_mailbox_statuses(d)
+        if got is None:
+            return                                   # could not look; leave find as it is
+        statuses.extend(got)
+    if not statuses or any(st != "ACTIVE" for st in statuses):
+        j["find_attempts"] = 0
+        j.pop("blocked_reason", None)
+        j["waiting_on"] = f"Zapmail mailbox {','.join(statuses) or 'not listed yet'}"
+        return
+    j.pop("waiting_on", None)
+    if not j.get("reexported"):
+        ids = list(j.get("exported_ids") or [m.get("id") for m in want if m.get("id")])
+        if ids and io.zapmail_export_to_smartlead(ids).get("ok"):
+            j["reexported"] = True
+            j["find_attempts"] = 0
+            j.pop("blocked_reason", None)
+            bp._note(j, "find: mailbox ACTIVE in Zapmail; exported to SmartLead again")
+
+
+class ColdCallIO(bp.LiveIO):
+    """LiveIO plus what an unattended contact@ order needs."""
+
+    def nameservers_ok(self, domain):
+        import requests
+        try:
+            r = requests.get(f"{S.SPACESHIP_API}/domains/{domain}",
+                             headers=S.Spaceship._headers(), timeout=20)
+        except Exception:                            # noqa: BLE001
+            return None
+        if not r.ok:
+            return None
+        ns = (r.json() or {}).get("nameservers") or {}
+        return ns.get("provider") == "custom" and set(ns.get("hosts") or []) >= set(S.CLOUDNS_NAMESERVERS)
+
+    def set_nameservers(self, domain):
+        try:
+            return bool(S.Spaceship.set_nameservers(domain))
+        except Exception:                            # noqa: BLE001
+            return False
+
+    def zapmail_mailbox_statuses(self, domain):
+        try:
+            for zd in self.S.zm_list_domains() or []:
+                if (zd.get("domain") or "").lower() == domain.lower():
+                    return [str(m.get("status") or "") for m in zd.get("mailboxes") or []
+                            if isinstance(m, dict)]
+        except Exception:                            # noqa: BLE001
+            return None
+        return None
+
+    def smartlead_tag(self, account_ids, tag_name, client_name=None):
+        """Exact tag names only. setup.sl_find_or_create_tag matches by
+        substring, which filed PC Landscape under "<client> Group B" and would
+        put a 1/11/26 inbox under 11/11/26."""
+        names = [tag_name] if isinstance(tag_name, str) else list(tag_name)
+        try:
+            tags = self.S.sl_get_all_tags()
+            tids = []
+            for n in names:
+                hit = tags.get(n) or next((t for k, t in tags.items()
+                                           if bp._norm_name(k) == bp._norm_name(n)
+                                           and bp._norm_name(n)), None)
+                if not hit:
+                    hit = self.S.sl_create_tag(n, self.S.sl_pick_unique_color(tags)) or {}
+                    if hit.get("id"):
+                        tags[n] = hit
+                if not hit.get("id"):
+                    return {"ok": False, "error": f"could not create tag {n!r}"}
+                tids.append(hit["id"])
+            cid = self.smartlead_client_id(client_name) if client_name else None
+            _, failed = self.S.sl_tag_accounts_bulk(list(account_ids), tids, client_id=cid)
+            if failed:
+                return {"ok": False, "error": f"tagging failed on {failed} account(s)"}
+        except Exception as e:                       # noqa: BLE001
+            return {"ok": False, "error": str(e)[:160]}
+        return {"ok": True}
+
+
 def advance_all(io=None, clock=time.monotonic) -> dict:
     """Push every unfinished cold-calling order forward. Called on a schedule."""
     orders = bi._orders()
@@ -271,8 +396,12 @@ def advance_all(io=None, clock=time.monotonic) -> dict:
             skipped.append(order.get("id"))
             continue
         try:
+            live_io = io or ColdCallIO()
             _retry_nameservers(order)
-            res = bp.advance(order, io or bp.LiveIO(), budget_seconds=int(left) - 20)
+            _keep_nameservers(order, live_io)
+            _repair_mailbox_emails(order)
+            _hold_find_until_active(order, live_io)
+            res = bp.advance(order, live_io, budget_seconds=int(left) - 20)
             results.append({**summary(order), "resume": res.get("resume"),
                             "log": res.get("log", [])[-3:]})
         except Exception as e:                       # noqa: BLE001 — one order must not stop the rest

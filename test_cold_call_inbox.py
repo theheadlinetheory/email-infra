@@ -239,3 +239,124 @@ def test_enforcer_unreadable_roster_is_not_all_clear():
     out = cci.enforce_warmup_off(list_accounts=lambda: None,
                                  state=(lambda k: None, lambda k, v: saved.update({k: v})), now=10_000)
     assert out["ran"] is False and "unreadable" in out["error"] and not saved
+
+
+# ── unattended orders: what the 11-05..11-19 hand-driven runs had to patch ──
+
+def test_a_one_word_name_takes_only_a_trade_from_the_website():
+    assert cci.sender_name("ManageMowed", "https://www.managemowedcoloradosprings.com/#areas") == \
+        {"firstName": "ManageMowed", "lastName": "Team"}
+
+
+def test_the_forward_target_drops_anchors_and_queries():
+    assert cci.normalise_site("https://www.managemowedcoloradosprings.com/#areas") == \
+        "https://www.managemowedcoloradosprings.com"
+    assert cci.normalise_site("lightdmv.com/?utm=x") == "https://lightdmv.com"
+
+
+class AutoIO(ColdIO):
+    def __init__(self, *a, ns_ok=True, statuses=("ACTIVE",), **k):
+        super().__init__(*a, **k)
+        self.ns_ok = ns_ok
+        self.ns_set = []
+        self.statuses = list(statuses)
+        self.exports = 0
+
+    def nameservers_ok(self, d):
+        return self.ns_ok
+
+    def set_nameservers(self, d):
+        self.ns_set.append(d)
+        self.ns_ok = True
+        return True
+
+    def zapmail_mailbox_statuses(self, d):
+        return list(self.statuses)
+
+    def zapmail_export_to_smartlead(self, ids):
+        self.exports += 1
+        return super().zapmail_export_to_smartlead(ids)
+
+
+def test_reverted_nameservers_are_put_back_while_waiting_on_dns(monkeypatch):
+    f = FakeOrders(monkeypatch)
+    cci.start(BODY, buy=f.buy, pick=lambda b: "woodyslandcare.info")
+    io = AutoIO(["woodyslandcare.info"], dns_ready=False, ns_ok=False)
+    cci.advance_all(io=io)
+    assert io.ns_set == ["woodyslandcare.info"]
+    assert "woodyslandcare.info" in f.orders[0]["connect_pending"]
+    cci.advance_all(io=io)                         # now correct: left alone
+    assert io.ns_set == ["woodyslandcare.info"]
+
+
+def test_find_waits_for_zapmail_instead_of_giving_up(monkeypatch):
+    f = FakeOrders(monkeypatch)
+    cci.start(BODY, buy=f.buy, pick=lambda b: "woodyslandcare.info")
+    io = AutoIO(["woodyslandcare.info"], statuses=["IN_PROGRESS"])
+    io.export_lands = False
+    for _ in range(bp.MAX_FIND_ATTEMPTS + 5):
+        out = cci.advance_all(io=io)["advanced"][0]
+    assert out["step"] == "find" and not out["blocked_reason"]
+    io.statuses = ["ACTIVE"]
+    io.export_lands = True
+    out = cci.advance_all(io=io)["advanced"][0]
+    assert out["status"] == "live"
+    assert f.orders[0]["journal"]["reexported"]
+
+
+def test_old_orders_with_an_at_domain_mailbox_are_repaired(monkeypatch):
+    f = FakeOrders(monkeypatch)
+    cci.start(BODY, buy=f.buy, pick=lambda b: "woodyslandcare.info")
+    io = AutoIO(["woodyslandcare.info"])
+    io.export_lands = False
+    cci.advance_all(io=io)
+    rec = f.orders[0]["journal"]["domains"]["woodyslandcare.info"]
+    rec["mailboxes"][0]["email"] = "@woodyslandcare.info"
+    io.smartlead["contact@woodyslandcare.info"] = 4242
+    assert cci.advance_all(io=io)["advanced"][0]["status"] == "live"
+
+
+class _S:
+    def __init__(self, tags):
+        self.tags = dict(tags)
+        self.created = []
+        self.tagged = None
+
+    def sl_get_all_tags(self):
+        return dict(self.tags)
+
+    def sl_pick_unique_color(self, tags):
+        return "#000000"
+
+    def sl_create_tag(self, name, color):
+        self.created.append(name)
+        return {"id": 900 + len(self.created), "name": name}
+
+    def sl_tag_accounts_bulk(self, ids, tids, client_id=None):
+        self.tagged = (ids, tids, client_id)
+        return len(ids), 0
+
+
+def test_cold_call_tags_never_substring_match():
+    s = _S({"Woody's Landcare LLC Group B": {"id": 1}, "11/11/26": {"id": 2},
+            "Zapmail": {"id": 3}})
+    io = cci.ColdCallIO(setup_module=s)
+    io.smartlead_client_id = lambda n: 77
+    assert io.smartlead_tag([5], ["Woody's Landcare LLC", "Zapmail", "1/11/26"],
+                            client_name="Woody's Landcare LLC")["ok"]
+    assert s.created == ["Woody's Landcare LLC", "1/11/26"]
+    assert s.tagged == ([5], [901, 3, 902], 77)
+
+
+def test_free_slots_count_add_ons_and_mailboxes_read_username():
+    class Z:
+        def zm_list_workspaces(self):
+            return {"data": {"currentWorkspace": {
+                "totalMailboxesPurchased": 1482, "assignedMailboxesCount": 1394,
+                "totalMailboxesPurchasedGoogle": 1370, "assignedMailboxesCountGoogle": 1394}}}
+
+        def zm_list_domains(self):
+            return [{"domain": "x.info", "mailboxes": [{"id": "m1", "username": "contact"}]}]
+    io = bp.LiveIO(setup_module=Z())
+    assert io.zapmail_free_slots() == 88
+    assert io.zapmail_mailboxes_on("x.info", None) == [{"id": "m1", "email": "contact@x.info"}]
