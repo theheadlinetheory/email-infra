@@ -56,16 +56,32 @@ RETIREMENT_TAG_HINTS = ("cleanup", "retired", "burnt")
 #   "don't start warm-up for Landy Rose, please do not."
 WARMUP_EXEMPT_TAG_HINTS = ("landy rose",)
 
+# Mailbox names that never warm, whatever their tag.
+#
+#   "contact" — the cold-calling contact@<brand>.info inboxes
+#   (cold_call_inbox.py). They carry the client's own tag, so a tag hint cannot
+#   catch them. Tim, 2026-10-31: "turn off warmup for all contact@ emails and
+#   make sure it is never turned on for any future contact@ emails."
+WARMUP_EXEMPT_MAILBOXES = ("contact",)
 
-def is_warmup_exempt(tag) -> bool:
-    """True when this tag is deliberately excluded from warm-up.
+
+def is_warmup_exempt(tag, email: str = "") -> bool:
+    """True when this tag, or this mailbox, is deliberately excluded from warm-up.
 
     Every path that ENABLES warm-up must call this, not just the rule that
     checks it. A rule that tolerates an exemption while a sweep overrides it is
     not an exemption, it is a race.
     """
+    if is_warmup_exempt_mailbox(email):
+        return True
     t = (tag or "").strip().lower()
     return any(k in t for k in WARMUP_EXEMPT_TAG_HINTS)
+
+
+def is_warmup_exempt_mailbox(email) -> bool:
+    """contact@anything.info -> True. The mailbox name alone decides."""
+    local, at, _ = (email or "").strip().lower().partition("@")
+    return bool(at) and local in WARMUP_EXEMPT_MAILBOXES
 
 RESERVE_TAGS = ("Generic Landscaping 1", "Generic Landscaping 2")
 REPLACEMENT_TAGS = ("Replacement Group",)
@@ -520,7 +536,7 @@ def rule_12_every_inbox_is_working_or_warming(s) -> Result:
             continue
         # Deliberately excluded by name, with a reason recorded above. Counted
         # and reported, never silently dropped.
-        if is_warmup_exempt(tag):
+        if is_warmup_exempt(tag, a.get("from_email")):
             exempt += 1
             continue
         warm = ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE"
@@ -535,7 +551,7 @@ def rule_12_every_inbox_is_working_or_warming(s) -> Result:
               f"{retired} in retirement buckets (exempt), {len(cold)} cold")
     if exempt:
         detail += (f"; {exempt} deliberately exempt "
-                   f"({', '.join(WARMUP_EXEMPT_TAG_HINTS)})")
+                   f"({', '.join(WARMUP_EXEMPT_TAG_HINTS + tuple(m + '@' for m in WARMUP_EXEMPT_MAILBOXES))})")
     return Result(12, name, FAIL if cold else PASS, detail, cold)
 
 
@@ -556,7 +572,7 @@ def warmup_breakdown(s) -> dict:
         low = tag.lower()
         if any(k in low for k in RETIREMENT_TAG_HINTS):
             state = "retired"
-        elif is_warmup_exempt(tag):
+        elif is_warmup_exempt(tag, a.get("from_email")):
             state = "exempt"
         elif ((a.get("warmup_details") or {}).get("status") or "").upper() == "ACTIVE":
             state = "warming"

@@ -35,13 +35,17 @@ def _account_map() -> dict:
 
 def recover(emails: list[str], dry_run: bool = True) -> dict:
     """Re-enable warm-up on the given inboxes. dry_run reports the plan only."""
+    import check_invariants as civ
     m = _account_map()
+    exempt = [e for e in emails if civ.is_warmup_exempt_mailbox(e)]
+    emails = [e for e in emails if e not in exempt]
     resolved = [(e, m[e]) for e in emails if e in m]
     unresolved = [e for e in emails if e not in m]
 
     if dry_run:
         return {"dry_run": True, "would_recover": len(resolved),
-                "resolved": [e for e, _ in resolved], "unresolved": unresolved}
+                "resolved": [e for e, _ in resolved], "unresolved": unresolved,
+                "never_warmed": exempt}
 
     import setup
     done = []
@@ -56,6 +60,6 @@ def recover(emails: list[str], dry_run: bool = True) -> dict:
     except Exception:
         pass
     return {"dry_run": False, "recovered": len(done), "emails": done,
-            "unresolved": unresolved,
+            "unresolved": unresolved, "never_warmed": exempt,
             "reminder": "Warm-up re-enabled. Also reduce/pause these in their SmartLead "
                         "campaign so they warm without burning further (reallocation is UI-only)."}

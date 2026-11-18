@@ -155,3 +155,37 @@ def test_breakdown_with_no_accounts_says_unavailable_not_zero():
     """Zero cold and "could not read the fleet" must never render the same."""
     b = civ.warmup_breakdown({})
     assert b["available"] is False and b["totals"] == {}
+
+
+# ── contact@ cold-calling inboxes never warm (Tim, 2026-10-31) ─────────────
+
+def test_a_cold_contact_inbox_is_exempt_not_a_violation():
+    """contact@ carries the client's own tag, so only the mailbox name can exempt it."""
+    r = run([_acct("contact@woodyslandcare.info", "Woody's Landcare", warm=False, sent=0)])
+    assert r.status == civ.PASS
+    assert "deliberately exempt" in r.detail and "contact@" in r.detail
+
+
+def test_the_mailbox_exemption_is_exact_not_a_substring():
+    assert civ.is_warmup_exempt_mailbox("Contact@X.info")
+    assert civ.is_warmup_exempt("Woody's Landcare", "contact@woodyslandcare.info")
+    assert not civ.is_warmup_exempt_mailbox("contacts@x.info")
+    assert not civ.is_warmup_exempt_mailbox("s.reynolds@contact.info")
+    assert not civ.is_warmup_exempt_mailbox("contact")
+    assert not civ.is_warmup_exempt_mailbox(None)
+
+
+def test_the_sweep_never_warms_a_contact_inbox():
+    import importlib.util, os
+    spec = importlib.util.spec_from_file_location(
+        "warmup_sweep", os.path.join(os.path.dirname(__file__), "scripts", "warmup_sweep.py"))
+    sweep = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sweep)
+    cold, skipped = sweep.classify([dict(_acct("contact@x.info", "Woody's Landcare", warm=False), id=1),
+                                    dict(_acct("s.r@x.co", "Woody's Landcare", warm=False), id=2)])
+    assert [c[1] for c in cold] == ["s.r@x.co"] and skipped["exempt"] == 1
+
+
+def test_breakdown_counts_contact_as_exempt():
+    b = civ.warmup_breakdown({"accounts": [_acct("contact@x.info", "Woody's Landcare", warm=False)]})
+    assert b["totals"]["exempt"] == 1 and b["totals"]["cold"] == 0

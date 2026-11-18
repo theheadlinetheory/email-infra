@@ -38,5 +38,6 @@ def test_a_staff_session_reaches_the_purchase(client, monkeypatch):
 def test_the_advance_route_needs_the_dashboard_password(client, monkeypatch):
     import cold_call_inbox as cci
     monkeypatch.setattr(cci, "advance_all", lambda: {"ok": True, "pending": 0})
+    monkeypatch.setattr(cci, "enforce_warmup_off", lambda: {"ran": False})
     assert client.post("/api/cold-call-inbox/advance").status_code == 401
     assert client.post("/api/cold-call-inbox/advance?pw=pw-test").get_json()["pending"] == 0

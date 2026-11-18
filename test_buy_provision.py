@@ -433,3 +433,14 @@ def test_the_failed_domain_is_retried_on_the_next_pass():
     fail["on"] = False
     bp.advance(o, io)                      # the rate limit has passed
     assert o["journal"]["domains"]["b.co"]["mailboxes_done"] is True
+
+
+
+def test_a_contact_mailbox_is_never_warmed_but_the_step_still_completes():
+    io = FakeIO(["x.co"])
+    o = order()
+    j = bp._journal(o)
+    j["smartlead"] = {"contact@x.co": 7, "s.reynolds@x.co": 8}
+    advanced, _ = bp._step_warmup(o, j, io)
+    assert advanced and io.warmed == [8]
+    assert any("contact@x.co" in line and "left off" in line for line in j["log"])

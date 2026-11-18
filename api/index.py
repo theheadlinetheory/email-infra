@@ -32,6 +32,12 @@ def _today_iso():
     return _dt.date.today().isoformat()
 
 
+def _civ_exempt_mailbox(email):
+    """contact@ and the like never warm — check_invariants.is_warmup_exempt_mailbox."""
+    import check_invariants as civ
+    return civ.is_warmup_exempt_mailbox(email)
+
+
 def _check_auth():
     if not DASHBOARD_PASSWORD:
         return True
@@ -1372,7 +1378,12 @@ def cold_call_inbox_advance_route():
     store._CACHE_WRITE_ENABLED = True
     try:
         import cold_call_inbox as cci
-        return _cors(jsonify(cci.advance_all()))
+        res = cci.advance_all()
+        try:
+            res["warmup_off"] = cci.enforce_warmup_off()
+        except Exception as e:                       # noqa: BLE001 — never blocks provisioning
+            res["warmup_off"] = {"ran": False, "error": str(e)[:200]}
+        return _cors(jsonify(res))
     except Exception as e:
         import traceback
         return _cors(jsonify({"error": str(e), "trace": traceback.format_exc()})), 500
@@ -4840,6 +4851,12 @@ def group_finalize_account():
         warmup_body = {"warmup_enabled": True, "total_warmup_per_day": 15,
                        "daily_rampup": 5, "reply_rate_percentage": 40}
         warmed = False
+        import check_invariants as _civ
+        acct = req.get(f"{SMARTLEAD_API}/email-accounts/{account_id}?api_key={SMARTLEAD_KEY}", timeout=15)
+        acct_email = (acct.json() if acct.status_code == 200 else {}).get("from_email") or ""
+        if _civ.is_warmup_exempt_mailbox(acct_email):
+            checks.append(f"enable_warmup: skipped — {acct_email} is never warmed")
+            return _cors(jsonify({"ok": True, "tagged": tagged, "warmed": False, "checks": checks}))
         for warmup_attempt in range(3):
             r = req.post(f"{SMARTLEAD_API}/email-accounts/{account_id}/warmup?api_key={SMARTLEAD_KEY}",
                          json=warmup_body, timeout=30)
@@ -5014,7 +5031,8 @@ def finalize_generic_group():
                     break
                 offset += 100
                 _time.sleep(0.5)
-            found_ids = [a["id"] for a in found]
+            found_ids = [a["id"] for a in found
+                         if not _civ_exempt_mailbox(a.get("email"))]
             # Reconstruct tag_ids from state log
             tag_ids = state.get("_tag_ids", [])
             if found_ids and tag_ids:
@@ -5094,7 +5112,8 @@ def finalize_generic_group():
                 return _cors(jsonify({"ok": False, "error": "No accounts found in SmartLead after polling. Try re-running.",
                                       "log": log_lines, "retry": True}))
 
-            found_ids = [a["id"] for a in found]
+            found_ids = [a["id"] for a in found
+                         if not _civ_exempt_mailbox(a.get("email"))]
             _log(f"Found {len(found_ids)} accounts — proceeding to tag + warmup")
 
         # --- Step 3: Get/create tags via GQL (skip if resuming with saved tag_ids) ---
