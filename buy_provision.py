@@ -568,8 +568,15 @@ class LiveIO:
     def zapmail_free_slots(self):
         try:
             ws = ((self.S.zm_list_workspaces() or {}).get("data") or {}).get("currentWorkspace") or {}
-            bought = int(ws.get("totalMailboxesPurchasedGoogle") or 0)
-            used = int(ws.get("assignedMailboxesCountGoogle") or 0)
+            # The workspace-wide counters include add-on slots; the Google-only
+            # ones do not, so they read ~-24 and every order bought 20+ slots it
+            # did not need (PC Landscape, Coastal). Google-only is the fallback.
+            if ws.get("totalMailboxesPurchased") is not None:
+                bought = int(ws.get("totalMailboxesPurchased") or 0)
+                used = int(ws.get("assignedMailboxesCount") or 0)
+            else:
+                bought = int(ws.get("totalMailboxesPurchasedGoogle") or 0)
+                used = int(ws.get("assignedMailboxesCountGoogle") or 0)
         except (AttributeError, TypeError, ValueError):
             return None
         return bought - used
@@ -589,8 +596,11 @@ class LiveIO:
             for zd in self.S.zm_list_domains() or []:
                 if (zd.get("domain") or "").lower() == domain.lower():
                     return [{"id": m.get("id"),
+                             # Zapmail's list returns `username`; `mailboxUsername`
+                             # is the create-call field. Reading only the latter
+                             # wrote "@domain", and `find` never matched it.
                              "email": (m.get("email")
-                                       or f"{m.get('mailboxUsername','')}@{domain}").lower()}
+                                       or f"{m.get('username') or m.get('mailboxUsername') or ''}@{domain}").lower()}
                             for m in (zd.get("mailboxes") or []) if isinstance(m, dict)]
         except Exception:                            # noqa: BLE001
             return None

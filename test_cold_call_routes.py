@@ -41,3 +41,15 @@ def test_the_advance_route_needs_the_dashboard_password(client, monkeypatch):
     monkeypatch.setattr(cci, "enforce_warmup_off", lambda: {"ran": False})
     assert client.post("/api/cold-call-inbox/advance").status_code == 401
     assert client.post("/api/cold-call-inbox/advance?pw=pw-test").get_json()["pending"] == 0
+
+
+def test_the_cron_token_from_state_opens_the_advance_route(client, monkeypatch):
+    import cold_call_inbox as cci
+    import db as store
+    monkeypatch.setattr(cci, "advance_all", lambda: {"ok": True, "pending": 0})
+    monkeypatch.setattr(cci, "enforce_warmup_off", lambda: {"ran": False})
+    monkeypatch.setattr(store, "get_state",
+                        lambda k: {"token": "t" * 64} if k == "cold_call_cron_token" else None)
+    assert client.post("/api/cold-call-inbox/advance", headers={"X-Cron-Token": "t" * 64}).status_code == 200
+    assert client.post("/api/cold-call-inbox/advance", headers={"X-Cron-Token": "u" * 64}).status_code == 401
+    assert client.post("/api/cold-call-inbox/advance").status_code == 401
